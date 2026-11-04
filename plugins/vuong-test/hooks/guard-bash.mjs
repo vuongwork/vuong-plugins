@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // PreToolUse hook for the Bash tool: blocks commands that can destroy data or history while tests run.
-// Enabled automatically by hooks/hooks.json while the plugin is installed. Exit 2 = block, the reason on
-// stderr is shown to Claude. Project-agnostic; extend with VUONG_TEST_GUARD_EXTRA (a regex source) for
+// Enabled automatically by hooks/hooks.json while the plugin is installed. A match prints one PreToolUse
+// JSON answer with permissionDecision "deny" (the reason is shown to Claude); anything else prints nothing. Project-agnostic; extend with VUONG_TEST_GUARD_EXTRA (a regex source) for
 // project-specific patterns; VUONG_TEST_GUARD=off disables it.
 import { readFileSync } from "node:fs";
 
@@ -31,10 +31,14 @@ if (process.env.VUONG_TEST_GUARD_EXTRA) RULES.push([new RegExp(process.env.VUONG
 
 const hit = RULES.find(([re]) => re.test(cmd));
 if (hit) {
-  process.stderr.write(
+  // Deny only — this hook never approves a call or changes its input. One JSON answer, written once.
+  const reason =
     `[vuong-test guard] blocked: ${hit[1]}.\nCommand: ${cmd.slice(0, 300)}\n` +
-      "If the user really wants this, ask them to run it themselves (prefix ! in the prompt).\n"
+    "If the user really wants this, ask them to run it themselves (prefix ! in the prompt).";
+  process.stdout.write(
+    JSON.stringify({
+      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason },
+    })
   );
-  process.exit(2);
 }
 process.exit(0);

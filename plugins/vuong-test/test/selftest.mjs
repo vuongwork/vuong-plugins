@@ -392,7 +392,13 @@ section("scan-specs");
 // ── hooks/guard-bash.mjs ──────────────────────────────────────────────────────
 section("hooks/guard-bash.mjs");
 {
-  const guard = (command) => run("hooks/guard-bash.mjs", [], { input: JSON.stringify({ tool_name: "Bash", tool_input: { command } }) }).code;
+  // 2 = denied (one PreToolUse JSON answer with permissionDecision "deny"), 0 = allowed (no output), else the exit code
+  const guard = (command) => {
+    const r = run("hooks/guard-bash.mjs", [], { input: JSON.stringify({ tool_name: "Bash", tool_input: { command } }) });
+    if (r.code !== 0) return r.code;
+    if (!r.out) return 0;
+    try { return JSON.parse(r.out).hookSpecificOutput?.permissionDecision === "deny" ? 2 : -1; } catch { return -1; }
+  };
   const BLOCK = [
     "rm -rf /",
     "rm -rf ~",
@@ -411,10 +417,10 @@ section("hooks/guard-bash.mjs");
   check("other tools pass", run("hooks/guard-bash.mjs", [], { input: JSON.stringify({ tool_name: "Write", tool_input: {} }) }).code === 0);
   check("non-JSON input passes", run("hooks/guard-bash.mjs", [], { input: "garbage" }).code === 0);
   const off = run("hooks/guard-bash.mjs", [], { input: JSON.stringify({ tool_name: "Bash", tool_input: { command: "git clean -fd" } }), env: { VUONG_TEST_GUARD: "off" } });
-  check("VUONG_TEST_GUARD=off disables it", off.code === 0);
+  check("VUONG_TEST_GUARD=off disables it", off.code === 0 && !off.out);
   const hj = JSON.parse(readFileSync(path.join(PLUGIN, "hooks", "hooks.json"), "utf8"));
-  const cmd = hj.hooks?.PreToolUse?.find((h) => h.matcher === "Bash")?.hooks?.[0]?.command || "";
-  check("hooks.json registers guard-bash on Bash", cmd.includes("${CLAUDE_PLUGIN_ROOT}/hooks/guard-bash.mjs"), cmd);
+  const h0 = hj.hooks?.PreToolUse?.find((h) => h.matcher === "Bash")?.hooks?.[0] || {};
+  check("hooks.json registers guard-bash on Bash (command + args)", h0.command === "node" && (h0.args || []).includes("${CLAUDE_PLUGIN_ROOT}/hooks/guard-bash.mjs"), JSON.stringify(h0));
 }
 
 // ── parsers backward compat ───────────────────────────────────────────────────

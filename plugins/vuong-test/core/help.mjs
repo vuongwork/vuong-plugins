@@ -9,6 +9,7 @@ const GROUPS = [
   ["Trong Claude Code", [
     ["/vuong-test:vuong-test <màn/feature/ticket>", "Chạy quy trình test 8 bước: scope → spec → flows + diff → cases → duyệt → viết/chạy test → report (hoặc gõ câu thường: \"vuong-test màn X\")"],
     ["/vuong-test:init [repo]", "Cài cho project lần đầu, hoặc cho máy mình sau khi clone: test.config.json, đường dẫn riêng máy, spec màn hình / API, môi trường, tài khoản"],
+    ["/vuong-test:review-tests <thư mục test> [màn/feature]", "Soát test có sẵn (dev viết, TDD/superpowers sinh ra) trước khi tin: test nào chỉ có assert yếu, chỉ check mock, tautology, mock chính thứ đang test; đối chiếu với cases.md"],
     ["/vuong-test:help [từ khoá]", "Danh sách lệnh này"],
   ]],
   ["Setup & spec (bước 0–2)", [
@@ -29,6 +30,7 @@ const GROUPS = [
     [`require("${P}/kit/fake-api.cjs")  /  kit/fake-api.mjs`, "API giả cho tầng mount/ut: route strict, ghi lời gọi, assertCalled, adapter axios / fetch"],
     [`node ${P}/core/account.mjs ~/.<project>-test-account.sh --vars A,B`, "Tạo sẵn file tài khoản test (mode 600, ngoài repo) để user chỉ điền giá trị; chạy lại để kiểm tra (không in giá trị)"],
     [`node ${P}/core/lint-tests.mjs <dir>...`, "Quét test: chờ cố định (sleep/waitForTimeout), mật khẩu/token viết cứng"],
+    [`node ${P}/core/review-tests.mjs <dir>... [--cases W/cases.md] [--out W/existing-tests.md]`, "Soát test có sẵn (JS/TS, Java): không assert, assert yếu, chỉ check mock, tautology, mock chính thứ đang test, catch nuốt lỗi, skip/only; case nào chưa có test gắn tag"],
   ]],
   ["Chạy & report (bước 7–8)", [
     [`node ${P}/core/collect.mjs --cases W/cases.md --out W/results.json ...`, "Gom kết quả: --jest-json/--jest-dir, --junit, --e2e-dir, --api-dir, --coverage, --diff, --data, --notes-dir"],

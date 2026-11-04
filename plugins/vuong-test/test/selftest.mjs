@@ -916,6 +916,70 @@ section("account");
 }
 
 // ── help ──────────────────────────────────────────────────────────────────────
+section("review-tests");
+{
+  w("rt/js/fee.test.js", [
+    'import { calcFee, total } from "../src/fee";',
+    'import { api } from "../src/api";',
+    '/* it("in a comment", () => {}) */',
+    'describe("[A-004] group", () => {',
+    '  it("inner", () => { expect(calcFee(2)).toBe(3000); });',
+    "});",
+    'it("[A-001] fee for 10 items", () => { expect(calcFee(10)).toBe(15000); });',
+    'it("recomputed", () => { expect(calcFee(5)).toBe(calcFee(5)); });',
+    'it("via import", () => { const r = total(3); expect(r).toBe(calcFee(3) * 1); });',
+    'it("weak", () => { expect(calcFee(1)).toBeDefined(); });',
+    'it("calls", () => { expect(api.post).toHaveBeenCalledWith("/x"); });',
+    'it("none", () => { calcFee(1); });',
+    'it.skip("[A-002] later", () => { expect(calcFee(0)).toBe(0); });',
+    'it("swallow", () => { try { expect(calcFee(-1)).toBe(0); } catch (e) { console.log(e); } });',
+    'it("[A-003] via helper", () => { assertFee(1, 2); });',
+    'test("[X-9] stray", async () => { await expect(page.getByText("ok")).toBeVisible(); });',
+    "",
+  ].join("\n"));
+  w("rt/js/api.test.js", 'jest.mock("../src/api");\nit("[A-005] mocked", () => { expect(get(1)).toBe(2); });\n');
+  w("rt/java/FeeServiceTest.java", [
+    "class FeeServiceTest {",
+    "  @Mock FeeService feeService;",
+    '  @Test @DisplayName("[B-001] fee 10") void fee10() { assertEquals(15000, service.calc(10)); }',
+    "  @Test void ORD_031_dup() { assertEquals(service.calc(2), service.calc(2)); }",
+    "  @Test void notNull() { assertNotNull(service.calc(1)); }",
+    "  @Test void calls() { verify(repo).save(any()); }",
+    "  @Disabled @Test void off() { assertEquals(1, service.calc(0)); }",
+    "  @Test(expected = IllegalArgumentException.class) public void neg() { service.calc(-1); }",
+    '  @Test void tryFail() { try { service.calc(-1); fail("x"); } catch (IllegalArgumentException e) { } }',
+    "  @Test void ok() throws Exception { mvc.perform(get(\"/x\")).andExpect(status().isOk()); }",
+    "}",
+    "",
+  ].join("\n"));
+  w("rt/notes.py", "def test_x(): pass\n");
+  const cases = w("rt/cases.md", casesMd([
+    ["A-001", "ut", "B1", "fee(10)", "15000", "SRS 1", "none needed", "N"],
+    ["A-004", "ut", "B1", "fee(2)", "3000", "SRS 1", "none needed", "N"],
+    ["A-007", "ut", "B2", "fee(0)", "0", "SRS 2", "none needed", "N"],
+    ["ORD-031 / ORD_031", "ut", "B3", "dup", "ERR-102", "SRS 3", "none needed", "N"],
+    ["B-001", "ut", "B4", "fee(10)", "15000", "SRS 4", "none needed", "N"],
+  ]));
+  const out = path.join(T, "rt/out/existing-tests.md");
+  const r = run("core/review-tests.mjs", ["rt/js", "rt/java", "rt/notes.py", "--cases", cases, "--out", out]);
+  const md = existsSync(out) ? readFileSync(out, "utf8") : "";
+  const row = (name) => md.split("\n").find((l) => l.startsWith("| T") && l.includes(`| ${name} |`)) || "";
+  check("review-tests: errors → exit 1, summary line", r.code === 1 && /3 files, 20 tests/.test(r.out), r.all);
+  check("review-tests: test inside a comment is not counted, describe tag inherited", !md.includes("in a comment") && /\| \[A-004\] group › inner \|.*\| A-004 \|/.test(md), md);
+  check("review-tests: tagged value check has no finding", /\| \[A-001\] fee for 10 items \|[^|]*\| A-001 \| ✓ toBe\(15000\) \| — \| A-001 \|/.test(md), row("[A-001] fee for 10 items"));
+  check("review-tests: tautology (same call, imported subject)", /error tautology/.test(row("recomputed")) && /computed by calcFee from the code under test/.test(row("via import")), md);
+  check("review-tests: weak / calls-only / no-assert / swallowed / skipped", /warn weak-assert/.test(row("weak")) && /warn calls-only/.test(row("calls")) && /error no-assert/.test(row("none")) && /error swallowed/.test(row("swallow")) && /warn skipped/.test(row("[A-002] later")), md);
+  check("review-tests: assertion helper is info, not no-assert", /info via-helper: .*assertFee/.test(row("[A-003] via helper")) && !/no-assert/.test(row("[A-003] via helper")), row("[A-003] via helper"));
+  check("review-tests: mocked subject reported once per file", (r.out.match(/mocked-subject/g) || []).length === 2 && /api\.test\.js:1 .*\.\.\/src\/api/.test(r.out) && /FeeServiceTest\.java:2 .*FeeService/.test(r.out) && !/mocked-subject/.test(row("[A-001] fee for 10 items")), r.out);
+  check("review-tests: Java weak / calls / tautology / skipped / expected-exception", /weak-assert/.test(row("notNull")) && /FeeServiceTest\.java:\d+ \|.*calls-only/.test(md.split("\n").filter((l) => l.includes("| calls |"))[1] || "") &&/tautology/.test(row("ORD_031_dup")) && /skipped/.test(row("off")) && /\| — \|/.test(row("neg")) && /\| — \|/.test(row("tryFail")) && /weak-assert/.test(row("ok")), md);
+  check("review-tests: Java method-name alias maps to case", /\| ORD_031_dup \|.*\| ORD-031 \|/.test(md), row("ORD_031_dup"));
+  check("review-tests: cases without a test, tags not in cases.md, unsupported files", /## Cases without a tagged test[\s\S]*\| A-007 \|/.test(md) && /`X-9`/.test(md) && /`A-005`/.test(md) && /notes\.py — language not supported/.test(md), md);
+  const clean = w("rt/clean/sum.test.js", 'it("[S-1] sums", () => { expect(sum(1, 2)).toBe(3); });\n');
+  const r2 = run("core/review-tests.mjs", [clean]);
+  check("review-tests: clean file exits 0 without --out", r2.code === 0 && /1 files, 1 tests, 0 errors/.test(r2.out), r2.all);
+  check("review-tests: no args → exit 2", run("core/review-tests.mjs", []).code === 2);
+}
+
 section("help");
 {
   const h = run("core/help.mjs");

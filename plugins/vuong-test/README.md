@@ -42,6 +42,7 @@ themselves (`!` prefix).
 ```
 /vuong-test:init                         # once per project, and once per member's machine after cloning
 /vuong-test:vuong-test <screen|feature|ticket|endpoint> [--layer ut|mount|it|api|e2e]
+/vuong-test:review-tests <tests> [scope]  # review tests that already exist (dev, TDD tooling) before trusting them
 /vuong-test:help [keyword]                # list of commands and scripts
 ```
 
@@ -56,6 +57,7 @@ Scripts (also usable without Claude, e.g. in CI):
 | `core/read-spec.mjs <file>... [--out dir] [--sheets glob] [--max-rows N]` | xlsx/xlsm/docx → `test-work/_spec/<name>.md` with `**Sheet!Cell**` / `¶N` / `Table T rRcC` citation labels, merged cells, image anchors, hidden sheets; header with size, modified date, sha256; pure Node; exit 3 for unsupported types (pdf/pptx/doc/xls) |
 | `core/lint-cases.mjs <cases.md> [--require-approval]` | IDs, layers, sources, checkable expected results, approval |
 | `core/lint-tests.mjs <test files/dirs>` | fixed waits (`waitForTimeout`, `sleep`...) and hard-coded secrets in test code |
+| `core/review-tests.mjs <tests>... [--cases cases.md] [--out existing-tests.md]` | review existing JS/TS and Java tests (read-only): no assertion, weak assertion, mock calls only, tautology, mocked subject, swallowed failure, skipped / `.only`; with `--cases`, which cases have a tagged test and which have none |
 | `core/collect.mjs --cases ... --out results.json <inputs>` | merge Jest JSON / JUnit XML (any language) / E2E JSON / coverage into one file; `--e2e-dir` / `--jest-dir` / `--notes-dir` pick up the files of parallel agents |
 | `core/render-html.mjs results.json --out <dir>` | self-contained HTML report (screenshots embedded) |
 | `core/cleanup-list.mjs W/data-created.md` | cleanup checklist (UI / needs BE-DB / done); exit 1 while anything is left |

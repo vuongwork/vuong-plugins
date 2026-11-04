@@ -61,6 +61,8 @@ export function inspectConfig(cfgFile = "test.config.json", { env = process.env 
   const { vars: _s, ...sharedRest } = shared;
   const { vars: _l, $comment: _c, ...localRest } = local;
   const merged = merge(sharedRest, localRest);
+  // Only the names this project's config declares (folder paths / URLs) are looked up; values stay on this
+  // machine, are never sent anywhere, and must not be secrets (accounts use core/account.mjs).
   const used = [...new Set([...Object.keys(desc), ...namesIn(merged)])];
   const values = {};
   const from = {};
@@ -85,7 +87,10 @@ export function inspectConfig(cfgFile = "test.config.json", { env = process.env 
   return { file, localFile, hasLocal, root, config, values, from, missing, notFound, git: gitState(root, localFile) };
 }
 
-/** tracked: the local file is committed (it must not be); ignored: .gitignore covers it. null outside git. */
+/**
+ * tracked: the local file is committed (it must not be); ignored: .gitignore covers it. null outside git.
+ * Read-only git queries (rev-parse, ls-files, check-ignore); nothing is staged, changed or sent.
+ */
 function gitState(root, localFile) {
   const rel = path.relative(root, localFile);
   const git = (args) => spawnSync("git", args, { cwd: root, encoding: "utf8", windowsHide: true });

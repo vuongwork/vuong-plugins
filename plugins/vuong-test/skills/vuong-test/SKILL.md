@@ -18,9 +18,18 @@ Working folder per scope: `<cfg.workDir>/<scope>/` (default `test-work/<scope>/`
 If `test.config.json` is missing: run `node $PLUGIN/core/init.mjs <repo>` and fill it with the user
 (stacks, test commands, env, accounts by env var name, data rules, uploader). Read `$PLUGIN/references/config.md`.
 
+**Every run, this machine** (also when the config exists — a member who just cloned has no local file):
+run `node $PLUGIN/core/config.mjs --check` in the repo. Exit 1 → for each name it lists, ask the user one
+question (the description after `—`; "where is it on your machine?"), then
+`node $PLUGIN/core/config.mjs --set NAME=<answer>` and check again. If it says the local file is committed,
+tell the user the `git rm --cached` line; do not run it yourself. Read stacks, dirs and environments from
+`node $PLUGIN/core/config.mjs --print` (the resolved config), not from the raw file.
+
 Spec locations (ask, do not guess): ask the user where the documents live (repo folders, shared drive,
 SVN/Git checkout of the design docs). Run `node $PLUGIN/core/scan-specs.mjs <those folders>` and show the
-suggested folders per kind. Then ask, one question each, and write the answers into `specPaths`:
+suggested folders per kind. Then ask, one question each, and write the answers into `specPaths`. A folder
+outside the repo: write `${NAME}` in `specPaths`, describe it in `vars`, and put the path in this machine's
+local file with `--set` (other members answer the same question on their machine):
 1. **Screen / feature spec** (detail design, functional spec): which folder, file naming (`match`)?
 2. **API spec** (endpoint / interface design, OpenAPI): which folder, naming? How does a screen map to its
    APIs (record in `scopes`, e.g. screen ID → API IDs)?

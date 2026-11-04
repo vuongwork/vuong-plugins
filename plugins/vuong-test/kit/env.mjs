@@ -1,12 +1,13 @@
 // Shared by e2e-kit and api-kit: which environments may receive writes (test.config.json `environments`).
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { loadConfig } from "../core/config.mjs";
 
-/** Environments from test.config.json → [{name, match, writable}]. Array or object form. */
+/** Environments from test.config.json (+ this machine's test.config.local.json) → [{name, match, writable}]. Array or object form. */
 export function loadEnvironments(cfgFile) {
   if (!cfgFile || !existsSync(cfgFile)) return [];
   let envs;
   try {
-    envs = JSON.parse(readFileSync(cfgFile, "utf8")).environments;
+    envs = loadConfig(cfgFile, { strict: false }).environments;
   } catch {
     return [];
   }

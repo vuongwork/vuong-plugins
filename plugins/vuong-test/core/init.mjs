@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-// Set up vuong-test in a project: test.config.json + work dir + .gitignore entry. Never overwrites.
+// Set up vuong-test in a project: test.config.json + test.config.local.json (this machine) + work dir +
+// .gitignore entries. Never overwrites. Safe to run again by every member after cloning.
 //
 //   node init.mjs <repo-root>
-import { existsSync, mkdirSync, copyFileSync, readFileSync, appendFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, copyFileSync, readFileSync, appendFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { inspectConfig, localPathFor, LOCAL_COMMENT } from "./config.mjs";
 
 const PLUGIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const root = path.resolve(process.argv[2] || ".");
@@ -33,6 +35,7 @@ const gi = path.join(root, ".gitignore");
 // committed: spec-sources, flows, cases, diff, data-plan, data-created, run-notes, test code.
 // not committed: reports, screenshots, raw results, caches.
 const IGNORE = [
+  "test.config.local.json",
   "test-work/_out/",
   "test-work/_spec/",
   "test-work/*/report/",
@@ -45,10 +48,21 @@ const have = existsSync(gi) ? readFileSync(gi, "utf8").split(/\r?\n/).map((l) =>
 const missing = IGNORE.filter((e) => !have.includes(e));
 if (missing.length) {
   const lead = have.length && have[have.length - 1] !== "" ? "\n" : "";
-  appendFileSync(gi, `${lead}\n# vuong-test: reports, screenshots, raw results, caches (cases/flows/diff/notes are committed)\n${missing.join("\n")}\n`);
+  appendFileSync(gi, `${lead}\n# vuong-test: this machine's paths, reports, screenshots, raw results, caches (cases/flows/diff/notes are committed)\n${missing.join("\n")}\n`);
   console.log(`.gitignore += ${missing.join(" ")}`);
 } else console.log(".gitignore: vuong-test entries present");
 console.log(`detected stacks: ${found.length ? found.join(", ") : "none"}`);
 const c = JSON.parse(readFileSync(cfg, "utf8"));
 if (!c.specPaths || JSON.stringify(c.specPaths).includes("/abs/path"))
   console.log("specPaths not set: ask where screen and API specs live, then `node <plugin>/core/scan-specs.mjs <folders>`");
+// this machine's values for ${VAR} in test.config.json (gitignored above)
+const local = localPathFor(cfg);
+if (existsSync(local)) console.log(`exists, kept: ${local}`);
+else {
+  const names = [...new Set([...Object.keys(c.vars && typeof c.vars === "object" ? c.vars : {}), ...[...JSON.stringify(c).matchAll(/\$\{([A-Za-z_]\w*)\}/g)].map((m) => m[1])])];
+  writeFileSync(local, `${JSON.stringify({ $comment: LOCAL_COMMENT, vars: Object.fromEntries(names.map((n) => [n, ""])) }, null, 2)}\n`);
+  console.log(`created: ${local} (this machine only, not committed)`);
+}
+const chk = inspectConfig(cfg);
+if (chk.missing.length || chk.notFound.length)
+  console.log(`this machine needs: ${[...chk.missing, ...chk.notFound].map((m) => m.name).join(", ")} → node <plugin>/core/config.mjs --check`);

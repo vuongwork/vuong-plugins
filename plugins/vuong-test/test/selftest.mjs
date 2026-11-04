@@ -295,6 +295,66 @@ section("init");
   r = run("core/init.mjs", [repo]);
   check("second run: .gitignore unchanged", readFileSync(path.join(repo, ".gitignore"), "utf8") === gi1 && /entries present/.test(r.out), r.all);
   check("second run: config not overwritten", readJson(path.join(repo, "test.config.json")).project === "mine" && /exists, kept/.test(r.out), r.all);
+  check("init: local file gitignored + created", gi1.split(/\r?\n/).includes("test.config.local.json") && existsSync(path.join(repo, "test.config.local.json")), gi1);
+}
+
+// ── config (shared + per-machine local file) ──────────────────────────────────
+section("config");
+{
+  const C = path.join(T, "cfg");
+  mkdirSync(path.join(C, "specs"), { recursive: true });
+  w("cfg/specs/SCR001 a.xlsx", "x");
+  const shared = {
+    vars: { DESIGN_SPECS: "Design spec folder", BACKEND_REPO: "Backend repo folder" },
+    specPaths: [{ path: "${DESIGN_SPECS}", kind: "design" }],
+    stacks: [{ id: "be", dir: "${BACKEND_REPO}" }],
+    environments: { local: { baseUrl: "http://localhost:3000", writable: true }, test: { baseUrl: "https://t.example", writable: false } },
+  };
+  const cf = j("cfg/test.config.json", shared);
+  const env = { DESIGN_SPECS: "", BACKEND_REPO: "" };
+  let r = run("core/config.mjs", ["--config", cf, "--check"], { env });
+  check("no local file → exit 1, lists every name with its description", r.code === 1 && /DESIGN_SPECS — Design spec folder/.test(r.out) && /BACKEND_REPO — Backend repo folder/.test(r.out), r.all);
+  r = run("core/find-spec.mjs", ["SCR001", "--config", cf], { env });
+  check("find-spec stops when a value is missing (exit 2, names it)", r.code === 2 && /DESIGN_SPECS/.test(r.err), r.all);
+  r = run("core/config.mjs", ["--config", cf, "--set", `DESIGN_SPECS=${path.join(C, "specs")}`], { env });
+  check("--set creates the local file", r.code === 0 && readJson(path.join(C, "test.config.local.json")).vars.DESIGN_SPECS === path.join(C, "specs"), r.all);
+  r = run("core/config.mjs", ["--config", cf, "--check"], { env });
+  check("only the still-missing name is asked", r.code === 1 && /BACKEND_REPO/.test(r.out) && !/DESIGN_SPECS/.test(r.out), r.all);
+  run("core/config.mjs", ["--config", cf, "--set", "BACKEND_REPO=./nope-backend"], { env });
+  r = run("core/config.mjs", ["--config", cf, "--check"], { env });
+  check("value set but folder missing → reported", r.code === 1 && /folder does not exist[\s\S]*BACKEND_REPO = \.\/nope-backend/.test(r.out), r.all);
+  mkdirSync(path.join(C, "nope-backend"));
+  r = run("core/config.mjs", ["--config", cf, "--check"], { env });
+  check("all set → exit 0", r.code === 0 && /config ok: 2 var/.test(r.out), r.all);
+  r = run("core/find-spec.mjs", ["SCR001", "--config", cf, "--json"], { env });
+  check("find-spec uses the local path", r.code === 0 && /SCR001 a\.xlsx/.test(r.out), r.all);
+  r = run("core/config.mjs", ["--config", cf, "--check"], { env: { DESIGN_SPECS: path.join(C, "nope-env"), BACKEND_REPO: "" } });
+  check("environment variable wins over the local file", r.code === 1 && /DESIGN_SPECS = .*nope-env/.test(r.out), r.all);
+  // local overrides: objects merge, values replace
+  const loc = readJson(path.join(C, "test.config.local.json"));
+  j("cfg/test.config.local.json", { ...loc, environments: { local: { baseUrl: "http://localhost:3001" } } });
+  r = run("core/config.mjs", ["--config", cf, "--print"], { env });
+  let p = {};
+  try { p = JSON.parse(r.out); } catch { /* reported below */ }
+  check("--print: local override merged (baseUrl replaced, writable kept, other env kept)",
+    p.environments?.local?.baseUrl === "http://localhost:3001" && p.environments.local.writable === true && p.environments.test?.baseUrl === "https://t.example" && !("vars" in p), r.all);
+  check("--print: ${VAR} resolved", p.specPaths?.[0]?.path === path.join(C, "specs"), JSON.stringify(p.specPaths));
+  const { loadEnvironments } = await import(pathToFileURL(path.join(PLUGIN, "kit/env.mjs")).href);
+  const envs = loadEnvironments(cf);
+  check("kit environments see the local override", envs.find((e) => e.name === "local")?.match === "http://localhost:3001", JSON.stringify(envs));
+  const { loadConfig } = await import(pathToFileURL(path.join(PLUGIN, "core/config.mjs")).href);
+  j("cfg/home.json", { vars: { H: "" }, specPaths: ["${H}/specs", "~/x"] });
+  j("cfg/home.local.json", { vars: { H: "~/proj" } });
+  const hc = loadConfig(path.join(C, "home.json"), { env: {} });
+  check("~ expands to the home folder", hc.specPaths[0] === `${path.join(os.homedir(), "proj")}/specs` && hc.specPaths[1] === path.join(os.homedir(), "x"), JSON.stringify(hc.specPaths));
+  const git = (args) => spawnSync("git", args, { cwd: C, encoding: "utf8" });
+  if (git(["init", "-q"]).status === 0) {
+    r = run("core/config.mjs", ["--config", cf, "--check"], { env });
+    check("git: local file not ignored → warning", /not in \.gitignore/.test(r.out), r.all);
+    git(["add", "-f", "test.config.local.json"]);
+    r = run("core/config.mjs", ["--config", cf, "--check"], { env });
+    check("git: local file committed → exit 1 with git rm --cached", r.code === 1 && /git rm --cached test\.config\.local\.json/.test(r.out), r.all);
+  } else check("git available for the tracked-file check", false, "git init failed");
 }
 
 // ── find-spec ─────────────────────────────────────────────────────────────────

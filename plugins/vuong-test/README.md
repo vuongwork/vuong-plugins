@@ -48,7 +48,8 @@ Scripts (also usable without Claude, e.g. in CI):
 
 | Script | Purpose |
 |---|---|
-| `core/init.mjs <repo>` | create `test.config.json`, `test-work/`, `.gitignore` entries (idempotent); detect stacks |
+| `core/init.mjs <repo>` | create `test.config.json`, this machine's `test.config.local.json`, `test-work/`, `.gitignore` entries (idempotent); detect stacks |
+| `core/config.mjs --check \| --set NAME=value \| --print` | per-machine paths: `${NAME}` in `test.config.json`, values in the gitignored `test.config.local.json` (or env vars); lists missing names / folders, writes values, prints the merged config |
 | `core/scan-specs.mjs <folders>... [--top 6] [--all]` | setup: suggest spec folders per kind (screen, api, acceptance, requirement, decision, ticket, mock, db, old UT) from folder/file names |
 | `core/find-spec.mjs <keyword>... [--config test.config.json]` | list spec documents for a scope from `specPaths` (repo or absolute paths), ordered by `specPrecedence`, with modified date |
 | `core/read-spec.mjs <file>... [--out dir] [--sheets glob] [--max-rows N]` | xlsx/xlsm/docx → `test-work/_spec/<name>.md` with `**Sheet!Cell**` / `¶N` / `Table T rRcC` citation labels, merged cells, image anchors, hidden sheets; header with size, modified date, sha256; pure Node; exit 3 for unsupported types (pdf/pptx/doc/xls) |

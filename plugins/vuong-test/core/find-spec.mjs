@@ -10,8 +10,9 @@
 // (`kinds`: first glob matching the file name sets that file's kind, else `kind`). `{scope}` is replaced by each
 // keyword; `scopes` in the config adds the scope's other names (feature name, API IDs). Prints kind, modified date, size and path per hit, ordered by `specPrecedence` (kinds), so
 // spec-sources.md can cite exact files and their version. Read-only.
-import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readdirSync, statSync, existsSync } from "node:fs";
 import path from "node:path";
+import { loadConfig } from "./config.mjs";
 
 const argv = process.argv.slice(2);
 const cfgPath = argv.includes("--config") ? argv[argv.indexOf("--config") + 1] : "test.config.json";
@@ -21,7 +22,14 @@ if (!given.length || !existsSync(cfgPath)) {
   console.error("usage: find-spec.mjs <scope keyword>... [--config test.config.json] [--json]");
   process.exit(2);
 }
-const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+// shared config + this machine's test.config.local.json (${VAR} paths); stops when a value is missing
+let cfg;
+try {
+  cfg = loadConfig(cfgPath);
+} catch (e) {
+  console.error(e.message);
+  process.exit(2);
+}
 // `scopes` maps a scope to its other names (feature name, API IDs...): { "SCR-101": ["Sample Form", "API-001"] }
 const keywords = [...new Set(given.flatMap((k) => [k, ...((cfg.scopes || {})[k] || [])]))];
 const root = path.dirname(path.resolve(cfgPath));
@@ -50,7 +58,7 @@ const hits = [];
 for (const e of entries) {
   const base = path.isAbsolute(e.path) ? e.path : path.join(root, e.path);
   if (!existsSync(base)) {
-    console.error(`[vuong-test] specPaths not found: ${base}`);
+    console.error(`[vuong-test] specPaths not found: ${base} (this machine's paths: test.config.local.json; check with core/config.mjs --check)`);
     continue;
   }
   const kw = keywords.map((k) => k.toLowerCase());

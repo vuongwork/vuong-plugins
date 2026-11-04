@@ -14,6 +14,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { readZip, sheetList, setCells, rewriteZip, newXlsx } from "./ooxml.mjs";
 import { casesWithStatus, pickTemplate } from "./parsers.mjs";
+import { loadConfig } from "./config.mjs";
 
 const argv = process.argv.slice(2);
 const opt = { config: "test.config.json" };
@@ -68,7 +69,7 @@ if (opt.file) {
     console.error(`[vuong-test] --file not found: ${src}`);
     process.exit(2);
   }
-  const cfg = existsSync(opt.config) ? JSON.parse(readFileSync(opt.config, "utf8")) : {};
+  const cfg = existsSync(opt.config) ? loadConfig(opt.config, { strict: false }) : {};
   const tpl = pickTemplate(cfg, path.basename(src), opt.template);
   if (!tpl || !tpl.columns?.result) {
     console.error(`[vuong-test] no caseTemplates entry with columns.result for ${path.basename(src)} in ${opt.config}`);

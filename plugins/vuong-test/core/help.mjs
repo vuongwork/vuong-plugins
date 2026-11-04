@@ -12,7 +12,8 @@ const GROUPS = [
     ["/vuong-test:help [từ khoá]", "Danh sách lệnh này (cũng: /vuong-test help)"],
   ]],
   ["Setup & spec (bước 0–2)", [
-    [`node ${P}/core/init.mjs <repo>`, "Tạo test.config.json + thư mục test-work + .gitignore (không ghi đè)"],
+    [`node ${P}/core/init.mjs <repo>`, "Tạo test.config.json + test.config.local.json (máy này) + thư mục test-work + .gitignore (không ghi đè)"],
+    [`node ${P}/core/config.mjs --check | --set NAME=giá trị | --print`, "Đường dẫn riêng từng máy (${NAME} → test.config.local.json, không commit): báo biến còn thiếu / thư mục không có, ghi giá trị, in config đã ghép"],
     [`node ${P}/core/scan-specs.mjs <folder>...`, "Gợi ý thư mục spec theo loại (screen, api, acceptance, decision…) để điền specPaths"],
     [`node ${P}/core/find-spec.mjs <scope>`, "Liệt kê tài liệu spec của một màn/feature theo specPaths + scopes"],
     [`node ${P}/core/read-spec.mjs <file>...`, "xlsx/xlsm/docx → Markdown có nhãn trích dẫn Sheet!Cell / ¶N (→ test-work/_spec/)"],

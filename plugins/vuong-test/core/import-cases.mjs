@@ -18,6 +18,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { readZip, sheetList, sheetCells, sharedStrings } from "./ooxml.mjs";
 import { pickTemplate } from "./parsers.mjs";
+import { loadConfig } from "./config.mjs";
 
 const argv = process.argv.slice(2);
 const opt = { config: "test.config.json" };
@@ -39,7 +40,7 @@ if (!file || !opt.scope || !opt.out) {
 }
 const globRe = (g) => new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`, "i");
 
-const cfg = existsSync(opt.config) ? JSON.parse(readFileSync(opt.config, "utf8")) : {};
+const cfg = existsSync(opt.config) ? loadConfig(opt.config, { strict: false }) : {};
 const tpl = pickTemplate(cfg, path.basename(file), opt.template);
 if (!tpl) {
   console.error(

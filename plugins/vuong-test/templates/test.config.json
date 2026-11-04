@@ -1,11 +1,17 @@
 {
-  "$comment": "vuong-test project config. See references/config.md. Never put passwords here: list env var NAMES only.",
+  "$comment": "vuong-test project config (shared, committed). See references/config.md. Never put passwords here: list env var NAMES only. Paths that differ per machine: ${NAME} here, the value in each member's test.config.local.json.",
   "project": "<name>",
   "workDir": "test-work",
+  "vars": {
+    "DESIGN_SPECS": "Folder with the shared design specs (xlsx / docx) on your machine",
+    "ACCEPTANCE_SPECS": "Folder with the customer's acceptance test files on your machine",
+    "SCREEN_SPECS": "Folder with the screen and API detail design specs on your machine",
+    "BACKEND_REPO": "Folder of the backend repo checkout on your machine"
+  },
   "specPaths": [
     "docs/spec",
     {
-      "path": "/abs/path/to/shared/specs",
+      "path": "${DESIGN_SPECS}",
       "kind": "design",
       "match": [
         "*{scope}*.xlsx",
@@ -16,14 +22,14 @@
       ]
     },
     {
-      "path": "/abs/path/to/customer/acceptance",
+      "path": "${ACCEPTANCE_SPECS}",
       "kind": "acceptance",
       "match": [
         "*{scope}*.xls*"
       ]
     },
     {
-      "path": "/abs/path/to/specs/design",
+      "path": "${SCREEN_SPECS}",
       "kind": "screen",
       "match": [
         "*{scope}*",
@@ -69,7 +75,7 @@
     {
       "id": "be",
       "stack": "java-maven",
-      "dir": "../backend",
+      "dir": "${BACKEND_REPO}",
       "run": "mvn -q test org.jacoco:jacoco-maven-plugin:0.8.11:prepare-agent org.jacoco:jacoco-maven-plugin:0.8.11:report",
       "results": {
         "junit": "target/surefire-reports"

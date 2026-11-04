@@ -1,0 +1,16 @@
+{
+  "description": "vuong-test safety guard: blocks destructive Bash commands (SQL drop/delete, DB clients, history-destroying git, rm -r on / ~ . .., direct API write calls). Turn off with VUONG_TEST_GUARD=off.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/guard-bash.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}

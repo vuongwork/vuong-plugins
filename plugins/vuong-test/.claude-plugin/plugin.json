@@ -1,0 +1,8 @@
+{
+  "name": "vuong-test",
+  "version": "0.19.1",
+  "description": "Quy trình test thống nhất cho mọi tầng (UT, integration, API, E2E) và nhiều ngôn ngữ: làm rõ spec → liệt kê luồng → cases.md → duyệt → chạy → report HTML.",
+  "author": {
+    "name": "vuongwork", "email": "vuongpq.work@gmail.com"
+  }
+}

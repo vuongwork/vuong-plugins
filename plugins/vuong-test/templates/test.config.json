@@ -1,0 +1,151 @@
+{
+  "$comment": "vuong-test project config. See references/config.md. Never put passwords here: list env var NAMES only.",
+  "project": "<name>",
+  "workDir": "test-work",
+  "specPaths": [
+    "docs/spec",
+    {
+      "path": "/abs/path/to/shared/specs",
+      "kind": "design",
+      "match": [
+        "*{scope}*.xlsx",
+        "*{scope}*.docx"
+      ],
+      "exclude": [
+        "~$*"
+      ]
+    },
+    {
+      "path": "/abs/path/to/customer/acceptance",
+      "kind": "acceptance",
+      "match": [
+        "*{scope}*.xls*"
+      ]
+    },
+    {
+      "path": "/abs/path/to/specs/design",
+      "kind": "screen",
+      "match": [
+        "*{scope}*",
+        "api-{scope}-*"
+      ],
+      "kinds": {
+        "api-*": "api"
+      }
+    },
+    {
+      "path": "docs/decisions",
+      "kind": "decision"
+    }
+  ],
+  "scopes": {
+    "<screen-id>": [
+      "<feature name>",
+      "<API id>"
+    ]
+  },
+  "specPrecedence": [
+    "decision",
+    "ticket",
+    "design",
+    "screen",
+    "api",
+    "acceptance",
+    "ut-old",
+    "mock",
+    "doc"
+  ],
+  "stacks": [
+    {
+      "id": "fe",
+      "stack": "jest",
+      "dir": ".",
+      "run": "npx jest --json --outputFile=test-work/_out/fe-jest.json --coverage --coverageReporters=json",
+      "results": {
+        "jest-json": "test-work/_out/fe-jest.json"
+      },
+      "coverage": "coverage/coverage-final.json"
+    },
+    {
+      "id": "be",
+      "stack": "java-maven",
+      "dir": "../backend",
+      "run": "mvn -q test org.jacoco:jacoco-maven-plugin:0.8.11:prepare-agent org.jacoco:jacoco-maven-plugin:0.8.11:report",
+      "results": {
+        "junit": "target/surefire-reports"
+      },
+      "coverage": "target/site/jacoco/jacoco.xml"
+    },
+    {
+      "id": "e2e",
+      "stack": "playwright",
+      "dir": ".",
+      "run": "node test-work/<scope>/e2e.mjs",
+      "results": {
+        "e2e-json": "test-work/<scope>/e2e-results.json"
+      }
+    },
+    {
+      "id": "api",
+      "stack": "api",
+      "dir": ".",
+      "run": "node test-work/<scope>/api.mjs",
+      "results": {
+        "api-json": "test-work/<scope>/api/api-results.json"
+      }
+    }
+  ],
+  "environments": {
+    "local": {
+      "baseUrl": "http://localhost:3000",
+      "writesAllowed": true,
+      "writable": true,
+      "apiBase": "http://localhost:8080/api"
+    },
+    "test": {
+      "baseUrl": "<url>",
+      "writesAllowed": "ask",
+      "writable": false,
+      "apiBase": "<url>"
+    }
+  },
+  "accounts": {
+    "env": [
+      "E2E_USER",
+      "E2E_PW",
+      "API_BASE"
+    ]
+  },
+  "dataRules": "Prefix created records with E2E + timestamp; list them in the report for cleanup.",
+  "uploader": null,
+  "caseTemplates": [
+    {
+      "name": "<layout name>",
+      "match": "*<file name glob>*",
+      "sheet": "<sheet name or glob>",
+      "headerRow": 1,
+      "columns": {
+        "no": "B",
+        "flow": "C",
+        "steps": "D",
+        "expected": "E",
+        "result": "F",
+        "evidence": "G",
+        "tester": null,
+        "date": null
+      },
+      "groupMarker": "*",
+      "idFormat": "{scope}-{no}",
+      "vagueExpected": [
+        "<regex of expected texts that are not values>"
+      ],
+      "dataRef": "<regex: steps referring to a data sheet>",
+      "results": {
+        "passed": "PASS",
+        "failed": "FAIL",
+        "blocked": "",
+        "notrun": ""
+      }
+    }
+  ]
+}

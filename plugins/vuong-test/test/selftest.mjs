@@ -1,0 +1,883 @@
+#!/usr/bin/env node
+// Self-test of every script in this plugin. Pure Node (>= 18), no shell, no dependencies, cross-platform.
+//
+//   node test/selftest.mjs
+//   VT_PLAYWRIGHT_FROM=<dir with node_modules/playwright> node test/selftest.mjs   (adds the E2E kit checks)
+//
+// Fixtures are built in os.tmpdir() at run time. Fixtures that must contain fixed waits or secrets are
+// assembled from pieces so this file itself passes core/lint-tests.mjs.
+// Prints `ok` / `FAIL` per check; exit 1 when any check fails.
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import os from "node:os";
+import path from "node:path";
+import { createHash } from "node:crypto";
+import { deflateRawSync } from "node:zlib";
+
+const PLUGIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const T = mkdtempSync(path.join(os.tmpdir(), "vt-selftest-"));
+let pass = 0;
+let fail = 0;
+
+function check(name, cond, info = "") {
+  if (cond) {
+    pass++;
+    console.log(`ok   ${name}`);
+  } else {
+    fail++;
+    console.log(`FAIL ${name}${info ? `\n     ${String(info).slice(0, 600).replace(/\n/g, "\n     ")}` : ""}`);
+  }
+}
+const section = (s) => console.log(`\n== ${s}`);
+/** run a plugin script: node <PLUGIN>/<script> ...args */
+function run(script, args = [], { cwd = T, input, env } = {}) {
+  const r = spawnSync(process.execPath, [path.join(PLUGIN, script), ...args], {
+    cwd,
+    input,
+    env: { ...process.env, ...env },
+    encoding: "utf8",
+    timeout: 120000,
+  });
+  return { code: r.status, out: r.stdout || "", err: r.stderr || "", all: `${r.stdout || ""}${r.stderr || ""}` };
+}
+const w = (rel, text) => {
+  const f = path.join(T, rel);
+  mkdirSync(path.dirname(f), { recursive: true });
+  writeFileSync(f, text);
+  return f;
+};
+const j = (rel, obj) => w(rel, JSON.stringify(obj));
+const readJson = (f) => JSON.parse(readFileSync(f, "utf8"));
+const table = (head, rows) => [`| ${head.join(" | ")} |`, `|${head.map(() => "---").join("|")}|`, ...rows.map((r) => `| ${r.join(" | ")} |`)].join("\n");
+const CASE_HEAD = ["ID", "Layer", "Flow", "Steps", "Expected", "Source", "Data", "Writes"];
+const casesMd = (rows, { approved = true, extra = "" } = {}) =>
+  [
+    "# Cases — demo",
+    "- Flows: flows.md (commit abc)",
+    "- Environment: local   ·   Writes data: Y",
+    approved ? "- Approved by: Tester   ·   Date: 2026-11-03" : "- Approved by: <name>   ·   Date: <date>",
+    "",
+    table(CASE_HEAD, rows),
+    extra,
+    "",
+  ].join("\n");
+
+// ── lint-cases ────────────────────────────────────────────────────────────────
+section("lint-cases");
+{
+  const good = w("lc/good.md", casesMd([["A-001", "e2e", "E1", "search", "3 rows", "SRS 1", "record R1 in state open", "N"]]));
+  let r = run("core/lint-cases.mjs", [good]);
+  check("clean cases.md exits 0", r.code === 0, r.all);
+  r = run("core/lint-cases.mjs", [good, "--require-approval"]);
+  check("--require-approval passes when approved", r.code === 0, r.all);
+
+  const bad = w(
+    "lc/bad.md",
+    casesMd(
+      [
+        ["A-001", "e2e", "E1", "search", "ok", "SRS 1", "record R1", "N"],
+        ["A-001", "web", "", "x", "3 rows", "", "record R1", "X"],
+        ["B-001", "ut", "B1", "f(1)", "2", "assumption", "any", "N"],
+        ["B-002", "ut", "B2", "f(2)", "3", "SRS 2", "", "N"],
+      ],
+      { approved: false }
+    )
+  );
+  r = run("core/lint-cases.mjs", [bad]);
+  check("errors → exit 1", r.code === 1, r.all);
+  check("vague expected is an error", /ERROR case A-001: Expected "ok" is not checkable/.test(r.out), r.out);
+  check("duplicate ID / bad layer / empty Flow / empty Source / Writes", ["duplicate ID", 'layer "web"', "Flow empty", "Source empty", "Writes must be Y or N"].every((s) => r.out.includes(s)), r.out);
+  check("Data warnings (any, empty)", /warn {2}case B-001: Data "any" is vague/.test(r.out) && /warn {2}case B-002: Data "" is vague/.test(r.out), r.out);
+  check("assumption source warned", /case B-001: assumption/.test(r.out), r.out);
+  const unapproved = w("lc/unapproved.md", casesMd([["A-001", "e2e", "E1", "s", "3 rows", "SRS 1", "record R1", "N"]], { approved: false }));
+  r = run("core/lint-cases.mjs", [unapproved, "--require-approval"]);
+  check("--require-approval fails when not approved", r.code === 1 && /not approved/.test(r.out), r.all);
+  r = run("core/lint-cases.mjs", []);
+  check("no args → exit 2", r.code === 2);
+}
+
+// ── lint-tests ────────────────────────────────────────────────────────────────
+section("lint-tests");
+{
+  const WAIT = "waitFor" + "Timeout";
+  const SLEEP = "Thread." + "sleep";
+  const PW = ["pass", "word"].join("");
+  w("lt/ok.test.js", `await page.${WAIT}(100);\nexpect(1).toBe(1);\n`);
+  w("lt/wait.test.js", `await page.${WAIT}(500);\n`);
+  w("lt/Wait.java", `${SLEEP}(1000);\n`);
+  w("lt/exempt.test.js", `await page.${WAIT}(800); // lint-${"ok"}: animation has no event\n`);
+  w("lt/secret.test.js", `const ${PW} = "hunter2222";\nconst p2 = process.env.E2E_PW;\n`);
+  let r = run("core/lint-tests.mjs", [path.join(T, "lt/ok.test.js")]);
+  check("wait <= 200 ms passes", r.code === 0, r.all);
+  r = run("core/lint-tests.mjs", [path.join(T, "lt/wait.test.js")]);
+  check("fixed wait 500 ms → error", r.code === 1 && /fixed wait 500 ms/.test(r.out), r.all);
+  r = run("core/lint-tests.mjs", [path.join(T, "lt/Wait.java")]);
+  check("Java sleep 1000 ms → error", r.code === 1 && /fixed wait 1000 ms/.test(r.out), r.all);
+  r = run("core/lint-tests.mjs", [path.join(T, "lt/exempt.test.js")]);
+  check("`lint-ok:` exempts the line", r.code === 0, r.all);
+  r = run("core/lint-tests.mjs", [path.join(T, "lt/secret.test.js")]);
+  check("hard-coded secret → error", r.code === 1 && /hard-coded secret/.test(r.out) && !/:2 /.test(r.out), r.all);
+  r = run("core/lint-tests.mjs", [path.join(T, "lt/wait.test.js"), "--max-wait", "1000"]);
+  check("--max-wait raises the limit", r.code === 0, r.all);
+  r = run("core/lint-tests.mjs", [path.join(PLUGIN, "kit"), path.join(PLUGIN, "hooks"), path.join(PLUGIN, "test")]);
+  check("plugin kit/ hooks/ test/ pass lint-tests", r.code === 0, r.all);
+}
+
+// ── collect ───────────────────────────────────────────────────────────────────
+section("collect");
+let results; // used by render-html
+{
+  const cases = w(
+    "W/cases.md",
+    casesMd(
+      [
+        ["P-001", "ut", "B1", "f(1)", "2", "SRS 1", "none: pure function", "N"],
+        ["F-001", "ut", "B2", "g()", "throws E1", "SRS 2", "none: pure function", "N"],
+        ["K-001", "e2e", "E1", "search", "3 rows", "SRS 3", "record R1", "N"],
+        ["K-002", "e2e", "E2", "save", 'toast "saved"', "SRS 4", "record R2", "Y"],
+        ["X-001", "e2e", "E3", "x", "code E9", "assumption", "record R3", "N"],
+        ["N-001", "ut", "B3", "h()", "4", "SRS 5", "none: pure function", "N"],
+      ],
+      { extra: `\n## Not covered\n\n${table(["Flow ref", "Reason"], [["E9", "no UI"]])}` }
+    )
+  );
+  j("W/e2e-a/e2e-results.json", {
+    tests: [
+      { file: "e2e-a.mjs", name: "[K-001] search", ids: ["K-001"], status: "passed", shots: [], aborted: [{ method: "POST", url: "http://x/api/save" }], writes: [] },
+      { file: "e2e-a.mjs", name: "[K-002] save", ids: ["K-002"], status: "passed", shots: [], writesDeclared: true, aborted: [], writes: [{ method: "POST", url: "http://x/api/save", status: 200 }] },
+    ],
+  });
+  j("W/e2e-b/e2e-results.json", { tests: [{ file: "e2e-b.mjs", name: "[X-001] x", status: "blocked", error: "environment test not allowed for writes", shots: [] }] });
+  j("W/e2e-results.json", []);
+  j("jest/fe.json", { testResults: [{ name: path.join(T, "a.test.js"), assertionResults: [{ title: "[P-001] f", fullName: "[P-001] f", status: "passed", ancestorTitles: [] }] }] });
+  w("jest/junk.json", "not json");
+  j("jest/other.json", { hello: 1 });
+  w("jest/readme.txt", "x");
+  const junit = w(
+    "junit/TEST-G.xml",
+    `<?xml version="1.0"?><testsuite name="G"><testcase classname="GTest" name="[F-001] g throws" time="0.012"><failure message="expected E1">trace</failure></testcase><testcase classname="GTest" name="untagged" time="0.001"/></testsuite>`
+  );
+  w("W/run-notes-a.md", "note from a");
+  w("W/run-notes-b.md", "note from b");
+  const notes1 = w("notes1.md", "single note");
+  const diff = w(
+    "W/diff.md",
+    table(
+      ["Diff", "Area", "Spec says", "Source", "Code does", "file:line", "Cases", "Decision"],
+      [
+        ["D1", "g", "throws E1", "SRS 2", "throws E2", "g.js:3", "F-001", ""],
+        ["D2", "f", "2", "SRS 1", "2", "f.js:1", "P-001", "keep"],
+        ["D3", "h", "4", "SRS 5", "5", "h.js:1", "N-001", ""],
+      ]
+    )
+  );
+  const data = w(
+    "W/data-created.md",
+    table(
+      ["Case", "When", "Environment", "Record (key)", "Action", "How to delete / revert", "Status"],
+      [
+        ["K-002", "10:00", "local", "E2E001", "create", "Screen > Delete", "left"],
+        ["K-002", "10:01", "local", "E2E001-H", "history row", "none in UI", "needs-be"],
+        ["K-002", "10:02", "local", "E2E000", "create", "Screen > Delete", "deleted"],
+      ]
+    )
+  );
+  const ist = j("cov/coverage-final.json", {
+    [path.join(T, "src/a.js")]: {
+      path: path.join(T, "src/a.js"),
+      statementMap: { 0: { start: { line: 1 } }, 1: { start: { line: 2 } } },
+      s: { 0: 1, 1: 0 },
+      fnMap: {},
+      f: { 0: 1 },
+      branchMap: {},
+      b: { 0: [1, 0] },
+    },
+  });
+  const jac = w(
+    "cov/jacoco.xml",
+    `<?xml version="1.0"?><report name="be"><package name="com/a"><sourcefile name="A.java"><line nr="1" mi="0" ci="1"/><counter type="INSTRUCTION" missed="1" covered="3"/><counter type="LINE" missed="0" covered="2"/><counter type="METHOD" missed="1" covered="1"/></sourcefile></package></report>`
+  );
+  const out = path.join(T, "W/results.json");
+  const r = run("core/collect.mjs", [
+    "--cases", cases, "--out", out, "--root", T,
+    "--junit", path.join(T, "junit"), "--stack", "java",
+    "--jest-dir", path.join(T, "jest"),
+    "--e2e-dir", path.join(T, "W"),
+    "--notes-dir", path.join(T, "W"),
+    "--diff", diff, "--data", data,
+    "--coverage", ist, "--label", "fe",
+    "--coverage", jac, "--label", "be",
+  ]);
+  check("collect exits 0", r.code === 0, r.all);
+  results = existsSync(out) ? readJson(out) : { tests: [], cases: [], inputs: {} };
+  const byId = (id) => results.tests.find((t) => t.ids.includes(id));
+  check("--junit dir: failed tagged test + untagged test, stack label", byId("F-001")?.status === "failed" && byId("F-001")?.stack === "java" && results.tests.some((t) => t.name === "untagged"), JSON.stringify(results.tests));
+  check("--jest-dir picks only Jest JSON (skips junk / non-Jest)", results.inputs.jest?.length === 1 && byId("P-001")?.status === "passed", JSON.stringify(results.inputs.jest));
+  check("--e2e-dir picks W/e2e-results.json + W/e2e*/", results.inputs.e2e?.length === 3, JSON.stringify(results.inputs.e2e));
+  check("e2e aborted / writes / blocked carried", byId("K-001")?.aborted.length === 1 && byId("K-002")?.writes.length === 1 && byId("X-001")?.status === "blocked");
+  check("--notes-dir collects run-notes*.md", /note from a/.test(results.notes) && /note from b/.test(results.notes), results.notes);
+  check("--diff parsed", results.diff?.length === 3 && results.diff[0].cases[0] === "F-001", JSON.stringify(results.diff));
+  check("--data parsed", results.dataCreated?.length === 3 && results.dataCreated[1].status === "needs-be");
+  const tot = results.coverage?.totals || [];
+  check("--coverage istanbul (50% statements)", tot[0]?.format === "istanbul" && Math.round(tot[0].statements) === 50, JSON.stringify(tot));
+  check("--coverage jacoco (75% instructions, lines 100%)", tot[1]?.format === "jacoco" && tot[1].statements === 75 && tot[1].lines === 100 && tot[1].branches === null, JSON.stringify(tot));
+  check("not covered table parsed", results.notCovered?.[0]?.ref === "E9");
+
+  const out2 = path.join(T, "W/results2.json");
+  const e2eA = path.join(T, "W/e2e-a/e2e-results.json");
+  const jestF = path.join(T, "jest/fe.json");
+  const r2 = run("core/collect.mjs", ["--cases", cases, "--out", out2, "--e2e-json", e2eA, "--jest-json", jestF, "--notes", notes1]);
+  const res2 = existsSync(out2) ? readJson(out2) : {};
+  check("--e2e-json + --jest-json + --notes", r2.code === 0 && res2.tests?.length === 3 && res2.notes === "single note", r2.all);
+  const r3 = run("core/collect.mjs", ["--cases", cases, "--out", out2, "--bogus"]);
+  check("unknown argument → exit 2", r3.code === 2);
+}
+
+// ── render-html ───────────────────────────────────────────────────────────────
+section("render-html");
+{
+  const r = run("core/render-html.mjs", [path.join(T, "W/results.json"), "--out", path.join(T, "W/report")]);
+  check("exit 1 when a case failed", r.code === 1, r.all);
+  const f = existsSync(path.join(T, "W/report")) ? readdirSync(path.join(T, "W/report")).find((x) => x.endsWith(".html")) : null;
+  const html = f ? readFileSync(path.join(T, "W/report", f), "utf8") : "";
+  const row = (id) => (html.match(new RegExp(`<tr[^>]*><td><b>${id}</b>[\\s\\S]*?</tr>`)) || [""])[0];
+  check("case PASS", row("P-001").includes("✓ PASS"), row("P-001"));
+  check("case FAIL", row("F-001").includes("✗ FAIL"), row("F-001"));
+  check("case BLOCKED", row("X-001").includes("■ BLOCKED"), row("X-001"));
+  check("case NOT RUN", row("N-001").includes("○ NOT RUN"), row("N-001"));
+  check("diff reproduced", row("D1").includes("✗ reproduced"), row("D1"));
+  check("diff not reproduced", row("D2").includes("✓ not reproduced"), row("D2"));
+  check("diff unverified", row("D3").includes("○ unverified"), row("D3"));
+  check("data created + needs-be counts", html.includes("1 left in UI, 1 need BE/DB") && html.includes("E2E001-H"));
+  check("write guard aborted / writes shown", html.includes("write guard aborted 1") && html.includes("POST http://x/api/save → 200") && html.includes("1 blocked by guard"));
+  check("assumption count", html.includes("1 expected = assumption"));
+  check("summary rows labelled, chips link to sections", /<div class="stat-row"><div class="stat-label"><b>Cases /.test(html) && /<a href="#failed" class="chip failed">1 fail</.test(html) && /<h2 id="cases">/.test(html), html.slice(html.indexOf('class="stats"'), html.indexOf('class="stats"') + 900));
+  check("Needs attention: failed tests grouped, blocked / not-run cases listed", /<div class="group-title failed" id="failed">/.test(html) && /id="blocked"/.test(html) && /id="notrun"/.test(html));
+  check("test results as table: error / API / evidence columns", /<th>Error \(expected \/ actual\)<\/th><th>API calls<\/th><th>Evidence<\/th>/.test(html));
+  check("summary counts", html.includes("1 pass") || html.includes(">3 pass<"));
+  check("untagged warning", html.includes("1 test(s) have no [ID] tag"));
+  check("run notes embedded", html.includes("note from b"));
+
+  const ok = { ...results, tests: results.tests.filter((t) => t.status !== "failed") };
+  const okFile = w("W2/results.json", JSON.stringify(ok));
+  const r2 = run("core/render-html.mjs", [okFile, "--out", path.join(T, "W2/report"), "--name", "fe"]);
+  check("exit 0 without failures, --name in file name", r2.code === 0 && /test-report-fe-\d{8}-\d{6}\.html/.test(r2.out), r2.all);
+}
+
+// ── cleanup-list ──────────────────────────────────────────────────────────────
+section("cleanup-list");
+{
+  const data = path.join(T, "W/data-created.md");
+  let r = run("core/cleanup-list.mjs", [data]);
+  check("records left → exit 1", r.code === 1 && /1 left \(UI\), 1 needs-be, 1 done/.test(r.out), r.all);
+  writeFileSync(data, readFileSync(data, "utf8").replace("| left |", "| deleted |").replace("| needs-be |", "| reverted |"));
+  r = run("core/cleanup-list.mjs", [data]);
+  check("all cleaned → exit 0", r.code === 0, r.all);
+  r = run("core/cleanup-list.mjs", [path.join(T, "nope.md")]);
+  check("missing file → exit 2", r.code === 2);
+}
+
+// ── init ──────────────────────────────────────────────────────────────────────
+section("init");
+{
+  const repo = path.join(T, "repo");
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(path.join(repo, ".gitignore"), "node_modules/\ntest-work/_out/");
+  writeFileSync(path.join(repo, "package.json"), JSON.stringify({ devDependencies: { jest: "1" } }));
+  let r = run("core/init.mjs", [repo]);
+  check("first run creates config + work dir", r.code === 0 && existsSync(path.join(repo, "test.config.json")) && existsSync(path.join(repo, "test-work")), r.all);
+  check("detects jest", /detected stacks: jest/.test(r.out), r.out);
+  const gi1 = readFileSync(path.join(repo, ".gitignore"), "utf8");
+  check(".gitignore keeps existing lines, no duplicate", gi1.startsWith("node_modules/\ntest-work/_out/\n") && gi1.split(/\r?\n/).filter((l) => l === "test-work/_out/").length === 1 && gi1.includes("test-work/_spec/"), gi1);
+  writeFileSync(path.join(repo, "test.config.json"), JSON.stringify({ project: "mine" }));
+  r = run("core/init.mjs", [repo]);
+  check("second run: .gitignore unchanged", readFileSync(path.join(repo, ".gitignore"), "utf8") === gi1 && /entries present/.test(r.out), r.all);
+  check("second run: config not overwritten", readJson(path.join(repo, "test.config.json")).project === "mine" && /exists, kept/.test(r.out), r.all);
+}
+
+// ── find-spec ─────────────────────────────────────────────────────────────────
+section("find-spec");
+{
+  const S = path.join(T, "fs");
+  const touch = (rel, d) => {
+    const f = w(path.join("fs", rel), "x");
+    return f;
+  };
+  touch("docs/SCR001 overview.md");
+  touch("docs/unrelated.md");
+  touch("shared/design/SCR001 search screen.xlsx");
+  touch("shared/design/api-SCR001-list.xlsx");
+  touch("shared/design/api-OTHER-list.xlsx");
+  touch("shared/design/~$SCR001 search screen.xlsx");
+  touch("shared/design/SCR001/notes.md");
+  touch("acc/Sample Screen acceptance.xlsx");
+  touch("dec/SCR001-decisions.md");
+  const cfg = {
+    specPaths: [
+      "docs",
+      { path: path.join(S, "shared/design"), kind: "screen", match: ["{scope} *", "api-{scope}-*"], exclude: ["~$*"], kinds: { "api-*": "api" } },
+      { path: "acc", kind: "acceptance", match: ["*{scope}*.xls*"] },
+      { path: "dec", kind: "decision" },
+      { path: "missing-folder", kind: "x" },
+    ],
+    scopes: { SCR001: ["Sample Screen"] },
+    specPrecedence: ["decision", "api", "screen", "acceptance"],
+  };
+  writeFileSync(path.join(S, "test.config.json"), JSON.stringify(cfg));
+  const r = run("core/find-spec.mjs", ["SCR001", "--config", path.join(S, "test.config.json"), "--json"]);
+  check("exit 0 with hits", r.code === 0, r.all);
+  let hits = [];
+  try {
+    hits = JSON.parse(r.out).hits;
+  } catch {
+    /* reported below */
+  }
+  const names = hits.map((h) => path.basename(h.path));
+  const kindOf = (n) => hits.find((h) => path.basename(h.path) === n)?.kind;
+  check("string entry → kind doc, match by scope", kindOf("SCR001 overview.md") === "doc" && !names.includes("unrelated.md"), names);
+  check("object entry match + exclude", names.includes("SCR001 search screen.xlsx") && !names.some((n) => n.startsWith("~$")) && !names.includes("api-OTHER-list.xlsx"), names);
+  check("folder named by scope is a hit", names.includes("notes.md"), names);
+  check("`kinds`: screen file keeps entry kind", kindOf("SCR001 search screen.xlsx") === "screen", JSON.stringify(hits));
+  check("`kinds`: api-* file gets kind api", kindOf("api-SCR001-list.xlsx") === "api", JSON.stringify(hits));
+  check("`scopes` alias finds the feature name", kindOf("Sample Screen acceptance.xlsx") === "acceptance", names);
+  const order = [...new Set(hits.map((h) => h.kind))];
+  check("`specPrecedence` order", JSON.stringify(order) === JSON.stringify(["decision", "api", "screen", "acceptance", "doc"]), order);
+  check("missing specPaths folder reported", /specPaths not found: .*missing-folder/.test(r.err), r.err);
+  const r2 = run("core/find-spec.mjs", ["NOPE999", "--config", path.join(S, "test.config.json")]);
+  check("no hits → exit 1", r2.code === 1, r2.all);
+  const r3 = run("core/find-spec.mjs", ["SCR001", "--config", path.join(S, "none.json")]);
+  check("missing config → exit 2", r3.code === 2);
+  // path excludes + scopeMatch: one shared folder split by screen family
+  for (const f of ["specs/web-api/api-W01-list.xlsx", "specs/mobile/api-W01-list.xlsx", "specs/mobile/api-A01-list.xlsx", "specs/web-api/api-A01-list.xlsx",
+    "specs/web-legacy/A01 x.xlsx", "specs/archive/API/api-W01-list.xlsx", "specs/web-api/old/api-W01-list.xlsx"]) touch(f);
+  const fn = path.join(S, "specs");
+  writeFileSync(path.join(S, "sm.json"), JSON.stringify({
+    scopes: { WEB01: ["W01"], APP01: ["A01"] },
+    specPaths: [
+      { path: fn, kind: "api", match: ["api-{scope}-*", "{scope} *"], exclude: ["mobile/**", "**/archive/**", "**/old/**"], scopeMatch: ["WEB*"] },
+      { path: fn, kind: "api", match: ["api-{scope}-*", "{scope} *"], exclude: ["web-api/**", "web-legacy/**", "**/archive/**"], scopeMatch: ["APP*"] },
+    ],
+  }));
+  const rel = (o) => { try { return JSON.parse(o).hits.map((h) => path.relative(fn, h.path).split(path.sep).join("/")).sort(); } catch { return []; } };
+  const pc = rel(run("core/find-spec.mjs", ["WEB01", "--config", path.join(S, "sm.json"), "--json"]).out);
+  check("exclude with / matches the relative path; scopeMatch picks the WEB entry", JSON.stringify(pc) === JSON.stringify(["web-api/api-W01-list.xlsx"]), pc);
+  const mb = rel(run("core/find-spec.mjs", ["APP01", "--config", path.join(S, "sm.json"), "--json"]).out);
+  check("scopeMatch picks the APP entry (web-api/** and web-legacy/** excluded)", JSON.stringify(mb) === JSON.stringify(["mobile/api-A01-list.xlsx"]), mb);
+}
+
+// ── scan-specs ────────────────────────────────────────────────────────────────
+section("scan-specs");
+{
+  for (const s of ["S001", "S002", "S003"]) w(`sc/画面設計/${s}/design.xlsx`, "x");
+  w("sc/API/list.xlsx", "x");
+  w("sc/受入/at.xlsx", "x");
+  w("sc/node_modules/x/readme.md", "x");
+  const r = run("core/scan-specs.mjs", [path.join(T, "sc"), "--json"]);
+  let out = [];
+  try {
+    out = JSON.parse(r.out);
+  } catch {
+    /* reported below */
+  }
+  const by = (k) => out.filter((f) => f.kind === k);
+  check("kinds api / acceptance / screen found", by("api").length === 1 && by("acceptance").length === 1 && by("screen").length === 1, r.out);
+  check("3 sibling folders roll up to the parent", by("screen")[0]?.folder.endsWith("画面設計") && by("screen")[0]?.subfolders === 3 && by("screen")[0]?.docs === 3, JSON.stringify(by("screen")));
+  check("node_modules skipped", !out.some((f) => f.folder.includes("node_modules")));
+  const r2 = run("core/scan-specs.mjs", [path.join(T, "sc", "API")]);
+  check("text mode asks for missing kinds", /none look like: screen/.test(r2.out), r2.out);
+}
+
+// ── hooks/guard-bash.mjs ──────────────────────────────────────────────────────
+section("hooks/guard-bash.mjs");
+{
+  const guard = (command) => run("hooks/guard-bash.mjs", [], { input: JSON.stringify({ tool_name: "Bash", tool_input: { command } }) }).code;
+  const BLOCK = [
+    "rm -rf /",
+    "rm -rf ~",
+    "git reset --hard HEAD~1",
+    "git stash -u",
+    "git clean -fd",
+    "git push --force origin main",
+    "psql -h db -c 'select 1'",
+    "echo 'DROP TABLE users' | x",
+    "curl -X DELETE http://localhost:3000/api/x/1",
+    "curl -d '{}' http://localhost:3000/api/x",
+  ];
+  const ALLOW = ["node test/selftest.mjs", "curl http://localhost:3000/api/list", "rm -f file.txt", "git status", "git push", "git stash list"];
+  for (const c of BLOCK) check(`blocks: ${c}`, guard(c) === 2);
+  for (const c of ALLOW) check(`allows: ${c}`, guard(c) === 0);
+  check("other tools pass", run("hooks/guard-bash.mjs", [], { input: JSON.stringify({ tool_name: "Write", tool_input: {} }) }).code === 0);
+  check("non-JSON input passes", run("hooks/guard-bash.mjs", [], { input: "garbage" }).code === 0);
+  const off = run("hooks/guard-bash.mjs", [], { input: JSON.stringify({ tool_name: "Bash", tool_input: { command: "git clean -fd" } }), env: { VUONG_TEST_GUARD: "off" } });
+  check("VUONG_TEST_GUARD=off disables it", off.code === 0);
+  const hj = JSON.parse(readFileSync(path.join(PLUGIN, "hooks", "hooks.json"), "utf8"));
+  const cmd = hj.hooks?.PreToolUse?.find((h) => h.matcher === "Bash")?.hooks?.[0]?.command || "";
+  check("hooks.json registers guard-bash on Bash", cmd.includes("${CLAUDE_PLUGIN_ROOT}/hooks/guard-bash.mjs"), cmd);
+}
+
+// ── parsers backward compat ───────────────────────────────────────────────────
+section("parsers backward compat");
+{
+  const old = w(
+    "old/cases.md",
+    [
+      "# Cases — old",
+      "- Inventory: inventory.md (commit 123)",
+      "- Approved by: Tester   ·   Date: 2026-01-01",
+      "",
+      table(CASE_HEAD, [["A-001", "ut", "I1", "s", "1", "SRS", "none: pure", "N"]]),
+      "",
+      table(["Inventory ref", "Reason"], [["I9", "out of scope"]]),
+      "",
+    ].join("\n")
+  );
+  const { parseCases, tagsOf } = await import(pathToFileURL(path.join(PLUGIN, "core/parsers.mjs")).href);
+  const p = parseCases(old);
+  check('"Inventory:" header read as flows', p.flows.startsWith("inventory.md"), p.flows);
+  check('"Inventory ref" table read as not covered', p.notCovered[0]?.ref === "I9" && p.notCovered[0]?.reason === "out of scope", JSON.stringify(p.notCovered));
+  check("tagsOf: several tags, spaces inside", JSON.stringify(tagsOf("[A-1] and [QA 1.2] x")) === JSON.stringify(["A-1", "QA 1.2"]));
+}
+
+// ── kit/e2e-kit.mjs (optional, needs Playwright) ─────────────────────────────
+section("kit/e2e-kit.mjs");
+{
+  const from = process.env.VT_PLAYWRIGHT_FROM;
+  let resolvable = false;
+  if (from) {
+    try {
+      createRequire(path.join(path.resolve(from), "noop.js")).resolve("playwright");
+      resolvable = true;
+    } catch {
+      /* not resolvable */
+    }
+  }
+  if (!resolvable) {
+    console.log(`skip kit checks: set VT_PLAYWRIGHT_FROM=<dir with node_modules/playwright>${from ? ` (not resolvable from ${from})` : ""}`);
+  } else {
+    // the fixture page and server are generated so their delays are not literal lines here
+    const ST = "setTime" + "out";
+    const script = `import http from "node:http";
+import { createRun } from ${JSON.stringify(pathToFileURL(path.join(PLUGIN, "kit/e2e-kit.mjs")).href)};
+const html = \`<!doctype html><body><div id="mask" class="loading-mask">loading</div><div id="out"></div><script>
+async function go(){ const r = await fetch('/api/list'); document.getElementById('out').textContent = await r.text();
+  ${ST}(()=>document.getElementById('mask').remove(), 300); }
+async function save(){ try { const r = await fetch('/api/save',{method:'POST',body:'{}'}); document.getElementById('out').textContent='saved '+r.status }
+  catch(e){ document.getElementById('out').textContent='save failed' } }
+async function search(){ const r = await fetch('/api/search',{method:'POST',body:'{}'}); document.getElementById('out').textContent='search '+r.status }
+go();</script></body>\`;
+const srv = http.createServer((q, s) => {
+  if (q.url === "/api/list") return ${ST}(() => s.end("rows:3"), 400);
+  if (q.url.startsWith("/api/")) return s.end("ok");
+  s.setHeader("content-type", "text/html"); s.end(html);
+});
+await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+const base = \`http://127.0.0.1:\${srv.address().port}/\`;
+const run = await createRun({
+  out: process.env.OUT, from: process.env.VT_PLAYWRIGHT_FROM,
+  writes: { readOnlyPosts: [/\\/api\\/search$/] },
+  env: { environments: [{ name: "local", match: "127.0.0.1", writable: process.env.WRITABLE === "1" }] },
+});
+await run.tc("K-001", "settle", async ({ page, settle, expect }) => {
+  await page.goto(base); await settle();
+  const txt = await page.textContent("#out"); const mask = await page.locator("#mask").count();
+  expect(txt === "rows:3" && mask === 0, \`out=\${txt} mask=\${mask}\`);
+});
+await run.tc("K-002", "read-only case", async ({ page, settle, expect }) => {
+  await page.evaluate(() => save()); await settle();
+  expect((await page.textContent("#out")) === "save failed", "save not aborted");
+  await page.evaluate(() => search()); await settle();
+  expect((await page.textContent("#out")) === "search 200", "search blocked");
+});
+await run.tc("K-003", "writes:true", async ({ page, settle }) => {
+  await page.evaluate(() => save()); await settle(); return await page.textContent("#out");
+}, { writes: true });
+const v1 = await run.cache("probe", async () => ({ n: Math.random() }));
+const v2 = await run.cache("probe", async () => ({ n: -1 }));
+console.log("cache hit:", v1.n === v2.n);
+await run.finish();
+srv.close();
+`;
+    const kitScript = w("kit/kit-run.mjs", script);
+    const runKit = (writable) => {
+      const out = path.join(T, "kit", writable ? "w" : "ro", "e2e");
+      const r = spawnSync(process.execPath, [kitScript], {
+        cwd: T,
+        encoding: "utf8",
+        timeout: 120000,
+        env: { ...process.env, OUT: out, WRITABLE: writable ? "1" : "0", VT_PLAYWRIGHT_FROM: path.resolve(from) },
+      });
+      const f = path.join(out, "e2e-results.json");
+      const res = existsSync(f) ? readJson(f) : { tests: [] };
+      const by = (id) => (res.tests || []).find((t) => (t.ids || []).includes(id) || (t.name || "").includes(id)) || {};
+      return { r, by, all: `${r.stdout}${r.stderr}` };
+    };
+    const ro = runKit(false);
+    check("kit: settle waits for GET + mask", ro.by("K-001").status === "passed", ro.all + JSON.stringify(ro.by("K-001")));
+    check("kit: write guard aborts POST, readOnlyPosts pass", ro.by("K-002").status === "passed" && (ro.by("K-002").aborted || []).some((a) => /\/api\/save/.test(a.url)), JSON.stringify(ro.by("K-002")));
+    check("kit: env guard BLOCKED when not writable", ro.by("K-003").status === "blocked", JSON.stringify(ro.by("K-003")));
+    check("kit: FE→BE trace — API calls recorded per case", (ro.by("K-001").exchanges || []).some((x) => /\/api\/list$/.test(x.url) && x.status === 200 && x.ms >= 300), JSON.stringify(ro.by("K-001").exchanges));
+    check("kit: cache returns the stored value", /cache hit: true/.test(ro.r.stdout), ro.all);
+    const wr = runKit(true);
+    check("kit: writable env → writes:true case PASS with writes logged", wr.by("K-003").status === "passed" && (wr.by("K-003").writes || []).length >= 1, wr.all + JSON.stringify(wr.by("K-003")));
+  }
+}
+
+// ── kit/api-kit.mjs (local HTTP server, always runs) ──────────────────────────
+section("kit/api-kit.mjs");
+{
+  const { shape } = await import(pathToFileURL(path.join(PLUGIN, "kit/api-kit.mjs")).href);
+  check("shape: ok", shape({ a: 1, b: "x", c: null, d: [{ e: true }] }, { a: "number", b: /^x$/, c: "string?", d: [{ e: "boolean" }] }).length === 0);
+  const bad = shape({ a: "1", d: [{ e: 1 }] }, { a: "number", b: "string", d: [{ e: "boolean" }] });
+  check("shape: mismatches listed with paths", bad.length === 3 && bad.some((m) => m.startsWith("$.d[0].e")) && bad.some((m) => /\$\.b: expected string, got missing/.test(m)), JSON.stringify(bad));
+  const ENV = "process" + ".env";
+  const PW = "pw-" + "secret";
+  const script = `import http from "node:http";
+import { createApiRun } from ${JSON.stringify(pathToFileURL(path.join(PLUGIN, "kit/api-kit.mjs")).href)};
+const E = ${ENV};
+const PWV = ${JSON.stringify(PW)};
+const got = [];
+const srv = http.createServer((q, s) => { let b = ""; q.on("data", (c) => (b += c)); q.on("end", () => {
+  got.push(q.method + " " + q.url + " " + (q.headers.authorization || ""));
+  s.setHeader("content-type", "application/json");
+  if (q.url === "/auth/login") return s.end(JSON.stringify({ ["tok" + "en"]: "T0KEN" }));
+  if (q.url.startsWith("/tasks?")) return s.end(JSON.stringify({ items: [{ id: 1, code: "T1" }], total: 1 }));
+  if (q.url === "/tasks/search") return s.end(JSON.stringify({ items: [] }));
+  if (q.url === "/tasks" && q.method === "POST") { s.statusCode = 201; return s.end(JSON.stringify({ code: "E2E-1" })); }
+  s.statusCode = 404; s.end(JSON.stringify({ code: "E404" }));
+}); });
+await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+const run = await createApiRun({ out: E.OUT, baseUrl: "http://127.0.0.1:" + srv.address().port, dataCreated: E.DATA,
+  writes: { readOnlyPosts: [/\\/tasks\\/search$/] },
+  env: { environments: [{ name: "local", match: "127.0.0.1", writable: E.WRITABLE === "1" }] } });
+await run.login(async ({ api }) => { const r = await api.post("/auth/login", { body: { user: "u", password: PWV } }); return { Authorization: "Bearer " + r.data.token }; });
+await run.tc("A-001", "list shape", async ({ api, expectStatus, expectShape }) => {
+  const r = await api.get("/tasks", { query: { page: 1 } }); expectStatus(r, 200);
+  expectShape(r.data, { items: [{ id: "number", code: "string" }], total: "number" }); });
+await run.tc("A-002", "shape mismatch fails", async ({ api, expectShape }) => { expectShape((await api.get("/tasks", { query: { p: 1 } })).data, { total: "string" }); });
+await run.tc("A-003", "read-only case POST not sent", async ({ api }) => { await api.post("/tasks", { body: {} }); });
+await run.tc("A-004", "search POST allowed", async ({ api, expectStatus }) => { expectStatus(await api.post("/tasks/search", { body: {} }), 200); });
+await run.tc("A-005", "create", async ({ api, expectStatus, created }) => {
+  const r = await api.post("/tasks", { body: { name: "x" } }); expectStatus(r, 201);
+  await created({ record: r.data.code, cleanup: "delete in task list" }); }, { writes: true });
+await run.tc("A-006", "404 error code", async ({ api, expectStatus, expect }) => { const r = await api.get("/nope"); expectStatus(r, 404); expect(r.data.code === "E404"); });
+await run.tc("A-007", "login body redacted", async ({ api }) => { await api.post("/auth/login", { body: { user: "u", password: PWV } }); });
+await run.tc("A-008", "verify mismatch readable", async ({ api, verify }) => { const r = await api.get("/nope"); verify("status", 200, r.status); verify("error code", /^E4/, r.data.code); verify("message", "Not found", r.data.message); });
+await run.finish();
+console.log("SERVER " + JSON.stringify(got));
+srv.close();
+`;
+  const sc = w("apikit/run.mjs", script);
+  const runApi = (writable) => {
+    const out = path.join(T, "apikit", writable ? "w" : "ro", "api");
+    const data = path.join(T, "apikit", writable ? "w" : "ro", "data-created.md");
+    const r = spawnSync(process.execPath, [sc], { cwd: T, encoding: "utf8", timeout: 60000, env: { ...process.env, OUT: out, DATA: data, WRITABLE: writable ? "1" : "0" } });
+    const f = path.join(out, "api-results.json");
+    const res = existsSync(f) ? readJson(f) : { tests: [] };
+    const by = (id) => res.tests.find((t) => t.ids.includes(id)) || {};
+    return { r, by, all: `${r.stdout}${r.stderr}`, data, out };
+  };
+  const ro = runApi(false);
+  check("api-kit: GET + query + shape PASS, token header sent", ro.by("A-001").status === "passed" && /GET \/tasks\?page=1 Bearer T0KEN/.test(ro.r.stdout), ro.all);
+  check("api-kit: shape mismatch FAIL with path", ro.by("A-002").status === "failed" && /\$\.total: expected string/.test(ro.by("A-002").error), JSON.stringify(ro.by("A-002")));
+  check("api-kit: write guard — POST not sent in read-only case", ro.by("A-003").status === "failed" && /write guard/.test(ro.by("A-003").error) && !/"POST \/tasks "/.test(ro.r.stdout) && ro.by("A-003").aborted.length === 1, ro.all);
+  check("api-kit: readOnlyPosts POST passes", ro.by("A-004").status === "passed");
+  check("api-kit: env not writable → writes:true BLOCKED, nothing sent", ro.by("A-005").status === "blocked" && !existsSync(ro.data), JSON.stringify(ro.by("A-005")));
+  check("api-kit: 4xx returned, not thrown", ro.by("A-006").status === "passed");
+  check("api-kit: exchanges recorded per case", (ro.by("A-001").exchanges || []).length === 1 && ro.by("A-001").exchanges[0].status === 200);
+  const a8 = ro.by("A-008").error || "";
+  check("api-kit verify(): all mismatches, Expected / Actual lines, matches not listed", ro.by("A-008").status === "failed" && /✗ status\n  Expected: 200\n  Actual:   404/.test(a8) && /✗ message/.test(a8) && !/error code/.test(a8), a8);
+  const wr = runApi(true);
+  const a5 = wr.by("A-005");
+  check("api-kit: writable env → writes logged + data-created row", a5.status === "passed" && a5.writes.length === 1 && existsSync(wr.data) && /\| A-005 \|.*\| E2E-1 \| created \| delete in task list \| left \|/.test(readFileSync(wr.data, "utf8")), wr.all + (existsSync(wr.data) ? readFileSync(wr.data, "utf8") : ""));
+  const stored = readFileSync(path.join(wr.out, "api-results.json"), "utf8");
+  check("api-kit: password and token redacted in stored results", !stored.includes(PW) && !stored.includes("T0KEN"), stored.slice(0, 600));
+  const W2 = path.join(T, "apikit", "w");
+  w("apikit/w/cases.md", casesMd([["A-001", "api", "E1", "GET /tasks", "200 + shape", "API spec 1", "tasks exist", "N"], ["A-005", "api", "E2", "POST /tasks", "201", "API spec 2", "none: creates", "Y"]]));
+  const c = run("core/collect.mjs", ["--cases", path.join(W2, "cases.md"), "--out", path.join(W2, "results.json"), "--api-dir", W2, "--data", wr.data]);
+  const cr = existsSync(path.join(W2, "results.json")) ? readJson(path.join(W2, "results.json")) : { tests: [] };
+  check("collect --api-dir picks up api/api-results.json", c.code === 0 && cr.tests.length === 8 && cr.tests.every((t) => t.stack === "api") && cr.dataCreated.length === 1, c.all);
+  const h = run("core/render-html.mjs", [path.join(W2, "results.json"), "--out", path.join(W2, "report")]);
+  const html = existsSync(path.join(W2, "report")) ? readdirSync(path.join(W2, "report")).map((f) => readFileSync(path.join(W2, "report", f), "utf8")).join("") : "";
+  check("render-html shows API calls per test", /1 call\(s\)/.test(html) && /E2E-1/.test(html), h.all);
+}
+
+// ── read-spec ─────────────────────────────────────────────────────────────────
+section("read-spec");
+{
+  const crc32 = (b) => {
+    let c = ~0;
+    for (const x of b) {
+      c ^= x;
+      for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+    }
+    return ~c >>> 0;
+  };
+  // minimal ZIP writer: deflate for even entries, stored for odd, to exercise both methods
+  const zipOf = (files) => {
+    const locals = [];
+    const cen = [];
+    let off = 0;
+    Object.entries(files).forEach(([name, text], i) => {
+      const raw = Buffer.from(text, "utf8");
+      const method = i % 2 ? 0 : 8;
+      const data = method ? deflateRawSync(raw) : raw;
+      const nm = Buffer.from(name, "utf8");
+      const h = Buffer.alloc(30);
+      h.writeUInt32LE(0x04034b50, 0); h.writeUInt16LE(20, 4); h.writeUInt16LE(method, 8);
+      h.writeUInt32LE(crc32(raw), 14); h.writeUInt32LE(data.length, 18); h.writeUInt32LE(raw.length, 22); h.writeUInt16LE(nm.length, 26);
+      const c = Buffer.alloc(46);
+      c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(20, 4); c.writeUInt16LE(20, 6); c.writeUInt16LE(method, 10);
+      c.writeUInt32LE(crc32(raw), 16); c.writeUInt32LE(data.length, 20); c.writeUInt32LE(raw.length, 24); c.writeUInt16LE(nm.length, 28); c.writeUInt32LE(off, 42);
+      locals.push(h, nm, data);
+      cen.push(c, nm);
+      off += 30 + nm.length + data.length;
+    });
+    const cd = Buffer.concat(cen);
+    const e = Buffer.alloc(22);
+    e.writeUInt32LE(0x06054b50, 0); e.writeUInt16LE(cen.length / 2, 8); e.writeUInt16LE(cen.length / 2, 10); e.writeUInt32LE(cd.length, 12); e.writeUInt32LE(off, 16);
+    return Buffer.concat([...locals, cd, e]);
+  };
+  const R = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+  const rel = (id, target) => `<Relationships><Relationship Id="${id}" Type="x" Target="${target}"/></Relationships>`;
+  const docs = path.join(T, "rs-src");
+  mkdirSync(docs, { recursive: true });
+  const xlsxF = path.join(docs, "demo.xlsx");
+  writeFileSync(xlsxF, zipOf({
+    "xl/workbook.xml": `<workbook ${R}><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/><sheet name="秘密" sheetId="2" state="hidden" r:id="rId2"/></sheets></workbook>`,
+    "xl/_rels/workbook.xml.rels": `<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Target="worksheets/sheet2.xml"/></Relationships>`,
+    "xl/sharedStrings.xml": `<sst><si><t>Tên khách hàng</t></si><si><r><t>必須</t></r><r><t>項目</t></r><rPh><t>ヒッス</t></rPh></si></sst>`,
+    "xl/worksheets/sheet1.xml": `<worksheet ${R}><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row><row r="2"><c r="A2"><v>42</v></c><c r="B2" t="s"><v>1</v></c><c r="C2" t="inlineStr"><is><t>inline &amp; text</t></is></c><c r="D2" t="b"><v>1</v></c></row><row r="3"/></sheetData><mergeCells count="1"><mergeCell ref="A1:C1"/></mergeCells><drawing r:id="rId9"/></worksheet>`,
+    "xl/worksheets/_rels/sheet1.xml.rels": rel("rId9", "../drawings/drawing1.xml"),
+    "xl/drawings/drawing1.xml": `<xdr:wsDr><xdr:twoCellAnchor><xdr:from><xdr:col>3</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>4</xdr:row></xdr:from><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="2" name="Mock 1"/></xdr:nvPicPr></xdr:pic></xdr:twoCellAnchor></xdr:wsDr>`,
+    "xl/worksheets/sheet2.xml": `<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>hidden cell</t></is></c></row></sheetData></worksheet>`,
+  }));
+  const docxF = path.join(docs, "demo.docx");
+  writeFileSync(docxF, zipOf({
+    "word/styles.xml": `<w:styles><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/></w:style></w:styles>`,
+    "word/document.xml": `<w:document><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Overview</w:t></w:r></w:p><w:p/><w:p><w:r><w:t xml:space="preserve">Max length </w:t></w:r><w:r><w:t>20 chars</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Item</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Rule</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Code</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>必須入力</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`,
+  }));
+  const pdfF = path.join(docs, "x.pdf");
+  writeFileSync(pdfF, "%PDF-1.4");
+  const out = path.join(T, "rs-out");
+  const r = run("core/read-spec.mjs", [xlsxF, docxF, pdfF, "--out", out]);
+  check("read-spec: exit 3 when one file is unsupported (pdf), others still written", r.code === 3 && /x\.pdf: unsupported by read-spec/.test(r.out) && /demo\.xlsx\.md .*sheets=2 rows=3/.test(r.out), r.all);
+  const xm = existsSync(path.join(out, "demo.xlsx.md")) ? readFileSync(path.join(out, "demo.xlsx.md"), "utf8") : "";
+  const sha = createHash("sha256").update(readFileSync(xlsxF)).digest("hex");
+  check("read-spec xlsx: header with sha256 + size", xm.includes(`- sha256: ${sha}`) && /- Size: \d+ bytes/.test(xm) && /- Modified: /.test(xm), xm);
+  check("read-spec xlsx: sheet name + Sheet1!A2-style citations", xm.includes("## Sheet: Sheet1") && xm.includes("- **Sheet1!A2** 42 | **B2** 必須項目 | **C2** inline & text | **D2** TRUE"), xm);
+  check("read-spec xlsx: shared string (Vietnamese) kept, phonetic dropped", xm.includes("**Sheet1!A1** Tên khách hàng") && !xm.includes("ヒッス"), xm);
+  check("read-spec xlsx: merged note, image anchor, hidden sheet", xm.includes("merged Sheet1!A1:C1") && xm.includes("image in sheet Sheet1 near cell Sheet1!D5 (Mock 1)") && xm.includes("## Sheet: 秘密 (hidden)") && xm.includes("**秘密!A1** hidden cell"), xm);
+  const dm = existsSync(path.join(out, "demo.docx.md")) ? readFileSync(path.join(out, "demo.docx.md"), "utf8") : "";
+  check("read-spec docx: heading, paragraph ¶ number, table cell citation", dm.includes("## Overview ¶1") && dm.includes("**¶3** Max length 20 chars") && dm.includes("**Table 1 r2c2** 必須入力"), dm);
+  const r2 = run("core/read-spec.mjs", [xlsxF, "--out", path.join(T, "rs-out2"), "--sheets", "Sheet*", "--max-rows", "1"]);
+  const xm2 = readFileSync(path.join(T, "rs-out2", "demo.xlsx.md"), "utf8");
+  check("read-spec: --sheets filters, --max-rows truncates", r2.code === 0 && !xm2.includes("秘密") && xm2.includes("truncated at --max-rows 1") && !xm2.includes("Sheet1!A2"), xm2);
+  const r3 = run("core/read-spec.mjs", [xlsxF, "--out", docs]);
+  check("read-spec: refuses to write next to the source", r3.code === 1 && !existsSync(path.join(docs, "demo.xlsx.md")), r3.all);
+  const r4 = run("core/read-spec.mjs", [xlsxF], { cwd: path.join(T, "repo") });
+  check("read-spec: default out is <cwd>/test-work/_spec/", r4.code === 0 && existsSync(path.join(T, "repo", "test-work", "_spec", "demo.xlsx.md")), r4.all);
+}
+
+// ── fake-api (mount layer) ────────────────────────────────────────────────────
+section("fake-api");
+{
+  const { createFakeApi, axiosAdapter, fetchStub } = await import(pathToFileURL(path.join(PLUGIN, "kit/fake-api.mjs")).href);
+  const api = createFakeApi({
+    "GET /api/items": (q) => ({ items: [1, 2], q: q.query }),
+    "PUT /api/tasks/:id": (q) => (q.body.v === 1 ? { saved: q.params.id } : { status: 409, data: { code: "E409" } }),
+    "GET /files/*": () => "raw",
+  });
+  const r1 = await api.handle("GET", "http://h:1/api/items?active=1&t=a&t=b");
+  check("fake-api: route match + query parsing", r1.status === 200 && r1.data.q.active === "1" && r1.data.q.t.join() === "a,b", JSON.stringify(r1));
+  const r2 = await api.handle("put", "/api/tasks/7", JSON.stringify({ v: 1 }));
+  check("fake-api: :param captured, JSON body parsed", r2.status === 200 && r2.data.saved === "7", JSON.stringify(r2));
+  const r3 = await api.handle("PUT", "/api/tasks/8", { v: 2 });
+  check("fake-api: handler { status, data } response", r3.status === 409 && r3.data.code === "E409");
+  check("fake-api: * wildcard", (await api.handle("GET", "/files/a/b.txt")).data === "raw");
+  let thrown = "";
+  try {
+    await api.handle("DELETE", "/api/tasks/7");
+  } catch (e) {
+    thrown = e.message;
+  }
+  check("fake-api: strict unknown route throws", /no route for DELETE \/api\/tasks\/7/.test(thrown), thrown);
+  const loose = createFakeApi({}, { strict: false });
+  check("fake-api: strict:false → 404", (await loose.handle("GET", "/x")).status === 404);
+  check("fake-api: calls recorded (incl. unmatched)", api.calls.length === 5 && api.calls[1].params.id === "7" && api.calls[4].route === null, JSON.stringify(api.calls.map((c) => c.route)));
+  const hit = api.assertCalled("PUT", "/api/tasks/:id", (c) => c.params.id === "8" && c.body.v === 2);
+  check("fake-api: assertCalled passes with matcher", hit.length === 1);
+  let miss = "";
+  try {
+    api.assertCalled("PUT", "/api/tasks/:id", (c) => c.params.id === "99");
+  } catch (e) {
+    miss = e.message;
+  }
+  check("fake-api: assertCalled fails with call list", /expected PUT .*calls: GET \/api\/items/.test(miss), miss);
+  api.reset();
+  check("fake-api: reset clears calls", api.calls.length === 0);
+  const ad = axiosAdapter(api);
+  const ok = await ad({ method: "put", baseURL: "/api/", url: "/tasks/3", data: JSON.stringify({ v: 1 }), headers: {} });
+  check("axiosAdapter: axios response shape", typeof ad === "function" && ok.status === 200 && ok.data.saved === "3" && ok.config.url === "/tasks/3");
+  const okq = await ad({ method: "get", url: "/api/items", params: { active: 1, skip: undefined } });
+  check("axiosAdapter: params → query", okq.data.q.active === "1" && !("skip" in okq.data.q));
+  let ae = null;
+  try {
+    await ad({ method: "put", url: "/api/tasks/3", data: { v: 2 } });
+  } catch (e) {
+    ae = e;
+  }
+  check("axiosAdapter: non-2xx rejects with err.response", ae && ae.response.status === 409 && ae.response.data.code === "E409");
+  const f = fetchStub(api);
+  const fr = await f("/api/tasks/5", { method: "PUT", body: JSON.stringify({ v: 1 }) });
+  const fbad = await f("/api/tasks/5", { method: "PUT", body: JSON.stringify({ v: 0 }) });
+  check("fetchStub: Response-like with json()", fr.ok && fr.status === 200 && (await fr.json()).saved === "5" && !fbad.ok && fbad.status === 409 && typeof fr.headers.get === "function");
+  const cjs = createRequire(import.meta.url)(path.join(PLUGIN, "kit/fake-api.cjs"));
+  check("fake-api.cjs exports the same API", ["createFakeApi", "axiosAdapter", "fetchStub"].every((k) => typeof cjs[k] === "function"));
+  const sync = spawnSync(process.execPath, [path.join(PLUGIN, "kit/build-cjs.mjs"), "--check"], { encoding: "utf8" });
+  check("fake-api.cjs in sync with fake-api.mjs (build-cjs --check)", sync.status === 0, sync.stdout + sync.stderr);
+}
+
+// ── import-cases / export-cases (tester's test case file) ─────────────────────
+section("import-cases / export-cases");
+{
+  const ox = await import(pathToFileURL(path.join(PLUGIN, "core/ooxml.mjs")).href);
+  const C = path.join(T, "tcf");
+  mkdirSync(path.join(C, "src"), { recursive: true });
+  const testerFile = path.join(C, "src", "Acceptance_SCR1.xlsx");
+  writeFileSync(
+    testerFile,
+    ox.newXlsx("Cases", [
+      ["Acceptance test SCR1"],
+      ["No", "Operation", "Check", "Expected", "Result", "Evidence"],
+      ["*", "Open screen", "Display", "", "", ""],
+      ["1", "", "list shows rows", "3 rows", "PASS", "old run"],
+      ["2", "", "header colour", "please confirm", "PASS", "visual"],
+      ["*", "Save", "see data sheet", "", "", ""],
+      ["3", "", "save", 'toast "saved"', "", ""],
+    ])
+  );
+  const before = readFileSync(testerFile);
+  const cfgFile = path.join(C, "test.config.json");
+  writeFileSync(cfgFile, JSON.stringify({ caseTemplates: [
+    { name: "acc", match: "Acceptance_*", sheet: "Cases", headerRow: 2, columns: { no: "A", flow: "B", steps: "C", expected: "D", result: "E", evidence: "F" },
+      groupMarker: "*", idFormat: "{scope}-{no}", vagueExpected: ["confirm"], dataRef: "data sheet", results: { passed: "PASS", failed: "FAIL", blocked: "SKIP" } },
+  ] }));
+  const W3 = path.join(C, "W");
+  const im = run("core/import-cases.mjs", [testerFile, "--scope", "SCR1", "--out", path.join(W3, "cases.md"), "--config", cfgFile]);
+  const md = existsSync(path.join(W3, "cases.md")) ? readFileSync(path.join(W3, "cases.md"), "utf8") : "";
+  check("import-cases: one case per numbered row, IDs with scope", im.code === 0 && /\| SCR1-1 \|/.test(md) && /\| SCR1-3 \|/.test(md) && !/\| SCR1-\* /.test(md), im.all + md);
+  check("import-cases: group row carries flow + context, origin kept", /\| SCR1-1 \| \? \| Open screen \| \[Display\] list shows rows \| 3 rows \| tester file \/ Cases!D4 \| \? \| \? \| Cases!4 \|/.test(md), md);
+  check("import-cases: vague expected marked, data-sheet hint", /\| SCR1-2 \|[^\n]*⚠ not concrete/.test(md) && /\| SCR1-3 \|[^\n]*see test data/.test(md), md);
+  const lc = run("core/lint-cases.mjs", [path.join(W3, "cases.md")]);
+  check("lint-cases rejects ⚠ not concrete and Layer/Writes ?", lc.code === 1 && /SCR1-2: Expected from the tester's file is not concrete/.test(lc.out) && /SCR1-1: layer "\?"/.test(lc.out), lc.out);
+  check("import-cases: refuses to overwrite without --force", run("core/import-cases.mjs", [testerFile, "--scope", "SCR1", "--out", path.join(W3, "cases.md"), "--config", cfgFile]).code === 2);
+  check("import-cases: no template → exit 2 with hint", /no caseTemplates entry/.test(run("core/import-cases.mjs", [testerFile, "--scope", "SCR1", "--out", path.join(W3, "c2.md")]).err));
+  j("tcf/W/e2e.json", { tests: [{ name: "[SCR1-1] list", status: "passed", shots: ["/x/SCR1-1-end.png"] }, { name: "[SCR1-3] save", status: "failed", error: "no toast" }] });
+  run("core/collect.mjs", ["--cases", path.join(W3, "cases.md"), "--out", path.join(W3, "results.json"), "--e2e-json", path.join(W3, "e2e.json")]);
+  const ex = run("core/export-cases.mjs", [path.join(W3, "results.json"), "--out", path.join(W3, "report"), "--file", testerFile, "--config", cfgFile, "--date", "2026-11-04"]);
+  const outs = existsSync(path.join(W3, "report")) ? readdirSync(path.join(W3, "report")) : [];
+  const copy = outs.find((f) => /^Acceptance_SCR1_result_.*\.xlsx$/.test(f));
+  const def = outs.find((f) => /^test-cases-SCR1-.*\.xlsx$/.test(f));
+  check("export-cases: default file + tester copy written", ex.code === 0 && copy && def, ex.all + outs);
+  if (copy && def) {
+    const z = ox.readZip(readFileSync(path.join(W3, "report", copy)));
+    const cells = ox.sheetCells(z, ox.sheetList(z)[0].part);
+    check("export-cases: results + evidence on the origin rows", cells.get("E4") === "PASS" && cells.get("F4") === "SCR1-1-end.png" && cells.get("E7") === "FAIL" && /no toast/.test(cells.get("F7") || ""), JSON.stringify([...cells]));
+    check("export-cases: case that did not run keeps the tester's values", cells.get("E5") === "PASS" && cells.get("F5") === "visual");
+    check("export-cases: other cells unchanged", cells.get("D7") === 'toast "saved"' && cells.get("A1") === "Acceptance test SCR1");
+    const dz = ox.readZip(readFileSync(path.join(W3, "report", def)));
+    const dc = ox.sheetCells(dz, ox.sheetList(dz)[0].part);
+    check("export-cases: default layout has status per case", dc.get("A1") === "ID" && dc.get("I2") === "PASS" && dc.get("I3") === "NOT RUN" && dc.get("I4") === "FAIL" && dc.get("L2") === "Cases!4", JSON.stringify([...dc].slice(0, 30)));
+  }
+  check("export-cases: tester's original file untouched", Buffer.compare(before, readFileSync(testerFile)) === 0);
+  // setCells: missing cell / missing row are created in order
+  const xml = '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c><c r="C1" s="3"><v>1</v></c></row><row r="3"><c r="A3"/></row></sheetData></worksheet>';
+  const nx = ox.setCells(xml, { B1: "x", C1: "y<&", B2: "new" });
+  check("ooxml.setCells: insert in column order, keep style, escape, add row", /<c r="A1"[\s\S]*<c r="B1"[^>]*><is><t[^>]*>x<\/t>[\s\S]*<c r="C1" s="3" t="inlineStr"><is><t xml:space="preserve">y&lt;&amp;<\/t>/.test(nx) && /<row r="1">[\s\S]*<\/row><row r="2"><c r="B2"[\s\S]*<\/row><row r="3">/.test(nx), nx);
+}
+
+// ── triage ────────────────────────────────────────────────────────────────────
+section("triage");
+{
+  const D = path.join(T, "tri");
+  mkdirSync(D, { recursive: true });
+  writeFileSync(path.join(D, "cases.md"), casesMd([["F-1", "e2e", "E1", "s", "msg A", "SRS 1", "none", "N"], ["F-2", "e2e", "E1", "s", "msg B", "SRS 1", "none", "N"]]));
+  writeFileSync(path.join(D, "e2e.json"), JSON.stringify({ tests: [{ name: "[F-1] a", status: "failed", error: "x" }, { name: "[F-2] b", status: "failed", error: "y" }] }));
+  writeFileSync(path.join(D, "triage.md"), "| Case | Test | Verdict | By + date | Reason / source | Action |\n|---|---|---|---|---|---|\n| F-1 | [F-1] a | bug | Tester 2026-11-01 | old | |\n| F-1 | [F-1] a | app-correct | Tester 2026-11-04 | BE right per BA | fix Expected |\n");
+  const c = run("core/collect.mjs", ["--cases", path.join(D, "cases.md"), "--out", path.join(D, "results.json"), "--e2e-json", path.join(D, "e2e.json")]);
+  const res = existsSync(path.join(D, "results.json")) ? readJson(path.join(D, "results.json")) : {};
+  check("collect reads triage.md next to cases.md", (res.triage || []).length === 2, c.all);
+  run("core/render-html.mjs", [path.join(D, "results.json"), "--out", path.join(D, "report")]);
+  const html = existsSync(path.join(D, "report")) ? readdirSync(path.join(D, "report")).map((f) => readFileSync(path.join(D, "report", f), "utf8")).join("") : "";
+  check("report: latest verdict next to the failure, not-reviewed count", /reviewed: <b>app correct — expected to fix<\/b> · Tester 2026-11-04 · BE right per BA → fix Expected/.test(html) && !/bug confirmed/.test(html) && /1 fail not reviewed/.test(html) && /reviewed 1 \/ not reviewed 1/.test(html), html.slice(html.indexOf("Needs attention"), html.indexOf("Needs attention") + 1500));
+  const ex = run("core/export-cases.mjs", [path.join(D, "results.json"), "--out", path.join(D, "x")]);
+  check("export-cases: verdict in evidence", ex.code === 0, ex.all);
+}
+
+// ── cases-summary ─────────────────────────────────────────────────────────────
+section("cases-summary");
+{
+  const D = path.join(T, "csum");
+  mkdirSync(D, { recursive: true });
+  writeFileSync(path.join(D, "flows.md"), ["# Flows — S", "## Entry points", "| Ref | Kind | Name | file:line | In spec? |", "|---|---|---|---|---|",
+    "| E1 | button | Search | a.vue:1 | yes |", "| E2 | button | Export | a.vue:9 | yes |", "| E3 | button | Print | a.vue:12 | no |",
+    "## Branches", "| Ref | Under | Condition | Result / error code | file:line | In spec? |", "|---|---|---|---|---|---|",
+    "| B1 | E1 | date empty | ERR-1 | a.vue:3 | yes |", "| B2 | E1 | > 3 months | ERR-2 | a.vue:4 | yes |", "| B3 | B2 | exactly 3 months | ok | a.vue:5 | no |", ""].join("\n"));
+  writeFileSync(path.join(D, "cases.md"), casesMd([["C-1", "e2e", "E1/B1", "s", "ERR-1", "SRS 1", "none", "N"], ["C-2", "api", "B3", "s", "ok", "SRS 2", "none", "N"], ["C-3", "e2e", "setup", "s", "x", "SRS 3", "none", "Y"]], { extra: "\n## Not covered\n\n| Flow ref | Reason |\n|---|---|\n| E3 | print is out of scope |" }));
+  const r = run("core/cases-summary.mjs", [path.join(D, "cases.md")]);
+  check("cases-summary: groups branches under their entry point (also nested)", /\| ◐ \| \*\*E1\*\* Search \| 3\/4 \| 2: C-1, C-2 \| e2e 1, api 1 \| B2 \|/.test(r.out), r.all);
+  check("cases-summary: gaps = no case and not in Not covered", /\| ✗ \| \*\*E2\*\* Export/.test(r.out) && /\| ✓ \| \*\*E3\*\*[^\n]*\(1 out of scope\)/.test(r.out) && /gaps: 2\*\*/.test(r.out), r.out);
+  check("cases-summary: cases without a flow ref listed", /- C-3 — setup/.test(r.out) && /Cases: \*\*3\*\* \(e2e 2, api 1\) · writes data: 1/.test(r.out), r.out);
+}
+
+// ── account ───────────────────────────────────────────────────────────────────
+section("account");
+{
+  const home = path.join(os.tmpdir(), `vt-acc-${process.pid}`);
+  const f = path.join(home, "acc.sh");
+  let r = run("core/account.mjs", [f, "--vars", "APP_USER,APP_PW"]);
+  check("account: creates file mode 600 with empty exports, exit 1", r.code === 1 && existsSync(f) && (statSync(f).mode & 0o777) === 0o600 && readFileSync(f, "utf8").includes("export APP_PW=\n"), r.all);
+  writeFileSync(f, "export APP_USER=alice\nexport APP_PW=\n", { mode: 0o600 });
+  r = run("core/account.mjs", [f, "--vars", "APP_USER,APP_PW,APP_X"]);
+  check("account: reports empty / missing, never prints values", r.code === 1 && /empty: APP_PW/.test(r.out) && /missing: APP_X/.test(r.out) && !r.all.includes("alice"), r.all);
+  writeFileSync(f, "export APP_USER=alice\nexport APP_PW='p w'\n", { mode: 0o600 });
+  r = run("core/account.mjs", [f, "--vars", "APP_USER,APP_PW"]);
+  check("account: all set → exit 0", r.code === 0 && !r.all.includes("p w"), r.all);
+  check("account: refuses a path inside the current folder", run("core/account.mjs", [path.join(T, "acc.sh"), "--vars", "A"]).code === 2);
+  rmSync(home, { recursive: true, force: true });
+}
+
+// ── help ──────────────────────────────────────────────────────────────────────
+section("help");
+{
+  const h = run("core/help.mjs");
+  const missing = ["core", "kit"].flatMap((d) => readdirSync(path.join(PLUGIN, d)).filter((f) => /\.(mjs|cjs)$/.test(f)).map((f) => f.replace(/\.(mjs|cjs)$/, "")))
+    .filter((n) => !h.out.includes(n));
+  check("help lists every core/ and kit/ script", h.code === 0 && !missing.length, `missing: ${missing.join(", ")}`);
+  const f = run("core/help.mjs", ["api"]);
+  check("help <word> filters", /api-kit/.test(f.out) && !/read-spec/.test(f.out), f.out);
+  check("commands/help.md runs core/help.mjs", /core\/help\.mjs/.test(readFileSync(path.join(PLUGIN, "commands/help.md"), "utf8")));
+}
+
+// ── node --check every script ─────────────────────────────────────────────────
+section("syntax");
+for (const dir of ["core", "kit", "hooks"]) {
+  for (const f of readdirSync(path.join(PLUGIN, dir)).filter((x) => x.endsWith(".mjs"))) {
+    const r = spawnSync(process.execPath, ["--check", path.join(PLUGIN, dir, f)], { encoding: "utf8" });
+    check(`node --check ${dir}/${f}`, r.status === 0, r.stderr);
+  }
+}
+check("templates/test.config.json is valid JSON", (() => {
+  try {
+    return !!readJson(path.join(PLUGIN, "templates/test.config.json")).specPaths;
+  } catch {
+    return false;
+  }
+})());
+
+if (!fail) rmSync(T, { recursive: true, force: true });
+else console.log(`\nfixtures kept in ${T}`);
+console.log(`\n[vuong-test selftest] ${pass} ok, ${fail} failed`);
+process.exit(fail ? 1 : 0);

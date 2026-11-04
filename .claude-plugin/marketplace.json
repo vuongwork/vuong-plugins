@@ -1,0 +1,15 @@
+{
+  "name": "vuong-plugins",
+  "owner": {
+    "name": "vuongwork",
+    "email": "vuongpq.work@gmail.com"
+  },
+  "description": "vuongwork's Claude Code plugins",
+  "plugins": [
+    {
+      "name": "vuong-test",
+      "source": "./plugins/vuong-test",
+      "description": "One test process for every layer and stack: spec sources → flows → spec≠code diff → cases → approval → tests → HTML report"
+    }
+  ]
+}

@@ -12,3 +12,14 @@ Claude Code plugin marketplace by vuongwork.
 | [vuong-test](plugins/vuong-test) | One test process for every layer (UT, component, integration, API, E2E) and stack: spec → flows → cases → approval → tests → HTML report |
 
 Update with `/plugin marketplace update vuong-plugins`.
+
+---
+
+<p align="center">
+  <img src="assets/vuong-logo.svg" alt="Vuong Pham logo" width="96">
+</p>
+
+<p align="center">
+  Made by <b>Vuong Pham</b> · <a href="https://github.com/vuongwork">@vuongwork</a><br>
+  Licensed under <a href="LICENSE">Apache-2.0</a>
+</p>

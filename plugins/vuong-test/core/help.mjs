@@ -7,9 +7,9 @@ const P = "$PLUGIN"; // = ${CLAUDE_PLUGIN_ROOT}
 
 const GROUPS = [
   ["Trong Claude Code", [
-    ["/vuong-test <màn/feature/ticket>", "Chạy quy trình test 8 bước: scope → spec → flows + diff → cases → duyệt → viết/chạy test → report"],
-    ["/vuong-test init", "Cài quy trình cho project: tạo test.config.json, hỏi chỗ để spec màn hình / API, môi trường, tài khoản"],
-    ["/vuong-test:help [từ khoá]", "Danh sách lệnh này (cũng: /vuong-test help)"],
+    ["/vuong-test:vuong-test <màn/feature/ticket>", "Chạy quy trình test 8 bước: scope → spec → flows + diff → cases → duyệt → viết/chạy test → report (hoặc gõ câu thường: \"vuong-test màn X\")"],
+    ["/vuong-test:init [repo]", "Cài cho project lần đầu, hoặc cho máy mình sau khi clone: test.config.json, đường dẫn riêng máy, spec màn hình / API, môi trường, tài khoản"],
+    ["/vuong-test:help [từ khoá]", "Danh sách lệnh này"],
   ]],
   ["Setup & spec (bước 0–2)", [
     [`node ${P}/core/init.mjs <repo>`, "Tạo test.config.json + test.config.local.json (máy này) + thư mục test-work + .gitignore (không ghi đè)"],

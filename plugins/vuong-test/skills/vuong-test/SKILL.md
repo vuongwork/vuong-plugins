@@ -1,6 +1,6 @@
 ---
 name: vuong-test
-description: Use when the user wants to test a screen, feature, API, ticket or module at any layer (unit, component mount, integration, API, E2E) in any supported stack (JS/TS Jest/Vitest, Java JUnit/Maven, Playwright, API kit / Newman), including full-stack FE → BE — "test màn X", "viết UT cho", "chạy e2e", "test API", "test BE", "test case cho ticket", "report test", "/vuong-test". Also use to set up the test process in a new project (`init`). Drives one fixed flow: clarify spec → list flows from spec + code (flows.md) → cases.md → tester approves → write/run tests → HTML report. Do NOT use for code review or for fixing a known bug without testing.
+description: Use when the user wants to test a screen, feature, API, ticket or module at any layer (unit, component mount, integration, API, E2E) in any supported stack (JS/TS Jest/Vitest, Java JUnit/Maven, Playwright, API kit / Newman), including full-stack FE → BE — "test màn X", "viết UT cho", "chạy e2e", "test API", "test BE", "test case cho ticket", "report test", "vuong-test …". Also use to set up the test process in a new project or on a member's machine after cloning ("vuong-test init", `/vuong-test:init`). Drives one fixed flow: clarify spec → list flows from spec + code (flows.md) → cases.md → tester approves → write/run tests → HTML report. Do NOT use for code review or for fixing a known bug without testing.
 ---
 
 # vuong-test — one test process for every layer and stack
@@ -11,7 +11,7 @@ Each step names its output file; a step is done only when that file exists. Deta
 Paths: `PLUGIN=${CLAUDE_PLUGIN_ROOT}` (this plugin). Project config: `<repo>/test.config.json`.
 Working folder per scope: `<cfg.workDir>/<scope>/` (default `test-work/<scope>/`), called `W` below.
 
-`/vuong-test help` (or `/vuong-test:help [word]`): run `node $PLUGIN/core/help.mjs [word]` and show its output as is; do nothing else.
+`/vuong-test:vuong-test help` (or `/vuong-test:help [word]`): run `node $PLUGIN/core/help.mjs [word]` and show its output as is; do nothing else.
 
 ## 0. Setup (once per project)
 

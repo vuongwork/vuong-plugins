@@ -1,7 +1,7 @@
 # vuong-test
 
 One test process for every member, project, layer (UT, component mount, integration, API, E2E) and stack.
-Claude Code plugin; skill `/vuong-test`.
+Claude Code plugin; skill `/vuong-test:vuong-test` (or just ask "vuong-test …" in plain words), setup `/vuong-test:init`.
 
 ```
 scope → clarify spec → list flows (file:line) + spec≠code diff → cases.md → tester approves → write/run → HTML report → commit
@@ -40,8 +40,9 @@ themselves (`!` prefix).
 ## Use
 
 ```
-/vuong-test init                         # once per project → test.config.json
-/vuong-test <screen|feature|ticket|endpoint> [--layer ut|mount|it|api|e2e]
+/vuong-test:init                         # once per project, and once per member's machine after cloning
+/vuong-test:vuong-test <screen|feature|ticket|endpoint> [--layer ut|mount|it|api|e2e]
+/vuong-test:help [keyword]                # list of commands and scripts
 ```
 
 Scripts (also usable without Claude, e.g. in CI):

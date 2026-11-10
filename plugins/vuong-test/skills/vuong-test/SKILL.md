@@ -10,6 +10,13 @@ Each step names its output file; a step is done only when that file exists. Deta
 
 Paths: `PLUGIN=${CLAUDE_PLUGIN_ROOT}` (this plugin). Project config: `<repo>/test.config.json`.
 Working folder per scope: `<cfg.workDir>/<scope>/` (default `test-work/<scope>/`), called `W` below.
+**Tell the dev what to read.** Every time a step ends at a person — the approval gate (5), tests written (end of 6),
+a run reported (7) — show the "Cần đọc tiếp" block as is — `lint-cases.mjs` (no errors) and `render-html.mjs` print it
+themselves; at the end of step 6 run `node $PLUGIN/core/next.mjs W`: for the stage the scope is at, it
+names the file and the rows / IDs to look at, in order, and what is not needed. Do not write a summary file for this;
+a dev can ask the same at any time with `/vuong-test:next [scope]`.
+Files others read (`cases.md`, `diff.md`, `data-plan.md`) must read row by row without another file open: spec by
+file name + cell, flow refs with their name, rules in words; codes (`R12`, `S2`, `B3`) only in brackets.
 
 `/vuong-test:vuong-test help` (or `/vuong-test:help [word]`): run `node $PLUGIN/core/help.mjs [word]` and show its output as is; do nothing else.
 
@@ -50,9 +57,10 @@ search for it again and every case needing it is an assumption. Verify with
 ## 1. Scope
 
 Ask/confirm: what (screen / feature / endpoint / ticket), which layers, which stack(s), which environment,
-and whether any case may **write data** to a shared environment. Write `W/scope.md`.
+and whether any case may **write data** to a shared environment. Start `W/cases.md` from `$PLUGIN/templates/cases.md`
+with the header filled (Scope, Environment, Writes data; the table comes in step 4) — there is no separate scope file.
 **Always ask: "Is there a test case file from the tester for this scope?"** (path; `find-spec.mjs` hits of kind
-`acceptance` are candidates — confirm, do not assume). Record the answer in `scope.md` (file + sha256, or "none").
+`acceptance` are candidates — confirm, do not assume). Record the answer in the cases.md header `Tester file:` (path + sha256, or "none").
 
 ## 2. Clarify spec → `W/spec-sources.md`
 
@@ -74,6 +82,8 @@ For each FE action record the endpoint it calls (method + path) — that links t
 for each endpoint list request rules, error codes, permission and side effects from the API spec
 (`references/stacks/api.md`).
 Mark which items are covered by spec and which are not. This step exists so no flow is silently missed.
+Release or stateful feature: also add the items from `references/flows.md` › Flows that code reading misses
+(upgrade, option not used, lifecycle, changed from outside, N + 1, decoy data, privacy, destructive).
 
 Then write `W/diff.md` from `$PLUGIN/templates/diff.md`: every place where a mapped rule and the code
 disagree (value, limit, message, enable condition, rounding...), every spec rule with no code found, and
@@ -92,8 +102,12 @@ sheet / header row / columns hold No., operation, check, expected, result, evide
 and Writes, replace each `⚠ not concrete` Expected with the value from the spec (cite it) or mark assumption,
 map Flow to `flows.md` refs, and **add cases for flow items the tester's file misses** (Origin empty). Tester
 rows that match no flow item → ask the user. No tester file → copy `$PLUGIN/templates/cases.md`. One row per case: ID, layer, flow (flow ref), steps, expected,
-source, data, writes data (Y/N). Layer: read `$PLUGIN/references/layers.md` — the lowest layer that can
-observe the expected result; screen logic with no backend truth is `mount` (fake API), not `e2e`. Every flow item is either covered by a case or listed under
+source, data, writes data (Y/N); optional Type, Priority and Pre (IDs that must pass first — lint checks they exist
+and come earlier; a case whose Pre failed is reported BLOCKED). Layer: read `$PLUGIN/references/layers.md` — the lowest layer that can
+observe the expected result; screen logic with no backend truth is `mount` (fake API), not `e2e`;
+what no runner can drive or observe (install over, restart, OS pickers, another app, a real-time notification,
+whether a message is visible where the user looks) is `manual` — follow `layers.md` › manual for its text and
+fill the `Build`, `Run order`, `Before you start` header lines. Every flow item is either covered by a case or listed under
 "Not covered" with a reason. Run `node $PLUGIN/core/lint-cases.mjs W/cases.md` until it has no errors
 and no Data warnings.
 
@@ -105,11 +119,12 @@ environment through the UI, key recorded / `create-in-test` — through the app 
 
 ## 5. Approval gate (STOP)
 
-First run `node $PLUGIN/core/cases-summary.mjs W/cases.md --flows W/flows.md --out W/cases-summary.md` and show
+First run `node $PLUGIN/core/cases-summary.mjs W/cases.md --flows W/flows.md` (prints it; `--out W/cases-summary.md` if the
+approver wants a file — gitignored, regenerate rather than keep) and show
 that overview BEFORE the case list: one row per area (entry point + its branches) with how many flow items have a
 case, the cases by layer, and the **gaps** (flow items with no case and not in Not covered). The approver often
 judges coverage from this alone; list each gap and ask: add a case, or move it to Not covered with a reason.
-Then offer `cases.md` for the detail. **The person who runs the tests approves.**
+Then show the "Cần đọc tiếp" block (lint-cases prints it: what to read for approval, with the IDs). **The person who runs the tests approves.**
 Approval is allowed only when every expected result has a source; assumption rows must be answered by BA
 first or set to BLOCKED. Record approver + date in the `cases.md` header. Do not write test code before this.
 Also show the data-plan rows marked `user-provides` or `cannot` with their cases, so the user can supply
@@ -121,6 +136,9 @@ Follow `$PLUGIN/references/stacks/<stack>.md` and `$PLUGIN/references/review-tes
 - Test names start with the case tag: `[<ID>] ...` (any language) — this links results to cases.
 - You may change HOW a result is reached (selector, data, helper) without re-approval; log each change
   in `W/run-notes.md`. You may NOT change an expected result or add/remove cases — go back to step 5.
+- `manual` cases: no test code. Run `node $PLUGIN/core/manual-runbook.mjs W/cases.md --out W/manual/ [--lang vi]` and
+  give the xlsx to the person running them (never regenerate over a file they may have typed into: the script
+  refuses to overwrite). When they send it back, it is an input of step 7 (`--manual`).
 - Tests already exist for the scope (dev UT, TDD tooling) → run the review above first; a test with Decision
   `keep` / `tag <ID>` covers its case, so write new tests only for the cases still without one.
 - Self-review the tests against `$PLUGIN/references/review-tests.md` before the real run, and run
@@ -147,12 +165,16 @@ Follow `$PLUGIN/references/stacks/<stack>.md` and `$PLUGIN/references/review-tes
 
 Run the stack command(s), then:
 `node $PLUGIN/core/collect.mjs --cases W/cases.md --out W/results.json <inputs>` and
-`node $PLUGIN/core/render-html.mjs W/results.json --out W/report/` and
+`node $PLUGIN/core/render-html.mjs W/results.json --out W/report/` (→ `W/report/index.html`, replaced each run; `--keep`
+also keeps a timestamped copy in `report/history/` when the user wants to compare runs); show the "Cần đọc tiếp"
+block it prints.
+Excel only when there is a tester file or the user asks for one:
 `node $PLUGIN/core/export-cases.mjs W/results.json --out W/report/ [--file <tester file> --tester <name>]`
-(Excel: default layout always; with the tester's file also a copy with result / evidence written into their
+(default layout; with the tester's file also a copy with result / evidence written into their
 rows — the original is never touched, rows of cases that did not run keep the tester's values).
 E2E scripts use `$PLUGIN/kit/e2e-kit.mjs` (it also records each case's API calls: FE→BE trace); API scripts use `$PLUGIN/kit/api-kit.mjs` (results `--api-dir W`). Inputs: `--junit <file|dir>` (any stack), `--jest-json <file>`, `--e2e-json <file>`, `--coverage <file>`
-(istanbul `coverage-final.json` or JaCoCo `jacoco.xml`), `--shots <dir>`, `--notes W/run-notes.md` (repeatable), `--diff W/diff.md` (the report marks each difference
+(istanbul `coverage-final.json` or JaCoCo `jacoco.xml`), `--shots <dir>`, `--manual <filled runbook.xlsx>` (repeatable; a row the person marked Fail is a FAIL with their Actual text),
+`--notes W/run-notes.md` (repeatable), `--diff W/diff.md` (the report marks each difference
 reproduced / not reproduced / unverified from its cases' results).
 Parallel / split runs: `--e2e-dir W`, `--api-dir W` (every `W/api*/api-results.json`) (every `W/e2e*/e2e-results.json`), `--jest-dir <dir>`, `--notes-dir W`
 (every `W/run-notes*.md`).
@@ -178,11 +200,19 @@ failing test as reproduction) · `spec-unclear` (question for BA in spec-sources
 Re-run and collect again (collect reads `W/triage.md` by default); the report shows the verdict next to each failure
 and counts "fail not reviewed". Rows stay after a later PASS (history).
 
+## Running again (same scope, new commit or new spec version)
+
+Update every file in place — never start a new folder or renumber. Keep all IDs and refs (cases, `E`/`B`, `D`,
+`S`/`R`/`X`/`Q`, `N`); new items continue after the last number; an item that no longer applies is marked
+`removed @<sha>` / `dropped @<sha>: <why>` (cases move to Not covered), `resolved @<sha>` for a difference.
+Record the new commit sha in flows.md and diff.md headings. Changed Expected → step 5 again for those cases.
+`W/report/index.html` is replaced by the new run; earlier runs live only in `report/history/` (`--keep`).
+
 ## 8. Commit
 
 Commit per the project's commit rules: `spec-sources.md`, `flows.md`, `diff.md`, `cases.md`, `triage.md`, `data-plan.md`,
 (the exported Excel goes to the tester / uploader, not into git),
-`data-created.md`, `run-notes*.md`, test code. Not: `report/`, screenshots, `e2e*/`, `results.json`,
+`data-created.md`, `run-notes*.md`, test code. Not: `report/`, `manual/` (runbooks, filled or not), `cases-summary.md`, screenshots, `e2e*/`, `results.json`,
 caches (gitignored by `init`). Run `cleanup-list.mjs` once more and tell the user what is still left.
 Never commit credentials.
 

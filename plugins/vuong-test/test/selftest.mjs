@@ -263,7 +263,11 @@ section("render-html");
   const ok = { ...results, tests: results.tests.filter((t) => t.status !== "failed") };
   const okFile = w("W2/results.json", JSON.stringify(ok));
   const r2 = run("core/render-html.mjs", [okFile, "--out", path.join(T, "W2/report"), "--name", "fe"]);
-  check("exit 0 without failures, --name in file name", r2.code === 0 && /test-report-fe-\d{8}-\d{6}\.html/.test(r2.out), r2.all);
+  check("exit 0 without failures, --name in file name", r2.code === 0 && /[\\/]fe\.html$/.test(r2.out.trim()), r2.all);
+  const r3 = run("core/render-html.mjs", [okFile, "--out", path.join(T, "W2/report"), "--keep"]);
+  check("report has a fixed name (index.html), --keep copies to history/", r3.code === 0 && existsSync(path.join(T, "W2/report/index.html")) && readdirSync(path.join(T, "W2/report/history")).some((f) => /^report-\d{8}-\d{6}\.html$/.test(f)), r3.all);
+  const r4 = run("core/render-html.mjs", [okFile, "--out", path.join(T, "W2/report")]);
+  check("re-render replaces index.html, no new files", r4.code === 0 && readdirSync(path.join(T, "W2/report")).sort().join() === "fe.html,history,index.html", readdirSync(path.join(T, "W2/report")).join());
 }
 
 // ── cleanup-list ──────────────────────────────────────────────────────────────
@@ -862,6 +866,123 @@ section("import-cases / export-cases");
   const xml = '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c><c r="C1" s="3"><v>1</v></c></row><row r="3"><c r="A3"/></row></sheetData></worksheet>';
   const nx = ox.setCells(xml, { B1: "x", C1: "y<&", B2: "new" });
   check("ooxml.setCells: insert in column order, keep style, escape, add row", /<c r="A1"[\s\S]*<c r="B1"[^>]*><is><t[^>]*>x<\/t>[\s\S]*<c r="C1" s="3" t="inlineStr"><is><t xml:space="preserve">y&lt;&amp;<\/t>/.test(nx) && /<row r="1">[\s\S]*<\/row><row r="2"><c r="B2"[\s\S]*<\/row><row r="3">/.test(nx), nx);
+}
+
+// ── manual layer: lint, runbook, collect --manual, Pre → BLOCKED ──────────────
+section("manual runbook / collect --manual / Pre");
+{
+  const HEAD = ["ID", "Layer", "Flow", "Type", "Priority", "Pre", "Steps", "Expected", "Source", "Data", "Writes"];
+  const md = (rows, header = "- Run order: WP last<br>- Build: 1.1.0") =>
+    ["# Cases — rb", "- Environment: phone   ·   Writes data: Y", "- Approved by: Tester   ·   Date: 2026-11-10", ...header.split("<br>"), "", table(HEAD, rows), ""].join("\n");
+  const rows = [
+    ["BF-01", "manual", "E1", "positive", "high", "", "1. Open Backup <br>2. Read the top", 'title "Backup folder" at the top', "decision D1", "none: fresh install", "N"],
+    ["BF-02", "manual", "E1", "positive", "high", "BF-01", "1. Choose folder", 'status line "Saving to: FC"', "decision D1", "folder Download/FC exists", "N"],
+    ["BF-03", "manual", "E1", "edge", "medium", "BF-02", "1. Back up twice", 'second file ends with " (1)"', "decision D1", "BF-02 folder", "N"],
+    ["WP-01", "manual", "E2", "negative", "low", "", "1. Wipe, cancel", "nothing deleted", "decision D2", "one transaction", "Y"],
+    ["UT-01", "ut", "B1", "", "", "", "`keep(11)`", "10 kept", "decision D1", "none: pure", "N"],
+  ];
+  const good = w("rb/cases.md", md(rows));
+  let r = run("core/lint-cases.mjs", [good]);
+  check("lint: manual layer, Type/Priority/Pre accepted", r.code === 0 && !/^warn/m.test(r.out), r.all);
+  const bad = w(
+    "rb/bad.md",
+    md(
+      [
+        ["A-01", "manual", "E1", "happy", "urgent", "A-02", "open it", "title shown at the top", "d", "none: x", "Y"],
+        ["A-02", "manual", "E1", "", "", "ZZ-9", "1. x", "line under title", "d", "none: x", "N"],
+      ],
+      ""
+    )
+  );
+  r = run("core/lint-cases.mjs", [bad]);
+  check("lint: Pre to an unknown ID is an error", r.code === 1 && /Pre "ZZ-9" is not a case ID/.test(r.out), r.out);
+  check("lint: Pre to a later case warns", /Pre A-02 comes later/.test(r.out), r.out);
+  check("lint: unknown Type / Priority warn", /Type "happy"/.test(r.out) && /Priority "urgent"/.test(r.out), r.out);
+  check("lint: manual steps not numbered warn", /A-01: manual case — number the steps/.test(r.out), r.out);
+  check("lint: manual writes data without Run order warns", /add a `- Run order:`/.test(r.out), r.out);
+
+  const out = path.join(T, "rb/manual");
+  r = run("core/manual-runbook.mjs", [good, "--out", out, "--lang", "vi"]);
+  const file = (r.out.match(/→ (.+\.xlsx)/) || [])[1];
+  check("runbook: written, automated case left out", r.code === 0 && file && existsSync(file) && /1 automated case/.test(r.out), r.all);
+  const { readZip, sheetList, sheetCells, sharedStrings, setCells, rewriteZip } = await import(pathToFileURL(path.join(PLUGIN, "core/ooxml.mjs")).href);
+  const zip = readZip(readFileSync(file));
+  const sheets = sheetList(zip);
+  check("runbook: Guide / Test cases / Summary sheets", sheets.map((s) => s.name).join("|") === "Hướng dẫn|Test cases|Tổng hợp", sheets.map((s) => s.name).join("|"));
+  const caseXml = zip.get(sheets[1].part);
+  check("runbook: Status column is a list with all statuses", /<dataValidation type="list"[^>]*sqref="K2:K5"><formula1>"Chưa test,Pass,Fail,Blocked,Skip"<\/formula1>/.test(caseXml), caseXml.slice(-900));
+  check("runbook: Status coloured by value", (caseXml.match(/<conditionalFormatting /g) || []).length === 4);
+  const cells = sheetCells(zip, sheets[1].part, sharedStrings(zip));
+  check("runbook: rows in table order, steps on lines, priority label, Pre", cells.get("A2") === "BF-01" && cells.get("A5") === "WP-01" && cells.get("G2") === "1. Open Backup\n2. Read the top" && cells.get("E2") === "Cao" && cells.get("F3") === "BF-01" && cells.get("K2") === "Chưa test", [...cells].slice(0, 30).join(" ; "));
+  const sumXml = zip.get(sheets[2].part);
+  check("runbook: summary counts by formulas, per group", /<f>COUNTIFS\('Test cases'!\$B\$2:\$B\$5,\$A2,'Test cases'!\$K\$2:\$K\$5,&quot;Pass&quot;\)<\/f>/.test(sumXml) && /fullCalcOnLoad="1"/.test(zip.get("xl/workbook.xml")), sumXml.slice(0, 600));
+  const guide = sheetCells(zip, sheets[0].part, sharedStrings(zip));
+  check("runbook: guide has run order, build, Fail vs Blocked rule", [...guide.values()].some((v) => v === "WP last") && [...guide.values()].some((v) => v === "1.1.0") && [...guide.values()].some((v) => /→ Fail, không phải Blocked/.test(v)));
+  r = run("core/manual-runbook.mjs", [w("rb/none.md", md([rows[4]])), "--out", out]);
+  check("runbook: no manual case → exit 1", r.code === 1 && /no case with Layer = manual/.test(r.err), r.all);
+
+  // the person fills it: BF-01 Pass, BF-02 Fail, WP-01 Skip; BF-03 left "Chưa test" → blocked by its Pre chain
+  const filled = rewriteZip(zip, {
+    [sheets[1].part]: setCells(caseXml, { K2: "Pass", K3: "Fail", J3: "no status line", L3: "BUG-1", K5: "Skip", L5: "no second phone" }),
+    [sheets[0].part]: setCells(zip.get(sheets[0].part), { B8: "Lan" }),
+  });
+  const ff = path.join(T, "rb/filled.xlsx");
+  writeFileSync(ff, filled);
+  r = run("core/collect.mjs", ["--cases", good, "--out", path.join(T, "rb/results.json"), "--manual", ff]);
+  const R = r.code === 0 ? readJson(path.join(T, "rb/results.json")) : { tests: [], inputs: {} };
+  const t = (id) => R.tests.filter((x) => x.ids.includes(id));
+  check("collect --manual: Pass / Fail with Actual + notes / Skip", t("BF-01")[0]?.status === "passed" && t("BF-02")[0]?.status === "failed" && /Actual: no status line\nNotes: BUG-1/.test(t("BF-02")[0]?.error) && t("WP-01")[0]?.status === "skipped" && t("BF-01")[0]?.stack === "manual", r.all + JSON.stringify(R.tests).slice(0, 600));
+  check("collect: case with failed Pre is BLOCKED", t("BF-03")[0]?.status === "blocked" && /Pre BF-02 FAIL/.test(t("BF-03")[0]?.note), JSON.stringify(t("BF-03")));
+  check("collect: not-run case without Pre stays not run", !t("UT-01").length);
+  check("collect --manual: tester recorded", /filled\.xlsx \(Lan\)/.test((R.inputs.manual || []).join()), JSON.stringify(R.inputs));
+  // chain: A fails → B (Pre A) blocked → C (Pre B) blocked
+  const chain = w("rb/chain.md", md([["C-1", "ut", "B1", "", "", "", "a", "1", "d", "none: x", "N"], ["C-2", "ut", "B1", "", "", "C-1", "b", "2", "d", "none: x", "N"], ["C-3", "ut", "B1", "", "", "C-2", "c", "3", "d", "none: x", "N"]]));
+  j("rb/chain.json", { tests: [{ name: "[C-1] a", status: "failed", error: "x" }] });
+  r = run("core/collect.mjs", ["--cases", chain, "--out", path.join(T, "rb/chain-results.json"), "--e2e-json", path.join(T, "rb/chain.json")]);
+  const C = r.code === 0 ? readJson(path.join(T, "rb/chain-results.json")) : { tests: [] };
+  check("collect: Pre blocking follows the chain", ["C-2", "C-3"].every((id) => C.tests.some((x) => x.ids.includes(id) && x.status === "blocked")), r.all);
+  r = run("core/render-html.mjs", [path.join(T, "rb/results.json"), "--out", path.join(T, "rb/report")]);
+  // render-html exits non-zero when cases failed; the file is still written
+  const html = existsSync(path.join(T, "rb/report")) ? readFileSync(path.join(T, "rb/report", readdirSync(path.join(T, "rb/report"))[0]), "utf8") : "";
+  check("report: manual run listed", /Manual runs<\/td><td>filled\.xlsx \(Lan\)/.test(html), r.all);
+  r = run("core/cases-summary.mjs", [good]);
+  check("cases-summary: type / priority / Pre mix", /By type: positive 2, edge 1, negative 1 · by priority: high 2, medium 1, low 1 · with Pre: 2/.test(r.out), r.out);
+}
+
+// ── next (what to read now) + self-contained rows ─────────────────────────────
+section("next / readable rows");
+{
+  const lint = run("core/lint-cases.mjs", [w("wi/codes.md", casesMd([["A-001", "e2e", "E1 New", "s", "3 rows", "R12", "record R1 open", "N"], ["A-002", "e2e", "E1 New", "s", "3 rows", "S2 › Items!C14", "record R1 open", "N"], ["A-003", "e2e", "E1 New", "s", "3 rows", "SRS_v3.xlsx › Items!C14 (R12)", "record R1 open", "N"]]))]);
+  check("lint: Source that is only a code warns, file name + code in brackets passes", /A-001: Source "R12" is only a code/.test(lint.out) && /A-002: Source "S2 › Items!C14" is only a code/.test(lint.out) && !/A-003: Source/.test(lint.out), lint.out);
+
+  const P = path.join(T, "wi"); // project root: wi/test-work/demo
+  const rows = [["A-001", "e2e", "E1 New", "s", "3 rows", "SRS.xlsx › S!A1", "record R1 open", "Y"], ["A-002", "ut", "B1 empty", "s", "error", "assumption", "none: pure", "N"]];
+  w("wi/test-work/demo/cases.md", casesMd(rows, { approved: false }));
+  w("wi/test-work/demo/diff.md", ["# Spec vs code", "", table(["Diff", "Area", "Spec says", "Source", "Code does", "file:line", "Cases", "Decision"], [["D1", "Save", "x", "SRS.xlsx › S!A1", "y", "a.js:1", "A-001", "open"], ["D2", "a", "x", "SRS.xlsx › S!A2", "z", "a.js:2", "A-002", "fix code — Lan 2026-11-10"]])].join("\n"));
+  w("wi/test-work/demo/spec-sources.md", ["# Sources", "## Questions for BA", table(["Q", "Question", "Cases blocked", "Asked to", "Date", "Answer"], [["Q1", "limit?", "A-002", "BA", "2026-11-10", ""], ["Q2", "x?", "", "BA", "2026-11-10", "yes"]])].join("\n"));
+  w("wi/test-work/demo/data-plan.md", ["# Data plan", "", table(["Need", "Concrete data (key / state / file)", "How to get", "Found / created by", "Cases", "Status"], [["N1", "order O-1 open", "exists", "search", "A-001", "ready"], ["N2", "admin account", "user-provides", "—", "A-001", "waiting"]])].join("\n"));
+  let r = run("core/next.mjs", [], { cwd: P });
+  check("next: no argument → the only scope; stage approve", r.code === 0 && /^\[demo\] Giai đoạn: DUYỆT CASE/.test(r.out), r.all);
+  check("next: approve — important rows, assumption, data, open diff, open question", /quan trọng trước: A-001/.test(r.out) && /assumption.*: A-002/.test(r.out) && /N2 admin account \(waiting; case A-001\)/.test(r.out) && /D1 Save/.test(r.out) && /chưa trả lời: Q1$/m.test(r.out) && !/Q2/.test(r.out), r.out);
+  check("next: writes no file", readdirSync(path.join(P, "test-work/demo")).sort().join() === "cases.md,data-plan.md,diff.md,spec-sources.md");
+  w("wi/test-work/demo/cases.md", casesMd(rows));
+  r = run("core/next.mjs", ["demo"], { cwd: P });
+  check("next: approved, no run → write / run stage with missing data", /VIẾT \/ CHẠY TEST/.test(r.out) && /còn thiếu: N2 \(case A-001\)/.test(r.out), r.out);
+  j("wi/e2e.json", { tests: [{ name: "[A-001] x", status: "failed", error: "x" }] });
+  run("core/collect.mjs", ["--cases", path.join(P, "test-work/demo/cases.md"), "--out", path.join(P, "test-work/demo/results.json"), "--e2e-json", path.join(P, "e2e.json")]);
+  w("wi/test-work/demo/data-created.md", ["# Data created", "", table(["Case", "When", "Environment", "Record (key)", "Action", "How to delete / revert", "Status"], [["A-001", "t", "dev", "O-9", "create", "UI delete", "left"]])].join("\n"));
+  r = run("core/next.mjs", [path.join(P, "test-work/demo")]);
+  check("next: after run — failed case, row in cases.md, verdict missing, diff reproduced, cleanup", /SAU KHI CHẠY — 0 pass · 1 fail/.test(r.out) && /case fail: A-001/.test(r.out) && /chưa có kết luận: A-001/.test(r.out) && /tái hiện: D1/.test(r.out) && /1 bản ghi test còn/.test(r.out) && /chưa có kết quả: A-002/.test(r.out), r.out);
+  r = run("core/lint-cases.mjs", [path.join(P, "test-work/demo/cases.md")]);
+  check("lint-cases prints what to read next for its work folder", /── Cần đọc tiếp/.test(r.out) && /\[demo\] Giai đoạn:/.test(r.out), r.out);
+  r = run("core/lint-cases.mjs", [path.join(P, "test-work/demo/cases.md"), "--no-next"]);
+  check("--no-next turns it off", !/Cần đọc tiếp/.test(r.out), r.out);
+  r = run("core/render-html.mjs", [path.join(P, "test-work/demo/results.json"), "--out", path.join(P, "test-work/demo/report")]);
+  check("render-html prints what to read after the run", /── Cần đọc tiếp/.test(r.out) && /SAU KHI CHẠY/.test(r.out), r.out);
+  w("wi/test-work/other/cases.md", "# Cases — other\n");
+  r = run("core/next.mjs", [], { cwd: P });
+  check("next: several scopes → asks which", /Có 2 scope/.test(r.out) && /demo, other/.test(r.out), r.out);
+  check("next: unknown scope → exit 2", run("core/next.mjs", ["nope"], { cwd: P }).code === 2);
 }
 
 // ── triage ────────────────────────────────────────────────────────────────────

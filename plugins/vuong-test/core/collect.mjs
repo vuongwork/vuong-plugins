@@ -4,19 +4,23 @@
 //   node collect.mjs --cases W/cases.md --out W/results.json \
 //     [--junit <file|dir> [--stack java]]... [--jest-json <file>]... [--e2e-json <file>]... \
 //     [--api-json <file>]... [--e2e-dir <W>] [--api-dir <W>] [--jest-dir <dir>] [--coverage <file> [--label be]]... [--shots <dir>] \
-//     [--notes W/run-notes.md]... [--notes-dir <W>] [--diff W/diff.md] [--data W/data-created.md] [--triage W/triage.md (default: next to cases.md)] [--root <repo>]
+//     [--notes W/run-notes.md]... [--notes-dir <W>] [--diff W/diff.md] [--data W/data-created.md] [--triage W/triage.md (default: next to cases.md)] [--root <repo>] \
+//     [--manual <filled runbook.xlsx>]...
 //
 // Several inputs of the same kind are allowed (FE + BE in one report).
 // Parallel agents: --e2e-dir W picks up every W/e2e*/e2e-results.json (and W/e2e-results.json);
 // --api-dir W every W/api*/api-results.json (kit/api-kit.mjs); --jest-dir D every *.json Jest output in D; --notes-dir W every W/run-notes*.md.
+// --manual: a runbook from manual-runbook.mjs filled by a person; each row with a status becomes a test (stack "manual").
+// Pre (cases.md): a case with no result whose Pre case failed or is blocked is reported BLOCKED, along the whole chain.
 import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { execSync } from "node:child_process";
 import path from "node:path";
-import { parseCases, parseDiff, parseDataCreated, parseTriage,parseJunit, parseJestJson, parseE2eJson } from "./parsers.mjs";
+import { parseCases, parseDiff, parseDataCreated, parseTriage, parseJunit, parseJestJson, parseE2eJson, parseRunbook, casesWithStatus } from "./parsers.mjs";
+import { readZip, sheetList, sheetCells, sharedStrings } from "./ooxml.mjs";
 import { readCoverage, mergeCoverage } from "./coverage.mjs";
 
 const argv = process.argv.slice(2);
-const opt = { junit: [], jest: [], e2e: [], cov: [], notes: [] };
+const opt = { junit: [], jest: [], e2e: [], cov: [], notes: [], manual: [] };
 const isDir = (d) => existsSync(d) && statSync(d).isDirectory();
 const die = (m) => (console.error(m), process.exit(2));
 for (let i = 0; i < argv.length; i++) {
@@ -64,6 +68,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === "--junit") opt.junit.push({ p: next(), stack: tail("--stack") });
   else if (a === "--jest-json") opt.jest.push(next());
   else if (a === "--e2e-json" || a === "--api-json") opt.e2e.push(next());
+  else if (a === "--manual") opt.manual.push(next());
   else if (a === "--coverage") opt.cov.push({ p: next(), label: tail("--label") });
   else {
     console.error(`unknown argument: ${a}`);
@@ -82,6 +87,51 @@ const tests = [
   ...opt.jest.flatMap((f) => parseJestJson(f, root)),
   ...opt.e2e.flatMap((f) => parseE2eJson(f)),
 ];
+
+// manual runbooks filled by a person
+const manualInfo = [];
+for (const f of opt.manual) {
+  if (!existsSync(f)) die(`--manual: not found: ${f}`);
+  let rb;
+  try {
+    rb = parseRunbook(readFileSync(f), { readZip, sheetList, sheetCells, sharedStrings });
+  } catch (e) {
+    die(`--manual ${f}: ${e.message}`);
+  }
+  const who = [rb.tester, rb.device, rb.os, rb.date].filter(Boolean).join(" · ");
+  manualInfo.push(`${path.basename(f)}${who ? ` (${who})` : ""}`);
+  const known = new Set(spec.cases.map((c) => c.id));
+  for (const r of rb.rows) {
+    if (r.status.startsWith("unknown:")) console.log(`  warn ${path.basename(f)} row ${r.sheetRow} ${r.id}: status "${r.status.slice(8)}" is not in the list — left as not run`);
+    if (r.status === "notrun" || r.status.startsWith("unknown:")) continue;
+    if (!known.has(r.id)) console.log(`  warn ${path.basename(f)} row ${r.sheetRow}: ${r.id} is not a case in ${opt.cases}`);
+    const said = [r.actual && `Actual: ${r.actual}`, r.notes && `Notes: ${r.notes}`].filter(Boolean).join("\n");
+    tests.push({
+      file: path.basename(f),
+      name: `[${r.id}] manual${rb.tester ? ` — ${rb.tester}` : ""}`,
+      ids: [r.id],
+      status: r.status,
+      duration: 0,
+      error: r.status === "failed" ? said || "Fail (no actual result written)" : null,
+      note: r.status === "failed" ? null : said || null,
+      stack: "manual",
+      shots: [],
+    });
+  }
+}
+
+// Pre: a case with no result whose Pre failed / is blocked is blocked too (repeat for chains A → B → C)
+for (let changed = true; changed; ) {
+  changed = false;
+  const st = Object.fromEntries(casesWithStatus({ cases: spec.cases, tests }).map((c) => [c.id, c]));
+  for (const c of spec.cases) {
+    if (st[c.id].tests.length) continue;
+    const bad = c.pre.filter((p) => st[p] && ["failed", "blocked"].includes(st[p].status));
+    if (!bad.length) continue;
+    tests.push({ file: "cases.md (Pre)", name: `[${c.id}] blocked by Pre`, ids: [c.id], status: "blocked", duration: 0, error: null, note: `Pre ${bad.map((p) => `${p} ${st[p].status === "failed" ? "FAIL" : "BLOCKED"}`).join(", ")} — not run`, stack: "pre", shots: [] });
+    changed = true;
+  }
+}
 
 // screenshots named <ID>*.png attach to the tests carrying that tag
 if (opt.shots && existsSync(opt.shots)) {
@@ -121,7 +171,7 @@ const results = {
     .filter((f) => existsSync(f))
     .map((f) => (opt.notes.length > 1 ? `── ${path.basename(f)} ──\n` : "") + readFileSync(f, "utf8"))
     .join("\n\n"),
-  inputs: { e2e: opt.e2e, jest: opt.jest, notes: opt.notes },
+  inputs: { e2e: opt.e2e, jest: opt.jest, notes: opt.notes, manual: manualInfo },
   dataCreated: opt.data && existsSync(opt.data) ? parseDataCreated(opt.data) : [],
   triage: (() => {
     const f = opt.triage || path.join(path.dirname(opt.cases), "triage.md");
@@ -133,5 +183,5 @@ mkdirSync(path.dirname(path.resolve(opt.out)), { recursive: true });
 writeFileSync(opt.out, JSON.stringify(results, null, 2));
 const tagged = tests.filter((t) => t.ids.length).length;
 console.log(
-  `[vuong-test] ${spec.cases.length} cases, ${tests.length} tests (${tagged} tagged) from ${opt.e2e.length} e2e / ${opt.jest.length} jest / ${opt.junit.length} junit input(s), ${opt.notes.length} notes file(s) → ${opt.out}`
+  `[vuong-test] ${spec.cases.length} cases, ${tests.length} tests (${tagged} tagged) from ${opt.e2e.length} e2e / ${opt.jest.length} jest / ${opt.junit.length} junit / ${opt.manual.length} manual input(s), ${opt.notes.length} notes file(s) → ${opt.out}`
 );

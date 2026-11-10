@@ -13,7 +13,7 @@ The plugin **does not collect, send, or store any data on servers run by the aut
 Everything below happens locally, in folders you choose:
 
 - **Spec and source files.** The plugin reads them from your project to find test flows and write test cases.
-- **Test output.** It writes `cases.md`, results, screenshots and HTML reports to a work folder in your project, by default `test-work/`.
+- **Test output.** It writes `cases.md`, results, screenshots, HTML reports and Excel files (exported results, manual-test runbooks) to a work folder in your project, by default `test-work/`. A filled runbook you pass back is read locally; nothing is sent anywhere.
 - **Per-machine paths.** `test.config.local.json` (next to `test.config.json`, added to `.gitignore`) holds
   where shared folders are on your machine, such as the spec folder or a sibling repo. `core/config.mjs` reads
   it, or an environment variable with the same name, **only for names your project's config declares**. It runs

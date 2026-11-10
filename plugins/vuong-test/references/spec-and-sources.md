@@ -52,9 +52,16 @@ behavior, the AI's opinion. Code is used in step 3 to FIND flows, never to DECID
 
 A citation is `<file name> › <Sheet>!<Cell>` (xlsx), `<file name> › ¶N` / `Table T rRcC` (docx), `<file> p.N` (pdf).
 A sheet or cell alone (`Cases!E28`, `Sheet1!B4`) is not a citation: several files share sheet names, and the
-reader cannot find it. Use the short name from the Sources table `#` column when the file name is long:
-`S2 › Items!C14`, with `S2` = the full file name + path in the Sources table. This applies to Rules,
-Conflicts (both sides), Questions, cases.md `Source`, flows.md `In spec?` and diff.md.
+reader cannot find it. This applies to Rules, Conflicts (both sides), Questions, cases.md `Source`, flows.md
+`In spec?` and diff.md.
+
+Short codes (`S2` for a file, `R12` for a rule) are allowed **only inside spec-sources.md**. Files other people
+read on their own — `cases.md`, `diff.md`, `data-plan.md` — write the file name (`SRS_v3.xlsx › Items!C14`), and
+the rule in words where the column is about a rule; the code may follow in brackets (`… (R12)`). A reviewer must
+not need a second file open to understand a row. `lint-cases.mjs` warns on a Source that is only a code.
+
+Re-run of the same scope: keep every `S`, `R`, `X`, `Q` number; add new ones after the last; a source that no
+longer applies is marked `withdrawn @<date>`, not deleted (cases.md and diff.md of earlier runs still point at it).
 
 ## Conflicting sources
 

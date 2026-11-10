@@ -41,8 +41,9 @@ themselves (`!` prefix).
 
 ```
 /vuong-test:init                         # once per project, and once per member's machine after cloning
-/vuong-test:vuong-test <screen|feature|ticket|endpoint> [--layer ut|mount|it|api|e2e]
+/vuong-test:vuong-test <screen|feature|ticket|endpoint> [--layer ut|mount|it|api|e2e|manual]
 /vuong-test:review-tests <tests> [scope]  # review tests that already exist (dev, TDD tooling) before trusting them
+/vuong-test:next [scope]                  # what to read now: file, rows and IDs for the current stage
 /vuong-test:help [keyword]                # list of commands and scripts
 ```
 
@@ -55,19 +56,31 @@ Scripts (also usable without Claude, e.g. in CI):
 | `core/scan-specs.mjs <folders>... [--top 6] [--all]` | setup: suggest spec folders per kind (screen, api, acceptance, requirement, decision, ticket, mock, db, old UT) from folder/file names |
 | `core/find-spec.mjs <keyword>... [--config test.config.json]` | list spec documents for a scope from `specPaths` (repo or absolute paths), ordered by `specPrecedence`, with modified date |
 | `core/read-spec.mjs <file>... [--out dir] [--sheets glob] [--max-rows N]` | xlsx/xlsm/docx → `test-work/_spec/<name>.md` with `**Sheet!Cell**` / `¶N` / `Table T rRcC` citation labels, merged cells, image anchors, hidden sheets; header with size, modified date, sha256; pure Node; exit 3 for unsupported types (pdf/pptx/doc/xls) |
-| `core/lint-cases.mjs <cases.md> [--require-approval]` | IDs, layers, sources, checkable expected results, approval |
+| `core/lint-cases.mjs <cases.md> [--require-approval]` | IDs, layers, sources, checkable expected results, Pre (exists, runs earlier), approval |
+| `core/manual-runbook.mjs <cases.md> --out <dir> [--lang vi|en] [--all]` | `manual` cases → xlsx for the person running them: guide sheet, Status list with colours, summary counted by formulas, release rule; never overwrites |
 | `core/lint-tests.mjs <test files/dirs>` | fixed waits (`waitForTimeout`, `sleep`...) and hard-coded secrets in test code |
 | `core/review-tests.mjs <tests>... [--cases cases.md] [--out existing-tests.md]` | review existing JS/TS and Java tests (read-only): no assertion, weak assertion, mock calls only, tautology, mocked subject, swallowed failure, skipped / `.only`; with `--cases`, which cases have a tagged test and which have none |
-| `core/collect.mjs --cases ... --out results.json <inputs>` | merge Jest JSON / JUnit XML (any language) / E2E JSON / coverage into one file; `--e2e-dir` / `--jest-dir` / `--notes-dir` pick up the files of parallel agents |
-| `core/render-html.mjs results.json --out <dir>` | self-contained HTML report (screenshots embedded) |
+| `core/collect.mjs --cases ... --out results.json <inputs>` | merge Jest JSON / JUnit XML (any language) / E2E JSON / coverage into one file; `--e2e-dir` / `--jest-dir` / `--notes-dir` pick up the files of parallel agents; `--manual <filled runbook>` adds manual results; a case whose Pre failed is BLOCKED |
+| `core/render-html.mjs results.json --out <dir> [--keep]` | self-contained HTML report (screenshots embedded) → `<dir>/index.html`, replaced each run; `--keep` adds a timestamped copy in `history/` |
+| `core/next.mjs [scope \| W]` | prints what to read now for the stage the scope is at (approve / write-run / after the run): file, rows and IDs, in order; writes nothing |
 | `core/cleanup-list.mjs W/data-created.md` | cleanup checklist (UI / needs BE-DB / done); exit 1 while anything is left |
 | `kit/e2e-kit.mjs` | tiny runner for plain Playwright scripts → E2E JSON + screenshots; `settle`, write guard, environment guard, discovery cache |
+
+## Which file to read
+
+Ask the tool: `/vuong-test:next [scope]` (or `node core/next.mjs <scope>`). It looks at the scope's files and prints,
+for the current stage, which file to open and which rows / IDs to look at, in order — e.g. at approval: the
+gaps, the high-priority and data-writing cases, the `assumption` cases, the data still missing, the spec≠code
+differences waiting for a decision, the open BA questions; after a run: the failed cases, those without a
+verdict, the blocked ones and why, the data to clean up. `lint-cases.mjs` (when clean) and `render-html.mjs` print
+the same block at the end of their output, so it appears without asking (`--no-next` turns it off). `flows.md`, `spec-sources.md` and `results.json` are working files; it only sends you there when
+needed.
 
 ## What to commit
 
 | Commit (in `test-work/<scope>/`) | Do not commit (gitignored by `init`) |
 |---|---|
-| `scope.md`, `spec-sources.md`, `flows.md`, `diff.md`, `cases.md`, `data-plan.md`, `data-created.md`, `run-notes*.md`, test code | `report/`, `e2e*/` (screenshots, raw E2E JSON), `results.json`, `.cache/`, `*cache*.json`, `test-work/_out/` |
+| `spec-sources.md`, `flows.md`, `diff.md`, `cases.md`, `data-plan.md`, `data-created.md`, `triage.md`, `run-notes*.md`, test code | `report/`, `manual/` (manual runbooks), `cases-summary.md`, `e2e*/` (screenshots, raw E2E JSON), `results.json`, `.cache/`, `*cache*.json`, `test-work/_out/` |
 
 The HTML report is regenerated from committed files plus a run; share it through `uploader` instead of git.
 

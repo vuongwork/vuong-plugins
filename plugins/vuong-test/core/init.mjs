@@ -41,6 +41,8 @@ const IGNORE = [
   "test-work/*/report/",
   "test-work/*/e2e*/",
   "test-work/*/results.json",
+  "test-work/*/manual/",
+  "test-work/*/cases-summary.md",
   "test-work/*/.cache/",
   "test-work/*/*cache*.json",
 ];

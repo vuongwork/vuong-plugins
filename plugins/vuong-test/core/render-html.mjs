@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 // results.json → one self-contained HTML report (screenshots embedded) (layout of a standard UT report).
 //
-//   node render-html.mjs W/results.json --out W/report/ [--name <label>]
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+//   node render-html.mjs W/results.json --out W/report/ [--name <label>] [--keep] [--no-next]
+// Then prints what to read now (next.mjs) for the work folder of results.json.
+//
+// Writes <out>/index.html (or <out>/<label>.html with --name), replaced on every run, so the latest report always
+// has the same name. --keep also keeps a timestamped copy in <out>/history/ (a run you want to compare later).
+import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
 import path from "node:path";
-import { casesWithStatus } from "./parsers.mjs";
+import { casesWithStatus, printNext } from "./parsers.mjs";
 
 const argv = process.argv.slice(2);
 const input = argv.find((a) => !a.startsWith("--") && argv[argv.indexOf(a) - 1] !== "--out" && argv[argv.indexOf(a) - 1] !== "--name");
 const outDir = argv.includes("--out") ? argv[argv.indexOf("--out") + 1] : path.dirname(input || ".");
 const label = argv.includes("--name") ? argv[argv.indexOf("--name") + 1] : "";
 if (!input) {
-  console.error("usage: render-html.mjs <results.json> [--out <dir>] [--name <label>]");
+  console.error("usage: render-html.mjs <results.json> [--out <dir>] [--name <label>] [--keep]");
   process.exit(2);
 }
 const R = JSON.parse(readFileSync(input, "utf8"));
@@ -54,6 +58,7 @@ const metaRows = [
   ["Approved by", [m.approvedBy, m.approvedDate].filter(Boolean).join(" · ")],
   ["Flows", m.flows ?? m.inventory],
   ["Generated", new Date(m.generatedAt).toLocaleString()],
+  ...(R.inputs?.manual?.length ? [["Manual runs", R.inputs.manual.join(" · ")]] : []),
 ]
   .map(([k, v]) => `<tr><td>${k}</td><td>${esc(v) || '<span class="muted">—</span>'}</td></tr>`)
   .join("");
@@ -229,7 +234,14 @@ ${R.notes ? `<h2>Run notes</h2><pre>${esc(R.notes)}</pre>` : ""}
 const d = new Date();
 const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 mkdirSync(outDir, { recursive: true });
-const out = path.join(outDir, `test-report-${label ? `${label}-` : ""}${stamp}.html`);
+const out = path.join(outDir, `${label || "index"}.html`);
 writeFileSync(out, html);
+if (argv.includes("--keep")) {
+  mkdirSync(path.join(outDir, "history"), { recursive: true });
+  const kept = path.join(outDir, "history", `${label || "report"}-${stamp}.html`);
+  copyFileSync(out, kept);
+  console.log(`[vuong-test] copy kept: ${kept}`);
+}
 console.log(`[vuong-test] cases: ${cSum.passed} pass, ${cSum.failed} fail, ${cSum.blocked} blocked, ${cSum.notrun} not run → ${out}`);
+printNext(baseDir, argv);
 process.exitCode = cSum.failed ? 1 : 0;

@@ -1,5 +1,7 @@
 // Parsers for cases.md and test result formats. No dependencies (Node >= 18).
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const unxml = (s = "") =>
@@ -74,6 +76,11 @@ export function parseCases(file) {
     data: r.data || "",
     writes: r.writes || "",
     origin: r.origin || "",
+    // optional columns: Type (positive/negative/edge/security/regression), Priority (high/medium/low),
+    // Pre (IDs that must pass first; a case whose Pre failed is reported BLOCKED)
+    type: r.type || "",
+    priority: r.priority || "",
+    pre: (r.pre ?? r["depends on"] ?? "").split(/[,;\s]+/).map((x) => x.replace(/`/g, "").trim()).filter((x) => x && x !== "—" && x !== "-"),
   }));
   // "Inventory ref" / "Inventory:" = names before v0.6.0, still read
   const ncTable = tablesStartingWith(md, "Flow ref")[0] || tablesStartingWith(md, "Inventory ref")[0];
@@ -88,6 +95,10 @@ export function parseCases(file) {
     environment: headerField(md, "Environment"),
     writesData: headerField(md, "Writes data"),
     flows: headerField(md, "Flows") || headerField(md, "Inventory"),
+    // optional header lines used by the manual runbook (manual-runbook.mjs)
+    build: headerField(md, "Build"),
+    runOrder: headerField(md, "Run order"),
+    before: headerField(md, "Before you start"),
     cases,
     notCovered,
     caseTableLine: caseTable?.line ?? null,
@@ -238,4 +249,72 @@ export function pickTemplate(cfg, fileName, wanted) {
   const glob = (g) => new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`, "i");
   if (wanted) return list.find((t) => t.name === wanted) || null;
   return list.find((t) => t.match && glob(t.match).test(fileName)) || (list.length === 1 ? list[0] : null);
+}
+
+// ── manual runbook (manual-runbook.mjs writes it, a person fills it, collect.mjs --manual reads it) ──
+export const RUNBOOK = {
+  en: {
+    guide: "Guide", cases: "Test cases", summary: "Summary",
+    cols: ["ID", "Group", "Flow", "Type", "Priority", "Pre", "Steps", "Data / before", "Expected", "Actual result", "Status ▼", "Bug / notes"],
+    status: { notrun: "Not run", passed: "Pass", failed: "Fail", blocked: "Blocked", skipped: "Skip" },
+    priority: { high: "High", medium: "Medium", low: "Low" },
+    tester: "Tester", date: "Date", device: "Device", os: "OS version",
+  },
+  vi: {
+    guide: "Hướng dẫn", cases: "Test cases", summary: "Tổng hợp",
+    cols: ["ID", "Nhóm", "Luồng", "Loại", "Ưu tiên", "Cần pass trước", "Các bước thực hiện", "Dữ liệu / chuẩn bị", "Kết quả mong đợi", "Kết quả thực tế", "Trạng thái ▼", "Mã lỗi / Ghi chú"],
+    status: { notrun: "Chưa test", passed: "Pass", failed: "Fail", blocked: "Blocked", skipped: "Skip" },
+    priority: { high: "Cao", medium: "TB", low: "Thấp" },
+    tester: "Người test", date: "Ngày test", device: "Thiết bị", os: "Phiên bản hệ điều hành",
+  },
+};
+
+/**
+ * A filled runbook xlsx → { tester, date, device, os, rows: [{ id, status (passed/failed/blocked/skipped/notrun), actual, notes, sheetRow }] }.
+ * Finds the sheet whose row 1 starts with "ID" and has a Status column (English or Vietnamese labels).
+ * `readZip`, `sheetList`, `sheetCells` come from ooxml.mjs (passed in to keep this file free of the zip code).
+ */
+export function parseRunbook(buf, { readZip, sheetList, sheetCells, sharedStrings }) {
+  const zip = readZip(buf);
+  const shared = sharedStrings(zip);
+  const sheets = sheetList(zip).map((s) => ({ ...s, cells: sheetCells(zip, s.part, shared) }));
+  const labels = Object.values(RUNBOOK);
+  const statusOf = new Map();
+  for (const L of labels) for (const [k, v] of Object.entries(L.status)) statusOf.set(v.toLowerCase(), k);
+  const isStatusHead = (t) => labels.some((L) => t === L.cols[10] || t === L.cols[10].replace(/\s*▼$/, ""));
+  const tab = sheets.find((s) => s.cells.get("A1") === "ID" && [...s.cells].some(([ref, t]) => /^[A-Z]+1$/.test(ref) && isStatusHead(t)));
+  if (!tab) throw new Error("no runbook sheet found (row 1 must start with ID and have a Status column)");
+  const head = new Map([...tab.cells].filter(([ref]) => /^[A-Z]+1$/.test(ref)).map(([ref, t]) => [t, ref.replace(/1$/, "")]));
+  const colOf = (i) => labels.map((L) => head.get(L.cols[i]) || head.get(L.cols[i].replace(/\s*▼$/, ""))).find(Boolean);
+  const C = { status: colOf(10), actual: colOf(9), notes: colOf(11) };
+  const rows = [];
+  const maxRow = Math.max(1, ...[...tab.cells.keys()].map((r) => Number(r.replace(/^[A-Z]+/, ""))));
+  for (let n = 2; n <= maxRow; n++) {
+    const id = tab.cells.get(`A${n}`);
+    if (!id) continue;
+    const raw = (tab.cells.get(`${C.status}${n}`) || "").trim();
+    rows.push({ id, status: statusOf.get(raw.toLowerCase()) || (raw ? "unknown:" + raw : "notrun"), actual: C.actual ? tab.cells.get(`${C.actual}${n}`) || "" : "", notes: C.notes ? tab.cells.get(`${C.notes}${n}`) || "" : "", sheetRow: n });
+  }
+  // tester / date / device from the guide sheet (label in column A, value in B)
+  const info = {};
+  for (const s of sheets) {
+    if (s === tab) continue;
+    for (const [ref, t] of s.cells) {
+      const m = /^A(\d+)$/.exec(ref);
+      if (!m) continue;
+      for (const key of ["tester", "date", "device", "os"]) if (labels.some((L) => L[key] === t)) info[key] = s.cells.get(`B${m[1]}`) || "";
+    }
+  }
+  return { ...info, rows };
+}
+
+/**
+ * Print "what to read now" (next.mjs) for the work folder W, at the end of a step's script (lint-cases, render-html).
+ * Only when W holds a cases.md; `--no-next` in argv turns it off (CI logs, scripted use).
+ */
+export function printNext(W, argv = []) {
+  if (argv.includes("--no-next") || !existsSync(path.join(W, "cases.md"))) return;
+  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "next.mjs");
+  const r = spawnSync(process.execPath, [script, W], { encoding: "utf8" });
+  if (r.stdout?.trim()) console.log(`\n── Cần đọc tiếp (/vuong-test:next) ──\n${r.stdout.trimEnd()}`);
 }

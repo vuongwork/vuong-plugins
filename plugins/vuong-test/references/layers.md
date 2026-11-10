@@ -12,6 +12,7 @@ may write. Use `e2e` / `api` only when the expected result *is* backend truth.
 | Several modules wired together in one process (BE service + repository on a test DB, FE page + real store + router) | `it` | test DB / in-process |
 | BE contract: status code, error code, validation enforced by BE, permission denied by BE | `api` | real |
 | Persistence (saved and read back), numbering / sequences, locks and concurrent edits, permissions enforced by BE as seen in the UI, cross-screen effects, real widget rendering (canvas grid, charts) | `e2e` (or `api` when no UI is needed) | real |
+| Something no runner in the project can observe or drive: install / update over the previous build, device restart, OS pickers and permission dialogs, another app (Files, Drive, mail), a notification at a real time, a physical device, whether a message is *visible where the user looks* | `manual` | real |
 
 Hints:
 - "Message X appears when the server answers 409" → `mount` (fake the 409). "Two users editing the same
@@ -20,11 +21,26 @@ Hints:
   what the widget itself does; `mount` for what the component does around it (calls, payloads, state).
 - One flow often splits: screen logic as `mount`, one happy-path `e2e` proving persistence.
 
+## manual
+
+A person runs the case from a runbook (`core/manual-runbook.mjs` → xlsx) and fills Status / Actual; `collect.mjs
+--manual <filled xlsx>` puts the results into the same report. Use it only when no automated layer can observe
+the result — not to save writing a test. Rules for the case text:
+- Steps numbered (`1. … <br>2. …`), button and menu names exactly as on screen (OS screens: the English label too).
+- Expected says *where* the result shows ("toast at the bottom", "line under the title"), not only the text:
+  a message rendered off-screen passes an automated "text exists" check and is still a bug for the user.
+- Credentials, backups and waiting times the case costs go in Data ("needs the master password; 5 wrong tries
+  lock input for 60 s"), so the person is not stuck half-way.
+- `Pre` names the cases that must pass first; destructive cases (wipe, restore, install over) run last, after
+  the backup they need — say so in the `Run order` header line.
+- Optional environment (adb, a second device, cloud account): say "no <tool> → Skip" in Data.
+
 ## Writes
 
 `mount` and `ut` never write data: every HTTP call goes to the fake (strict mode throws on an unknown
 route). Writes column is always `N` for them. Only `it` (own test DB), `api` and `e2e` can write, and only
-in a case declared Writes = Y (see `data-plan.md`).
+in a case declared Writes = Y (see `data-plan.md`). A `manual` case that changes data (wipe, restore, test
+records) is Writes = Y too.
 
 ## Full stack (FE → BE)
 

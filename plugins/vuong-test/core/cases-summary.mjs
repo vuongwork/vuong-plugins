@@ -39,6 +39,11 @@ const writes = C.cases.filter((c) => /^y/i.test(c.writes)).length;
 const assumption = C.cases.filter((c) => /assumption/i.test(c.source)).length;
 out.push(`# Case overview — ${C.scope}`, "");
 out.push(`- Cases: **${total}** (${layers}) · writes data: ${writes} · expected from assumption: ${assumption}`);
+// optional columns: show the mix so a list of only happy paths, or no high-priority case, is visible
+const typed = C.cases.filter((c) => c.type);
+const prioritised = C.cases.filter((c) => c.priority);
+if (typed.length || prioritised.length)
+  out.push(`- By type: ${typed.length ? count(typed.map((c) => c.type.toLowerCase())) : "—"} · by priority: ${prioritised.length ? count(prioritised.map((c) => c.priority.toLowerCase())) : "—"} · with Pre: ${C.cases.filter((c) => c.pre.length).length}`);
 
 if (existsSync(flowsFile)) {
   const md = readFileSync(flowsFile, "utf8");

@@ -47,6 +47,13 @@ function walk(v, fn) {
   return v;
 }
 
+/** The config without "$comment" keys, at any depth. */
+function dropComments(v) {
+  if (Array.isArray(v)) return v.map(dropComments);
+  if (isObj(v)) return Object.fromEntries(Object.entries(v).filter(([k]) => k !== "$comment").map(([k, x]) => [k, dropComments(x)]));
+  return v;
+}
+
 const namesIn = (v) => [...JSON.stringify(v ?? null).matchAll(VAR)].map((m) => m[1]);
 
 /** Everything known about the config, without failing. */
@@ -58,9 +65,10 @@ export function inspectConfig(cfgFile = "test.config.json", { env = process.env 
   const local = hasLocal ? readJson(localFile) : {};
   const desc = isObj(shared.vars) ? shared.vars : {};
   const localVars = isObj(local.vars) ? local.vars : {};
+  // "$comment" keys are explanations for people: a `${NAME}` written inside one is not a variable to ask for
   const { vars: _s, ...sharedRest } = shared;
-  const { vars: _l, $comment: _c, ...localRest } = local;
-  const merged = merge(sharedRest, localRest);
+  const { vars: _l, ...localRest } = local;
+  const merged = dropComments(merge(sharedRest, localRest));
   // Only the names this project's config declares (folder paths / URLs) are looked up; values stay on this
   // machine, are never sent anywhere, and must not be secrets (accounts use core/account.mjs).
   const used = [...new Set([...Object.keys(desc), ...namesIn(merged)])];

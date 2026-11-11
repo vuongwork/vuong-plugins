@@ -40,7 +40,12 @@ if (!isDir(W)) {
 const f = (n) => path.join(W, n);
 const has = (n) => existsSync(f(n));
 const read = (n) => (has(n) ? readFileSync(f(n), "utf8") : "");
-const rel = (n) => path.join(W, n).replace(/\\/g, "/");
+// paths as the reader types them: relative to where the command runs, when inside it
+const rel = (n) => {
+  const abs = path.resolve(W, n);
+  const r = path.relative(process.cwd(), abs);
+  return (r && !r.startsWith("..") && !path.isAbsolute(r) ? r : abs).replace(/\\/g, "/");
+};
 const PLUGIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const list = (xs, n = 8) => (xs.length > n ? `${xs.slice(0, n).join(", ")} … +${xs.length - n}` : xs.join(", "));
 const short = (s, n = 60) => {
@@ -56,7 +61,7 @@ const needs = (tablesStartingWith(read("data-plan.md"), "Need")[0]?.rows || []).
 const notReady = needs.filter((r) => !/^(ready|ok|done|✓)/i.test((r.status || "").trim()));
 const approved = C && C.approvedBy && !/^</.test(C.approvedBy);
 const out = [];
-const step = (n, file, what) => out.push(`  ${n}. ${file}\n     → ${what}`);
+const step = (n, file, ...what) => out.push(`  ${n}. ${file}${what.filter(Boolean).map((w) => `\n     → ${w}`).join("")}`);
 const scope = C?.scope || path.basename(path.resolve(W));
 
 if (!C || !C.cases.length) {
@@ -64,26 +69,40 @@ if (!C || !C.cases.length) {
   if (questions.length) step(1, `${rel("spec-sources.md")} › Questions for BA`, `câu hỏi chưa có trả lời: ${list(questions.map((q) => `${q.q} ${short(q.question, 50)}`), 5)} — chuyển cho BA`);
   if (openDiffs.length) step(questions.length ? 2 : 1, rel("diff.md"), `spec ≠ code, chưa quyết: ${list(openDiffs.map((d) => `${d.id} ${short(d.area, 30)}`), 5)}`);
 } else if (!approved) {
-  const assumption = C.cases.filter((c) => /assumption/i.test(c.source));
-  const important = C.cases.filter((c) => /^(high|cao)$/i.test(c.priority) || /^y$/i.test(c.writes));
-  let gaps = "";
+  const isAssumption = (c) => /assumption/i.test(c.source);
+  const assumption = C.cases.filter(isAssumption);
+  const important = C.cases.filter((c) => !isAssumption(c) && (/^(high|cao)$/i.test(c.priority) || /^y$/i.test(c.writes)));
+  const rest = C.cases.filter((c) => !isAssumption(c) && !important.includes(c));
+  // gaps from cases-summary, with the flow item's name, so flows.md need not be opened
+  let gaps = [];
   if (has("flows.md")) {
     const r = spawnSync(process.execPath, [path.join(PLUGIN, "core/cases-summary.mjs"), f("cases.md"), "--flows", f("flows.md")], { encoding: "utf8" });
-    const m = (r.stdout || "").match(/\*\*gaps: (\d+)\*\*/);
     const gapPart = ((r.stdout || "").split("## Gaps")[1] || "").split("\n## ")[0];
-    const g = [...gapPart.matchAll(/^\| ([^|\s]+) \|/gm)].map((x) => x[1]).filter((x) => !/^(Ref|-+)$/.test(x));
-    gaps = m ? (m[1] === "0" ? "không có luồng nào thiếu case" : `${m[1]} luồng chưa có case${g.length ? `: ${list(g, 6)}` : ""} — mỗi cái: thêm case, hoặc ghi vào Not covered kèm lý do`) : "";
+    gaps = [...gapPart.matchAll(/^\| ([^|\s]+) \| [^|]* \| ([^|]*) \|/gm)].filter((x) => !/^(Ref|-+)$/.test(x[1])).map((x) => `${x[1]} ${short(x[2], 50)}`);
   }
+  // assumption cases grouped by the open question that blocks them (Questions › Cases blocked)
+  const byQ = questions.map((q) => ({ q, ids: assumption.filter((c) => (q["cases blocked"] || "").split(/[,\s]+/).includes(c.id)).map((c) => c.id) }));
+  const asked = new Set(byQ.flatMap((x) => x.ids));
+  const unasked = assumption.filter((c) => !asked.has(c.id)).map((c) => c.id);
   out.push(`[${scope}] Giai đoạn: DUYỆT CASE (bước 5) — ${C.cases.length} case, chưa duyệt. Đọc theo thứ tự:`);
   let n = 0;
-  step(++n, `node $PLUGIN/core/cases-summary.mjs ${rel("cases.md")} --flows ${rel("flows.md")}`, gaps || "độ phủ theo từng vùng; xem phần Gaps");
-  step(++n, rel("cases.md"), `header (Scope, Environment, Writes data${C.runOrder ? ", Run order" : ""}); rồi các dòng${important.length ? ` quan trọng trước: ${list(important.map((c) => c.id))}` : ""} — mỗi dòng: Expected có phải giá trị kiểm được không, Source có thật sự nói vậy không`);
-  if (assumption.length) step(++n, rel("cases.md"), `${assumption.length} case Expected = assumption (chưa có nguồn, chưa duyệt được): ${list(assumption.map((c) => c.id))}`);
-  if (notReady.length) step(++n, rel("data-plan.md"), `dữ liệu chưa có: ${list(notReady.map((r) => `${r.need} ${short(r["concrete data (key / state / file)"], 40)} (${r.status || "?"}; case ${r.cases})`), 5)} — đưa dữ liệu, hoặc chấp nhận các case đó BLOCKED`);
-  if (openDiffs.length) step(++n, rel("diff.md"), `spec ≠ code chưa quyết: ${list(openDiffs.map((d) => `${d.id} ${short(d.area, 30)}`), 5)} — chọn sửa code hay sửa spec (ghi tên + ngày ở cột Decision)`);
-  if (questions.length) step(++n, `${rel("spec-sources.md")} › Questions for BA`, `chưa trả lời: ${list(questions.map((q) => q.q))}`);
+  if (gaps.length) step(++n, `Luồng chưa có case (${rel("flows.md")})`, `${gaps.join("; ")} — mỗi cái: thêm case, hoặc ghi vào Not covered kèm lý do`);
+  step(
+    ++n,
+    rel("cases.md"),
+    `header: Scope, Environment, Writes data${C.runOrder ? ", Run order" : ""}${C.before ? ", Before you start" : ""}`,
+    ...byQ.filter((x) => x.ids.length).map((x) => `chờ ${x.q.q} "${short(x.q.question, 80)}": ${x.ids.join(", ")} — chưa duyệt được tới khi có trả lời`),
+    unasked.length ? `assumption chưa có câu hỏi cho BA: ${unasked.join(", ")} — thêm câu hỏi vào spec-sources.md` : "",
+    important.length ? `xem trước (ưu tiên cao / ghi dữ liệu): ${important.map((c) => c.id).join(", ")}` : "",
+    rest.length ? `rồi: ${rest.map((c) => c.id).join(", ")}` : "",
+    "mỗi dòng: Expected có phải giá trị kiểm được không, Source có thật sự nói vậy không"
+  );
+  if (openDiffs.length)
+    step(++n, rel("diff.md"), ...openDiffs.map((d) => `${d.id} ${short(d.area, 30)}: spec "${short(d.spec, 70)}" ↔ code "${short(d.code, 70)}" — quyết sửa code hay sửa spec (tên + ngày ở cột Decision)`));
+  if (notReady.length)
+    step(++n, rel("data-plan.md"), ...notReady.map((r) => `${r.need} ${short(r["concrete data (key / state / file)"], 60)} — ${r.status || "?"}, case ${r.cases}`), "đưa dữ liệu, hoặc chấp nhận các case đó BLOCKED");
   out.push(`  Xong: ghi "Approved by: <tên> · Date: <ngày>" vào header ${rel("cases.md")}.`);
-  out.push(`  Không cần đọc: flows.md, spec-sources.md (trừ phần Questions), _spec/.`);
+  out.push("  Không cần mở: flows.md, spec-sources.md, _spec/ — phần cần từ đó đã in ở trên.");
 } else if (!has("results.json")) {
   const manual = C.cases.filter((c) => c.layer.toLowerCase() === "manual");
   const tests = readdirSync(W).filter((x) => /\.(mjs|js|cjs|ts)$/.test(x));

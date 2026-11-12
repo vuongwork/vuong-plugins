@@ -1,3 +1,5 @@
+<p align="center"><img src=".claude-plugin/icon.png" alt="logo" width="120"></p>
+
 # vuong-test
 
 One test process for every member, project, layer (UT, component mount, integration, API, E2E) and stack.

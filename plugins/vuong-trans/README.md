@@ -13,6 +13,8 @@ Dịch tài liệu PowerPoint `.pptx`, Excel `.xlsx` và PDF qua lại giữa ti
 /plugin marketplace add vuongwork/vuong-plugins
 /plugin install vuong-trans@vuong-plugins
 ```
+Hoặc cài một lệnh từ shell (cần Claude Code v2.1.292 trở lên): `claude plugin install vuong-trans --marketplace vuongwork/vuong-plugins`.
+Cập nhật: `/plugin marketplace update vuong-plugins`.
 
 ## Cách dùng
 Nói với Claude: "dịch file này sang tiếng Việt", "translate this deck to English", "convert file này sang tiếng Nhật", "dịch file pdf"… Skill `vuong-trans` tự kích hoạt.
@@ -20,7 +22,7 @@ Nói với Claude: "dịch file này sang tiếng Việt", "translate this deck 
 Quy trình: trích chuỗi (khử trùng) → dựng glossary + bảng tên riêng → subagent dịch song song → ghi ngược vào file → báo các khung bị tràn chữ để bạn chọn thu nhỏ chữ hay nới khung → render và kiểm tra. Output nằm ở thư mục `VN/`, `EN/` hoặc `JP/` cạnh file gốc.
 
 ## Yêu cầu
-Chạy được trên Linux, macOS và Windows.
+Viết để chạy trên Linux, macOS và Windows. **Mới kiểm thử trên Windows** (pptx, xlsx, pdf, overlay ảnh); Linux/macOS và bước OCR chưa kiểm thử, nếu gặp lỗi xin báo ở [Issues](https://github.com/vuongwork/vuong-plugins/issues).
 - Python 3 với `python-pptx`, `lxml`, `Pillow` (pptx/xlsx); `fontTools` (tuỳ chọn).
 - PDF: `scripts/setup_env.py pdf` tạo venv riêng và cài PyMuPDF từ pypi.org.
 - LibreOffice để render kiểm tra và cắt ảnh WMF/EMF; poppler (`pdftoppm`) nếu có, không có thì dùng PyMuPDF.

@@ -1,4 +1,4 @@
-<p align="center"><img src="../../assets/vuong-logo.svg" alt="logo" width="120"></p>
+<p align="center"><img src=".claude-plugin/icon.png" alt="vuong-trans logo" width="120"></p>
 
 <p align="center">
   Made by <b>Vuong Pham</b> · <a href="https://github.com/vuongwork">@vuongwork</a><br>

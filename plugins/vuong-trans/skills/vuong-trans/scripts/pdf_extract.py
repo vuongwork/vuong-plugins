@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PDF text track, step 1: extract every Japanese text LINE (not block) with position/style.
+"""PDF text track, step 1: extract every text LINE (not block) that still needs translation, with position/style.
 
 Usage: python3 pdf_extract.py <a.pdf> [b.pdf ...] --out WORKDIR --target {vi,en,ja} [--keep keep.txt] [--chunk-lines 200]
   --target: extract every line not yet in the target language (any source language). Without it: Japanese lines only (legacy).
@@ -41,14 +41,14 @@ for i, f in enumerate(a.pdfs, 1):
                 pl.append(t); uniq[t] = 1
         if pl: pages.append((f'{docs[f]} page {pi + 1}', pl))
     lines[f] = L
-json.dump(lines, open(f'{a.out}/lines.json', 'w'), ensure_ascii=False)
-json.dump(docs, open(f'{a.out}/docs.json', 'w'), ensure_ascii=False, indent=1)
-json.dump(list(uniq), open(f'{a.out}/src.json', 'w'), ensure_ascii=False)
-json.dump(notext, open(f'{a.out}/noTextPages.json', 'w'), ensure_ascii=False)
+json.dump(lines, open(f'{a.out}/lines.json', 'w', encoding='utf-8'), ensure_ascii=False)
+json.dump(docs, open(f'{a.out}/docs.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+json.dump(list(uniq), open(f'{a.out}/src.json', 'w', encoding='utf-8'), ensure_ascii=False)
+json.dump(notext, open(f'{a.out}/noTextPages.json', 'w', encoding='utf-8'), ensure_ascii=False)
 k, cur, n = 1, {}, 0
 for key, pl in pages:
     if n and n + len(pl) > a.chunk_lines:
-        json.dump(cur, open(f'{a.out}/pages_{k}.json', 'w'), ensure_ascii=False, indent=0); k, cur, n = k + 1, {}, 0
+        json.dump(cur, open(f'{a.out}/pages_{k}.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=0); k, cur, n = k + 1, {}, 0
     cur[key] = pl; n += len(pl)
-if cur: json.dump(cur, open(f'{a.out}/pages_{k}.json', 'w'), ensure_ascii=False, indent=0)
+if cur: json.dump(cur, open(f'{a.out}/pages_{k}.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=0)
 print(f'{sum(map(len, lines.values()))} lines, {len(uniq)} unique, {k} chunk(s), {len(notext)} page(s) without text layer')

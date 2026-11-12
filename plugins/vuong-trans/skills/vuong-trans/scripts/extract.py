@@ -114,11 +114,11 @@ def main():
             found += [t for t in gen if JP.search(t)]
         print(f'{os.path.basename(f)}: {len(found) - n0} strings to translate' + (f' (target {a.target})' if a.target else ' (Japanese)'))
     uniq = list(dict.fromkeys(found))
-    json.dump(uniq, open(f'{a.out}/src.json', 'w'), ensure_ascii=False, indent=0)
+    json.dump(uniq, open(f'{a.out}/src.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=0)
     k = max(1, -(-len(uniq) // a.chunk))
     size = -(-len(uniq) // k)
     for i in range(k):
-        json.dump(uniq[i * size:(i + 1) * size], open(f'{a.out}/chunk_{i + 1}.json', 'w'), ensure_ascii=False, indent=0)
+        json.dump(uniq[i * size:(i + 1) * size], open(f'{a.out}/chunk_{i + 1}.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=0)
     print(f'unique: {len(uniq)} strings, {sum(map(len, uniq))} chars -> {k} chunk(s) in {a.out}')
 
 

@@ -2,6 +2,6 @@
   "name": "vuong-trans",
   "version": "0.1.0",
   "license": "Apache-2.0",
-  "description": "Dịch tài liệu tiếng Nhật (pptx, xlsx, pdf) sang tiếng Việt / tiếng Anh, giữ nguyên layout, kể cả chữ trong ảnh (OCR + overlay).",
+  "description": "Dịch tài liệu pptx, xlsx, pdf qua lại giữa tiếng Nhật, tiếng Việt và tiếng Anh, giữ nguyên layout, kể cả chữ trong ảnh (OCR + overlay).",
   "author": { "name": "vuongwork" }
 }

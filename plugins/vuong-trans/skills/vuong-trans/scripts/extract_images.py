@@ -6,9 +6,44 @@ high-DPI render of the slide (LibreOffice → PDF → pdftoppm) so they stay sha
 Usage: extract_images.py SRC.pptx --out IMGDIR [--min-width 0.15] [--dpi 220]
 Writes IMGDIR/<name>.png and IMGDIR/meta.json [{name, slide, shape_id}].
 """
-import argparse, io, json, os, shutil, subprocess, tempfile
+import argparse, glob, io, json, os, shutil, subprocess, sys, tempfile
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import common  # noqa: F401  (UTF-8 stdout on Windows)
 from pptx import Presentation
 from PIL import Image
+
+
+def find_tool(name, extra):
+    """Program on PATH, else the usual install folders (LibreOffice / poppler are often not on PATH on Windows/macOS)."""
+    p = shutil.which(name)
+    if p:
+        return p
+    for pat in extra:
+        hits = sorted(glob.glob(os.path.expandvars(pat)))
+        if hits:
+            return hits[-1]
+    return None
+
+
+SOFFICE = ['%ProgramFiles%/LibreOffice/program/soffice.exe', '%ProgramFiles(x86)%/LibreOffice/program/soffice.exe',
+           '/Applications/LibreOffice.app/Contents/MacOS/soffice']
+PDFTOPPM = ['%ProgramFiles%/poppler*/Library/bin/pdftoppm.exe', '%LOCALAPPDATA%/Programs/poppler*/Library/bin/pdftoppm.exe',
+            '/opt/homebrew/bin/pdftoppm', '/usr/local/bin/pdftoppm']
+
+
+def render_page_png(pdf, page_no, dpi, out_png):
+    """One page of `pdf` to PNG: pdftoppm if installed, else PyMuPDF if importable."""
+    exe = find_tool('pdftoppm', PDFTOPPM)
+    if exe:
+        stem = out_png[:-4]
+        subprocess.run([exe, '-f', str(page_no), '-l', str(page_no), '-r', str(dpi), '-png', '-singlefile', pdf, stem], check=True)
+        return
+    try:
+        import pymupdf
+    except ImportError:
+        raise SystemExit('Needs poppler (pdftoppm) or PyMuPDF (pip install pymupdf) in this Python to crop WMF/EMF pictures.')
+    doc = pymupdf.open(pdf)
+    doc[page_no - 1].get_pixmap(dpi=dpi).save(out_png)
 
 
 def walk(shapes):
@@ -21,8 +56,11 @@ def walk(shapes):
 
 def render_pdf(src, tmp):
     """LibreOffice → PDF. Fails inside some sandboxes ('no valid pipe path'): ask the user before running it outside the sandbox."""
+    exe = find_tool('soffice', SOFFICE)
+    if not exe:
+        raise SystemExit('LibreOffice (soffice) not found — install it; it is needed to render WMF/EMF pictures.')
     env = dict(os.environ, HOME=tmp)
-    subprocess.run(['soffice', '--headless', '--norestore', '--convert-to', 'pdf', '--outdir', tmp, src],
+    subprocess.run([exe, '--headless', '--norestore', '--convert-to', 'pdf', '--outdir', tmp, src],
                    env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
     pdf = os.path.join(tmp, os.path.splitext(os.path.basename(src))[0] + '.pdf')
     if not os.path.exists(pdf):
@@ -54,15 +92,15 @@ def main():
         tmp = tempfile.mkdtemp(prefix='vtrans_render_')
         pdf = render_pdf(os.path.abspath(a.src), tmp)
         for name, i, s in vector:
-            subprocess.run(['pdftoppm', '-f', str(i), '-l', str(i), '-r', str(a.dpi), '-png', pdf, f'{tmp}/p'], check=True)
-            page = sorted(f for f in os.listdir(tmp) if f.startswith('p') and f.endswith('.png'))[-1]
-            im = Image.open(f'{tmp}/{page}')
-            iw, ih = im.size
-            box = (int(s.left / W * iw), int(s.top / H * ih), int((s.left + s.width) / W * iw), int((s.top + s.height) / H * ih))
-            im.crop(box).save(f'{a.out}/{name}.png')
-            os.remove(f'{tmp}/{page}')
+            page = os.path.join(tmp, 'page.png')
+            render_page_png(pdf, i, a.dpi, page)
+            with Image.open(page) as im:
+                iw, ih = im.size
+                box = (int(s.left / W * iw), int(s.top / H * ih), int((s.left + s.width) / W * iw), int((s.top + s.height) / H * ih))
+                im.crop(box).save(f'{a.out}/{name}.png')
+            os.remove(page)
         shutil.rmtree(tmp, ignore_errors=True)
-    json.dump(meta, open(f'{a.out}/meta.json', 'w'), indent=0)
+    json.dump(meta, open(f'{a.out}/meta.json', 'w', encoding='utf-8'), indent=0)
     print(f'{len(meta)} images ({len(vector)} vector, cropped from render) -> {a.out}')
     for m in meta:
         print(' ', m['name'], Image.open(f"{a.out}/{m['name']}.png").size)

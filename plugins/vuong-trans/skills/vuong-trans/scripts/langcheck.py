@@ -4,7 +4,9 @@ needs_translation(text, target, keep) -> True when `text` still contains wording
 target language and is not on the keep-list (acronyms, codes, e-mails, URLs, file names, numbers,
 plus user-approved terms in keep.txt). Works for every direction among ja / vi / en.
 """
-import re
+import os, re, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import common  # noqa: F401  (UTF-8 stdout on Windows)
 
 JP = re.compile(r'[぀-ヿ㐀-鿿ｦ-ﾟ]')
 VI = re.compile(r'[ăâđêôơưĂÂĐÊÔƠƯàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ'
@@ -14,6 +16,8 @@ KEEP_RE = [r'\S+@\S+', r'(?:https?://|www\.)\S+', r'\S+\.(?:pptx?|xlsx?|docx?|pd
            r'(?<![A-Za-z0-9])[A-Z0-9]+(?:[-_/][A-Z0-9]+)+(?![A-Za-z0-9])', r'(?<![A-Za-z])[A-Z][A-Z0-9]{1,}s?(?![a-z])',
            r'(?<![A-Za-z])\d[\d.,:/]*[A-Za-z]{0,3}(?![A-Za-z])']
 WORD = re.compile(r"[A-Za-zÀ-ỹ][A-Za-zÀ-ỹ'’]+")
+# one Vietnamese syllable written without diacritics: onset + 1-3 vowels + coda (ban, cho, trong, nguoi, duoc)
+VI_SYLLABLE = re.compile(r'(?:ngh|ng|gh|gi|kh|nh|ph|qu|th|tr|ch|[bcdghklmnprstvx])?[aeiouy]{1,3}(?:ng|nh|ch|[cmnpt])?$', re.I)
 
 
 def load_keep(path):
@@ -40,27 +44,14 @@ def foreign_words(text, target, keep=()):
         out += re.findall(r'[぀-ヿ㐀-鿿ｦ-ﾟ]+', t)
     if target != 'vi':
         out += [w for w in WORD.findall(t) if VI.search(w) or target == 'ja']
-    if target == 'vi':
-        # plain-ASCII words in Vietnamese output are suspicious only when they are not Vietnamese syllables;
-        # ASCII-only Vietnamese words (ban, cho, tin...) exist, so flag only runs of >=2 English-looking words
-        # in a string without any Vietnamese diacritic, e.g. "Our Understanding".
-        if not VI.search(t):
-            ws = [w for w in WORD.findall(t) if w.isascii()]
-            if len(ws) >= 2:
-                out += ws
-    if target == 'en':
-        pass  # Latin words are fine; JP / VI-with-diacritics already caught above
+    if target == 'vi' and not VI.search(t):
+        # A string without any Vietnamese diacritic: every plain-ASCII word that cannot be a Vietnamese syllable
+        # is foreign ("Proposal", "Agenda", "Thank you"). Diacritic-less Vietnamese ("ban cho tin", "trong khong")
+        # is not flagged. Inside a Vietnamese sentence (has diacritics) kept English terms are fine.
+        out += [w for w in WORD.findall(t) if w.isascii() and not VI_SYLLABLE.match(w)]
     return out
 
 
 def needs_translation(text, target, keep=()):
     return bool(re.search(r'[A-Za-zÀ-ỹ぀-ヿ㐀-鿿ｦ-ﾟ]', text)) and bool(foreign_words(text, target, keep))
 
-
-CJK_R = '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'
-CJK_B = '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc'
-
-
-def fonts_for(lang, regular, bold):
-    """Noto Sans has no Japanese glyphs: use Noto Sans CJK (JP face = index 0) when the target is ja."""
-    return (CJK_R, CJK_B) if lang == 'ja' else (regular, bold)

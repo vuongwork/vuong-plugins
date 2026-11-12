@@ -13,22 +13,20 @@ put  : python3 pdf_images.py put   WORKDIR --map src.pdf=translated.pdf ... --ou
        page, so line art stays sharp. (Rasterising a CAD page at 200 dpi turned hairlines light grey.)
 Then run ocr.py WORKDIR/img and overlay agents exactly as for pptx images.
 """
-import argparse, json, os, glob
+import argparse, json, os, glob, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import find_font, fonts           # also switches stdout to UTF-8 (Windows)
 import pymupdf
 ap = argparse.ArgumentParser(); ap.add_argument('cmd'); ap.add_argument('work')
 ap.add_argument('--pdfs', nargs='*', default=[]); ap.add_argument('--dpi', type=int, default=200)
 ap.add_argument('--map', nargs='*', default=[]); ap.add_argument('--outdir'); ap.add_argument('--lang', default='vi')
 a = ap.parse_args()
-docs = json.load(open(f'{a.work}/docs.json')); IMG = f'{a.work}/img'; os.makedirs(IMG, exist_ok=True)
+docs = json.load(open(f'{a.work}/docs.json', encoding='utf-8')); IMG = f'{a.work}/img'; os.makedirs(IMG, exist_ok=True)
 
-FONT = '/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf'
-FONT_B = '/usr/share/fonts/truetype/noto/NotoSans-SemiBold.ttf'
-import sys as _s; _s.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from langcheck import fonts_for
-FONT, FONT_B = fonts_for(a.lang, FONT, FONT_B)   # ja target -> Noto Sans CJK
+FONT, FONT_B = fonts(a.lang, semibold=True)   # Noto Sans (OS fallback on Windows/macOS); ja target -> Noto Sans CJK
 
 GLYPH = str.maketrans({'≦': '≤', '≧': '≥', '・': '•', '〜': '~', '～': '~'})
-FALLBACK = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'   # has ≤ ≥ → ① etc. + Vietnamese
+FALLBACK = find_font('symbol')   # DejaVu Sans: has ≤ ≥ → ① etc. + Vietnamese
 _NOTO = pymupdf.Font(fontfile=FONT)
 
 
@@ -40,7 +38,7 @@ def draw_vector(p, m):
     """Draw region file of a whole-page crop as vector on the original page (keeps line art sharp)."""
     Z = m.get('dpi', 200) / 72
     im = pymupdf.Pixmap(f"{IMG}/{m['name']}.png")
-    regs = json.load(open(f"{IMG}/{a.lang}_{m['name']}.json"))
+    regs = json.load(open(f"{IMG}/{a.lang}_{m['name']}.json", encoding='utf-8'))
     for fn, nm in ((FONT, 'vtR'), (FONT_B, 'vtB'), (FALLBACK, 'vtF')):
         p.insert_font(fontname=nm, fontfile=fn)
     for r in regs:
@@ -67,7 +65,7 @@ def draw_vector(p, m):
 
 if a.cmd == 'crop':
     Z = a.dpi / 72; meta = []
-    notext = {(f, p) for f, p in json.load(open(f'{a.work}/noTextPages.json'))}
+    notext = {(f, p) for f, p in json.load(open(f'{a.work}/noTextPages.json', encoding='utf-8'))}
     srcs = list(docs)
     for pdf in a.pdfs:
         # match a translated file to its source by order given (same order as pdf_extract) or by stem
@@ -89,10 +87,10 @@ if a.cmd == 'crop':
                 assert not any(m['name'] == n for m in meta), f'duplicate image name {n}'
                 p.get_pixmap(matrix=pymupdf.Matrix(Z, Z), clip=r).save(f'{IMG}/{n}.png')
                 meta.append(dict(name=n, src=src, page=pi, rect=list(r), whole=(src, pi) in notext, dpi=a.dpi))
-    json.dump(meta, open(f'{IMG}/meta.json', 'w'), ensure_ascii=False, indent=0)
+    json.dump(meta, open(f'{IMG}/meta.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=0)
     print(len(meta), 'images ->', IMG)
 elif a.cmd == 'put':
-    meta = json.load(open(f'{IMG}/meta.json')); mp = dict(x.split('=', 1) for x in a.map)
+    meta = json.load(open(f'{IMG}/meta.json', encoding='utf-8')); mp = dict(x.split('=', 1) for x in a.map)
     os.makedirs(a.outdir, exist_ok=True); opened, n = {}, 0
     for src, tr in mp.items():
         src = os.path.abspath(src); opened[src] = pymupdf.open(tr)

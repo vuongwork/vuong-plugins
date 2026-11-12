@@ -1,10 +1,14 @@
-"""Write translations back into a .pptx, shrink overflowing text, and swap in overlaid images.
+"""Write translations back into a .pptx, report or fix overflowing text, and swap in overlaid images.
 
-Usage: apply_pptx.py SRC.pptx --maps "GLOB" --out OUT.pptx [--images IMGDIR] [--footer-map JA=TRANS ...]
+Usage: apply_pptx.py SRC.pptx --maps "GLOB" --out OUT.pptx --target {vi,en,ja} [--keep keep.txt]
+                     [--fit report|shrink|widen] [--report check.json] [--images IMGDIR] [--annotate-vi]
   --maps    glob of JSON files {source: translation} (merged)
   --images  dir produced by extract_images.py; uses out/<name>.png where present (meta.json maps them to shapes)
+  Run --help for the other options.
 """
 import argparse, glob, json, os, re, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import common  # noqa: F401  (UTF-8 stdout on Windows)
 from pptx import Presentation
 from pptx.util import Pt
 
@@ -87,7 +91,7 @@ def main():
 
     tmap = {}
     for f in sorted(glob.glob(a.maps)):
-        tmap.update(json.load(open(f)))
+        tmap.update(json.load(open(f, encoding='utf-8')))
     prs = Presentation(a.src)
     SW = prs.slide_width
 
@@ -202,7 +206,7 @@ def main():
 
     swapped = 0
     if a.images:
-        meta = json.load(open(os.path.join(a.images, 'meta.json')))
+        meta = json.load(open(os.path.join(a.images, 'meta.json'), encoding='utf-8'))
         for m in meta:
             out = os.path.join(a.images, 'out', m['name'] + '.png')
             if not os.path.exists(out):
@@ -230,7 +234,7 @@ def main():
         print('   FIT   ', c)
     if a.report:
         json.dump({'left': left, 'review': review, 'overflow': [{k: v for k, v in o.items() if not k.startswith('_')} for o in over],
-                   'fit_changes': changed}, open(a.report, 'w'), ensure_ascii=False, indent=1)
+                   'fit_changes': changed}, open(a.report, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 
 
 if __name__ == '__main__':

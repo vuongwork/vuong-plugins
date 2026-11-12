@@ -5,18 +5,23 @@ Region file IMGDIR/<lang>_<name>.json: [{"box":[x1,y1,x2,y2], "vi": "...", "bg":
 Coordinates are source-image pixels. Output IMGDIR/out/<name>.png at SCALE x.
 Usage: overlay.py IMGDIR --lang vi [NAME ...]     (no NAME = every region file of that language)
 """
-import argparse, glob, json, os
+import argparse, glob, json, os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import find_font, fonts           # also switches stdout to UTF-8 (Windows)
 from PIL import Image, ImageDraw, ImageFont
 
 SCALE = 2
-FONT = '/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf'
-FONT_B = '/usr/share/fonts/truetype/noto/NotoSans-SemiBold.ttf'
-FALLBACK = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'   # → ① ▲ ○ ● etc. missing in Noto Sans
-try:
-    from fontTools.ttLib import TTFont
-    CMAP = set(TTFont(FONT).getBestCmap())
-except Exception:                       # fontTools missing: draw everything with the main font
-    CMAP = None
+FONT = FONT_B = FALLBACK = None   # set by use_lang_fonts(): Noto Sans (or OS fallback), CJK for ja
+CMAP = None                       # glyphs of FONT; others are drawn with FALLBACK (→ ① ▲ ○ ● missing in Noto Sans)
+
+
+def _cmap(path):
+    try:
+        from fontTools.ttLib import TTFont
+        kw = {'fontNumber': 0} if path.lower().endswith('.ttc') else {}
+        return set(TTFont(path, **kw).getBestCmap())
+    except Exception:                   # fontTools missing: draw everything with the main font
+        return None
 
 
 def hexrgb(h):
@@ -72,7 +77,7 @@ def render(d, name, lang):
     src = Image.open(f'{d}/{name}.png').convert('RGB')
     im = src.resize((src.width * SCALE, src.height * SCALE), Image.LANCZOS)
     draw = ImageDraw.Draw(im)
-    for r in json.load(open(f'{d}/{lang}_{name}.json')):
+    for r in json.load(open(f'{d}/{lang}_{name}.json', encoding='utf-8')):
         text = r.get('vi', r.get('text', ''))
         box = [int(v * SCALE) for v in r['box']]
         box = [max(0, box[0] - 2), max(0, box[1] - 2), min(im.width - 1, box[2] + 2), min(im.height - 1, box[3] + 2)]
@@ -96,17 +101,11 @@ def render(d, name, lang):
 
 
 def use_lang_fonts(lang):
-    """Target ja: Noto Sans CJK (Noto Sans has no Japanese glyphs)."""
-    global FONT, FONT_B, CMAP
-    import sys as _s, os as _o
-    _s.path.insert(0, _o.path.dirname(_o.path.abspath(__file__)))
-    from langcheck import fonts_for
-    FONT, FONT_B = fonts_for(lang, FONT, FONT_B)
-    if lang == 'ja':
-        try:
-            CMAP = set(TTFont(FONT, fontNumber=0).getBestCmap())
-        except Exception:
-            CMAP = None
+    """Noto Sans (SemiBold for bold); target ja: Noto Sans CJK (Noto Sans has no Japanese glyphs)."""
+    global FONT, FONT_B, FALLBACK, CMAP
+    FONT, FONT_B = fonts(lang, semibold=True)
+    FALLBACK = find_font('symbol')
+    CMAP = _cmap(FONT)
 
 
 def main():

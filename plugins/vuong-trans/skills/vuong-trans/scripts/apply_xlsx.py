@@ -73,7 +73,7 @@ def main():
     review = []
     tmap = {}
     for f in sorted(glob.glob(a.maps)):
-        tmap.update(json.load(open(f)))
+        tmap.update(json.load(open(f, encoding='utf-8')))
     left = []
 
     from extract import xlsx_formula_literals
@@ -243,7 +243,7 @@ def main():
         print(f'  images NOT translated by this script — view each, redraw charts / overlay text (track B): {media}')
     print('  note: cell text never shrinks/widens automatically — check wrapped/overflowing cells and column widths in the render')
     if a.report:
-        json.dump({'left': left, 'review': review}, open(a.report, 'w'), ensure_ascii=False, indent=1)
+        json.dump({'left': left, 'review': review}, open(a.report, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 
 
 if __name__ == '__main__':

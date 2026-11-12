@@ -89,5 +89,5 @@ def annotate_markdown(md):
 
 if __name__ == '__main__':
     import sys
-    s = open(sys.argv[1]).read()
-    open(sys.argv[1], 'w').write(annotate_markdown(s))
+    s = open(sys.argv[1], encoding='utf-8').read()
+    open(sys.argv[1], 'w', encoding='utf-8').write(annotate_markdown(s))

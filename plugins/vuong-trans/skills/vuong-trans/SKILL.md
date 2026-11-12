@@ -17,7 +17,12 @@ source file
 
 Why it is cheap: everything mechanical (extract, write back, font shrink, OCR, drawing, image swap) is a script and costs no model tokens. The model only does what needs understanding — translating and deciding overlay regions — and that work is split across subagents so the main session never holds slide contents or images. Strings are deduplicated before translation (100 slides ≈ 1,400 unique strings).
 
-Scripts live in `scripts/` next to this file (call it `$SK`). Put all intermediate files in a work dir under the session scratchpad / `$TMPDIR`, e.g. `$W=$TMPDIR/vtrans/<docname>` — never in the user's folder. Final outputs go next to the source in a sub-folder `VN/` or `EN/` (ask only if the user specified otherwise).
+Scripts live in `scripts/` next to this file (call it `$SK`). Put all intermediate files in a work dir under the session scratchpad / system temp folder, e.g. `$W=<scratchpad>/vtrans/<docname>` — never in the user's folder. Final outputs go next to the source in a sub-folder named after the target — `VN/`, `EN/` or `JP/` — with the same suffix on the file name (`<name>_VN.pptx`); below, `<SUF>` stands for that `VN|EN|JP` (ask only if the user specified otherwise).
+
+Runs on Linux, macOS and Windows. `python3` below = the system Python 3 (on Windows use `python` or `py -3` if `python3` is missing).
+Fonts are looked up in the OS font folders (Noto Sans / DejaVu Sans / Noto Sans CJK JP, with Segoe UI / Arial / Yu Gothic /
+Meiryo / Hiragino as fallbacks); if a script stops with "no font found", tell the user which font to install or to set
+`VTRANS_FONT_DIR` to a folder holding the font files.
 
 ## 0. Decide
 - Target language: `vi`, `en` or `ja` (from the request); the source may be any of ja / vi / en or mixed. Always pass `--target` to extract.py and apply_pptx.py — without it the scripts fall back to the old Japanese-only mode and silently skip Vietnamese/English source text. File types: pptx → tracks A+B; xlsx → track A, then VIEW every image the scripts list from `xl/media/` (logos can stay; charts/diagrams with text must be redrawn or overlaid at the same pixel size and written back under the same filename); pdf → section D (draws over the PDF itself).
@@ -77,8 +82,8 @@ Scripts live in `scripts/` next to this file (call it `$SK`). Put all intermedia
    Needs LibreOffice for WMF. In a sandbox, soffice may fail with "no valid pipe path" — tell the user and ask them to approve running that one conversion outside the sandbox (it only reads their own file); never bypass the sandbox silently.
 2. OCR (start in background right away; ~40 s/image on CPU):
    ```bash
-   bash $SK/scripts/setup_ocr.sh            # once: venv + easyocr models under $TMPDIR/vtrans_ocr
-   $TMPDIR/vtrans_ocr/venv/bin/python $SK/scripts/ocr.py $W/img --langs <ja,en | vi,en | en> --target <lang> --keep $W/keep.txt   # run_in_background
+   python3 $SK/scripts/setup_env.py ocr     # once: private venv + easyocr models (ja/vi/en); LAST line printed = $OCRPY
+   $OCRPY $SK/scripts/ocr.py $W/img --langs <ja,en | vi,en | en> --target <lang> --keep $W/keep.txt   # run_in_background
    # --langs = language of the SOURCE images (easyocr cannot mix ja with vi). Boxes flagged "src": true still need translation.
    # target ja: overlay.py / pdf_images.py switch to Noto Sans CJK automatically (Noto Sans has no Japanese glyphs).
    ```
@@ -87,12 +92,12 @@ Scripts live in `scripts/` next to this file (call it `$SK`). Put all intermedia
 4. Spawn overlay subagents (≈7–8 images each, grouped in OCR order so the first group can start immediately) with `references/brief-image.md`. Each writes `$W/img/<lang>_<name>.json`, renders, views and fixes its own output.
 5. Re-render everything once with the final script (keeps fonts consistent), then build the pptx with `--images`:
    ```bash
-   python3 $SK/scripts/overlay.py $W/img --lang vi
+   python3 $SK/scripts/overlay.py $W/img --lang <lang>
    ```
 
 ## D. PDF track (text layer + images, drawn over the PDF)
-Needs PyMuPDF in a venv: `python3 -m venv $TMPDIR/pdfenv && $TMPDIR/pdfenv/bin/pip install pymupdf` (hosts pypi.org, files.pythonhosted.org). `$PY=$TMPDIR/pdfenv/bin/python`.
-1. Extract Japanese **lines** (not blocks), page-ordered chunks, pages without text layer:
+Needs PyMuPDF in a private venv: `python3 $SK/scripts/setup_env.py pdf` (once; hosts pypi.org, files.pythonhosted.org) — the LAST line it prints is `$PY`.
+1. Extract the **lines** (not blocks) still needing translation, page-ordered chunks, pages without text layer:
    ```bash
    $PY $SK/scripts/pdf_extract.py <a.pdf> [b.pdf ...] --out $W --target <lang> --keep $W/keep.txt --chunk-lines 200
    ```
@@ -102,22 +107,24 @@ Needs PyMuPDF in a venv: `python3 -m venv $TMPDIR/pdfenv && $TMPDIR/pdfenv/bin/p
    each line is drawn back into its own box (keep ≤ 1.6× JA length); neighbouring lines are one sentence split across lines →
    read the whole page and split the Vietnamese so the lines read in order; a pure sentence tail may map to `""`.
    Same short label needing different words on different pages → key `"<tag>|<page_index0>|<text>"`.
-3. Write back: `$PY $SK/scripts/apply_pdf.py $W --maps "$W/<lang>_*.json" --outdir $W/out --suffix _<VN|EN|JP> --target <lang> --keep $W/keep.txt --report $W/check_pdf.json`
-   (redact line → draw Noto Sans / Noto Sans CJK for ja). Default `--fit report` draws at the original size and lists too-long lines (`OVER`);
+3. Write back: `$PY $SK/scripts/apply_pdf.py $W --maps "$W/<lang>_*.json" --outdir $W/out --suffix _<SUF> --target <lang> --keep $W/keep.txt --report $W/check_pdf.json`
+   (redact each translated line → draw Noto Sans / Noto Sans CJK for ja; a line with no translation is left untouched and listed as missing). Default `--fit report` draws at the original size and lists too-long lines (`OVER`);
    show them to the user and ask: `--fit shrink` (one common scale per page + original size + bold, so same-kind lines stay uniform)
    or `--fit widen` (original size, line may run on to the page edge). `LEFT` / `REVIEW` lists work as in apply_pptx.py.
 4. Images (always, every file): crop from the TEXT-TRANSLATED pdfs, OCR, overlay agents, paste back:
    ```bash
-   $PY $SK/scripts/pdf_images.py crop $W --pdfs $W/out/*_VN.pdf          # pictures ≥ 90×50 pt + whole no-text pages
-   $TMPDIR/vtrans_ocr/venv/bin/python $SK/scripts/ocr.py $W/img            # run_in_background
-   # → overlay agents (brief-image.md) for every image whose OCR has ≥ 2 jp boxes, then overlay.py $W/img --lang vi
-   $PY $SK/scripts/pdf_images.py put $W --map <src.pdf>=$W/out/<name>_VN.pdf ... --outdir <dir>/VN
+   $PY $SK/scripts/pdf_images.py crop $W --pdfs $W/out/*_<SUF>.pdf       # pictures ≥ 90×50 pt + whole no-text pages
+   $OCRPY $SK/scripts/ocr.py $W/img --langs <ja,en | vi,en | en> --target <lang> --keep $W/keep.txt   # run_in_background
+   # → overlay agents (brief-image.md) for every image whose OCR has ≥ 2 boxes flagged "src", then
+   python3 $SK/scripts/overlay.py $W/img --lang <lang>
+   $PY $SK/scripts/pdf_images.py put $W --map <src.pdf>=$W/out/<name>_<SUF>.pdf ... --outdir <dir>/<SUF> --lang <lang>
    ```
    No-text pages (scans, CAD drawings with outlined text) are cropped as one whole-page image for OCR/overlay agents, but
    `put` draws their regions as VECTOR boxes + text on the original page (never pastes the raster: hairlines went grey).
    Pass `--lang <lang>` to `put` (ja → CJK font).
 5. Verify: the LEFT/REVIEW lists of apply_pdf.py (and `pdftotext` for the target-language check) only prove the TEXT layer —
-   also render every page at low DPI (`pdftoppm -r 40`) and look at a contact sheet / thumbnails for Japanese left in pictures.
+   also render every page at low DPI (`pdftoppm -r 40`, or PyMuPDF `page.get_pixmap(dpi=40)` with `$PY` where poppler is
+   not installed, e.g. Windows) and look at a contact sheet / thumbnails for source-language text left in pictures.
 
 ## Content rules (all directions)
 - Never change, shorten or drop source meaning — not even to fit a box. Overflow is solved by font size or frame size (see `--fit`).

@@ -2,8 +2,10 @@
 """List proper-noun candidates (company/site/person names) from src.json for the glossary step.
 Output is grouped: STRONG (explicit company/site markers) first, then LATIN+JA (e.g. ABC金属…, usually a
 company name followed by ordinary words — trim to the name when building the glossary), plain katakana names (e.g. 〇〇ン) are only caught via 様/社 — skim the cover slide for others."""
-import json, re, sys
+import json, os, re, sys
 from collections import Counter
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import common  # noqa: F401  (UTF-8 stdout: the output is Japanese, Windows consoles default to cp1252)
 
 J = r'一-鿿ァ-ヿー'
 # Tech acronyms that are not names when glued to Japanese (AMR搬送, LAN配線…)

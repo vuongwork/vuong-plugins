@@ -2,6 +2,11 @@
   "name": "vuong-trans",
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "homepage": "https://github.com/vuongwork/vuong-plugins/tree/main/plugins/vuong-trans",
+  "repository": "https://github.com/vuongwork/vuong-plugins",
+  "privacyPolicyUrl": "https://github.com/vuongwork/vuong-plugins/blob/main/plugins/vuong-trans/PRIVACY.md",
   "description": "Dịch tài liệu pptx, xlsx, pdf qua lại giữa tiếng Nhật, tiếng Việt và tiếng Anh, giữ nguyên layout, kể cả chữ trong ảnh (OCR + overlay).",
-  "author": { "name": "vuongwork" }
+  "author": {
+    "name": "vuongwork", "email": "vuongpq.work@gmail.com"
+  }
 }

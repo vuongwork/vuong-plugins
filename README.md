@@ -10,6 +10,7 @@ Claude Code plugin marketplace by vuongwork.
 | Plugin | What it does |
 |---|---|
 | [vuong-test](plugins/vuong-test) | One test process for every layer (UT, component, integration, API, E2E) and stack: spec → flows → cases → approval → tests → HTML report |
+| [vuong-trans](plugins/vuong-trans) | Translate pptx, xlsx and pdf between Japanese, Vietnamese and English, keeping the layout and the text inside images (tested on Windows only so far) |
 
 Update with `/plugin marketplace update vuong-plugins`.
 

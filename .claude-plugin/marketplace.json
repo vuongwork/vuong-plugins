@@ -10,6 +10,11 @@
       "name": "vuong-test",
       "source": "./plugins/vuong-test",
       "description": "One test process for every layer and stack: spec sources → flows → spec≠code diff → cases → approval → tests → HTML report"
+    },
+    {
+      "name": "vuong-trans",
+      "source": "./plugins/vuong-trans",
+      "description": "Translate pptx, xlsx and pdf between Japanese, Vietnamese and English, keeping the layout, including text inside images"
     }
   ]
 }

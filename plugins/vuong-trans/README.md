@@ -1,5 +1,9 @@
 <p align="center"><img src="../../assets/vuong-logo.svg" alt="logo" width="120"></p>
 
+<p align="center">
+  Made by <b>Vuong Pham</b> · <a href="https://github.com/vuongwork">@vuongwork</a><br>
+</p>
+
 # vuong-trans
 
 Dịch tài liệu tiếng Nhật (PowerPoint `.pptx`, Excel `.xlsx`, PDF) sang tiếng Việt hoặc tiếng Anh mà vẫn giữ nguyên layout: text trong slide, ô bảng, shape, tên sheet, và cả chữ tiếng Nhật nằm trong ảnh (OCR + vẽ đè).

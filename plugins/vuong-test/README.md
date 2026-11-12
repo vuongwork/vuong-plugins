@@ -1,5 +1,8 @@
 <p align="center"><img src=".claude-plugin/icon.png" alt="logo" width="120"></p>
 
+<p align="center">
+  Made by <b>Vuong Pham</b> · <a href="https://github.com/vuongwork">@vuongwork</a><br>
+</p>
 # vuong-test
 
 One test process for every member, project, layer (UT, component mount, integration, API, E2E) and stack.

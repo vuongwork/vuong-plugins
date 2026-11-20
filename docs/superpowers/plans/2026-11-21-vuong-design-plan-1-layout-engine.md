@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node ≥ 18, ESM `.mjs`, `node:test`. Playwright lấy từ bên ngoài (không đóng gói), Chromium của Playwright. So ảnh làm trong trình duyệt (canvas), không thêm thư viện.
 
-**Spec:** `docs/superpowers/specs/2026-11-21-vuong-design-plugin-design.md` (mục 6, 7, 14, 18 và phụ lục). Mã tham khảo (code bỏ đi, chỉ để đọc): bản thử 2 `…\scratchpad\spike2\` (`extract.js`, `infer.js`, `proxy.js`, `compare.js`, `mutate.js`) và bản thử 3 `…\scratchpad\spike3\` (`prep2.js` cho làm tròn chữ, `runtime.js`). (chỉ có code; dữ liệu và ảnh của bản thử không lưu).
+**Spec:** `docs/superpowers/specs/2026-11-21-vuong-design-plugin-design.md` (mục 6, 7, 14, 18 và phụ lục). Mã tham khảo (code bỏ đi, chỉ để đọc): bản thử 2 `docs/superpowers/spikes/vuong-design/spike2/` (`extract.js`, `infer.js`, `proxy.js`, `compare.js`, `mutate.js`) và bản thử 3 `docs/superpowers/spikes/vuong-design/spike3/` (`prep2.js` cho làm tròn chữ, `runtime.js`). Chỉ có code; dữ liệu và ảnh của bản thử không lưu.
 
 Các kế hoạch tiếp theo: 2 design system + chuẩn hoá, 3 ghi Figma (biến, component có trạng thái, cập nhật theo phần khác, bảo vệ phần sửa tay, sổ ID, `design-data.json`), 4 đóng gói plugin (skill, lệnh, hai chế độ, ngân sách, chạy tiếp).
 
@@ -46,7 +46,7 @@ Các kế hoạch tiếp theo: 2 design system + chuẩn hoá, 3 ghi Figma (bi�
 - [ ] **Step 1: Viết test**: `findPlaywright()` với `VD_PLAYWRIGHT_FROM` trỏ tới thư mục rỗng tạm → ném `SetupError`, `hint` chứa `"VD_PLAYWRIGHT_FROM"`; với biến trỏ tới thư mục có `node_modules/playwright-core` của spike → trả đường dẫn tồn tại; `launchBrowser()` mở được trang `data:text/html,<p>x</p>` và đóng.
 - [ ] **Step 2: Chạy** `node --test plugins/vuong-design/test/` → FAIL (chưa có module).
 - [ ] **Step 3: Viết** `browser.mjs` theo thứ tự tìm ở Global Constraints; `plugin.json` theo mẫu `vuong-test` (name `vuong-design`, version `0.1.0`).
-- [ ] **Step 4: Chạy lại** (với `VD_PLAYWRIGHT_FROM` trỏ tới `…\scratchpad\spike2`) → PASS.
+- [ ] **Step 4: Chạy lại** (với `VD_PLAYWRIGHT_FROM` trỏ tới một thư mục có `node_modules/playwright-core`, ví dụ cài tạm bằng `npm i playwright-core@1.55.0` trong thư mục ngoài repo) → PASS.
 - [ ] **Step 5: Commit** `feat(vuong-design): plugin skeleton and browser locator`.
 
 ### Task 2: Đo HTML (capture)

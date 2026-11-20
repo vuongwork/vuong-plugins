@@ -87,7 +87,15 @@ CSS chỉ dùng cho những gì hình học không cho biết: màu, font, viề
 
 Bổ sung:
 - **Phương án dự phòng:** hiệu ứng Figma không biểu diễn được bằng layer sửa được (gradient phức tạp, `clip-path`, `filter`, `mask`, ảnh nền) → chụp riêng node đó thành ảnh, đánh dấu "không sửa được", đưa vào báo cáo. Kết quả không bao giờ vỡ.
-- **Mô phỏng trước trên máy:** dùng Yoga (engine flexbox của Meta) với kích thước chữ đo từ trình duyệt để tính trước kết quả auto layout. Container nào mô phỏng lệch so với HTML thì thử cách hiểu khác (tách nhóm khác, đổi hug/fill) và chọn cách khớp nhất. Chỉ gửi sang Figma khi đã khớp.
+- **Mô phỏng trước trên máy (đã kiểm chứng, thay cho Yoga):** dựng lại spec thành flexbox thuần chỉ dùng khái niệm Figma, render trên cùng trình duyệt ở hai độ rộng, so từng node với HTML. Container nào lệch thì thử cách hiểu khác và chọn cách khớp nhất; chỉ gửi sang Figma khi đã khớp. Bản mô phỏng phải mô hình thêm các khác biệt của Figma đã đo được:
+  - Khung chữ: rộng = làm tròn lên (rộng trình duyệt − giãn chữ của ký tự cuối), cao = làm tròn lên.
+  - Ô FILL có viền: Figma cộng độ dày viền vào kích thước ô. Cách xử lý: vẽ viền đó thành lớp phủ tuyệt đối (cần kiểm chứng) hoặc mô hình trong bản mô phỏng.
+  - Ràng buộc SCALE của Figma co cả kích thước; không có kiểu "co vị trí, giữ kích thước" → thuật toán không dùng kiểu đó.
+  - Chữ nhiều cỡ trong một dòng: Figma giữ cố định cao dòng, trình duyệt nới ra → gắn cờ, không tin chiều cao mô phỏng.
+  - Render bản mô phỏng bằng **font Figma sẽ thực sự dùng** (font thay thế nếu font gốc không có trong Figma), và ghi việc thay font vào báo cáo.
+  - Builder: đặt `strokesIncludedInLayout=false` sau khi bật auto layout; đặt node tuyệt đối và ràng buộc **sau khi** dựng xong cả cây.
+- **Hành vi CSS mà auto layout không có** (đưa vào báo cáo chuẩn hoá để người dùng quyết, không cố dịch): phần tử bị co nhỏ hơn nội dung (`flex-shrink`), chia theo tỉ lệ (`flex: 2` / `flex: 1`), `space-around` / `space-evenly`.
+- **Căn theo đường chân chữ (baseline):** hiện giả lập bằng khung bọc phụ (65 khung trên 25 màn). Bản 1 dùng căn baseline của Figma để bỏ các khung này.
 - Bài học từ bản thử: các lỗi lệch còn lại đều đến từ **luật riêng còn sót** (ví dụ "chữ trong cột dọc thì kéo giãn"). Luật hình học chung sửa được cả loạt lỗi cùng lúc.
 
 ## 8. Design system
@@ -228,10 +236,11 @@ Số đo bản thử (2 màn Planora): khoảng 13 lượt gọi Figma; mã gử
 
 ## 18. Giả định cần kiểm chứng sớm nhất trong bản 1
 
-1. Thuật toán đệ quy hình học, kể cả **tách nhóm theo độ gần**, chạy đúng trên màn có style khác hẳn (chưa thử).
-2. Yoga mô phỏng đủ sát auto layout của Figma để dùng cho vòng thử và chọn (chưa thử).
-3. Thu được `::before`/`::after` và chuyển thành node.
-4. Kiểm tra bằng lỗi cài sẵn phát hiện được điểm mù của lớp 2–3.
+1. ~~Thuật toán đệ quy hình học, kể cả tách nhóm theo độ gần, chạy đúng trên màn có style khác hẳn.~~ **Đã kiểm chứng** (bản thử 2, 25 màn): 1535/1535 node được kiểm tra, 93,2% trong ngưỡng; phần còn lại là hành vi CSS Figma không có, không phải chia nhóm sai.
+2. ~~Yoga mô phỏng đủ sát Figma.~~ **Thay bằng bản mô phỏng flexbox, đã kiểm chứng trên Figma thật** (bản thử 3) với các điều chỉnh ở mục 7.
+3. ~~Thu được `::before`/`::after`.~~ **Đã làm được**: biến phần tử giả thành span chép style đã tính, đo chính xác.
+4. Kiểm tra bằng lỗi cài sẵn phát hiện được điểm mù của lớp 2–3. **Đạt trên 1 màn** (5/5 lỗi cài bị bắt); cần chạy trên toàn bộ bộ nghiệm thu.
+7. Dữ liệu màn dày (đến 39 KB) gần giới hạn 50 KB mỗi lần gọi → cần bảng font/màu dùng chung để nén.
 5. Phát hiện được node đã bị sửa tay trong Figma (so với trạng thái lần ghi trước) với chi phí lượt gọi chấp nhận được.
 6. Instance swap cho icon trong component.
 
@@ -268,3 +277,9 @@ File Figma: https://www.figma.com/design/GZhIx2XJNiFhwEJXW8fadH (màn A1, A4 c�
 | 3 | Luật hình học chung (padding, gap, căn lề từ hộp đo được; tràn ra ngoài → tuyệt đối; chữ xuống dòng giữ độ rộng) | | 37 / 11 |
 | 4 | Cập nhật theo phần khác (343 byte) | 2,3% / 2,1% | 34 / 11 |
 | Sau khi vá bộ kiểm tra | Đo cả đoạn chữ, so nội dung từng node | | bắt thêm 4 nhãn lệch trái 7–17px và 2 icon sai |
+
+**Bản thử 2 (thuật toán đệ quy hình học, chỉ chạy trên máy, so với bản mô phỏng flexbox):** 25 màn (18 Planora, 7 finance-controller), 1535/1535 node được kiểm tra, 93,2% trong ngưỡng ở độ rộng gốc và 92,5% ở +120px. 12/18 màn Planora và các màn lịch đạt 99–100%. Tách nhóm theo độ gần dùng 86 lần, không lần nào phải lùi về khung đệm cố định. Kiểm tra bằng lỗi cài: 5/5 lỗi bị bắt; % pixel cả màn chỉ đổi 0,01–0,13%. Dữ liệu 2–39 KB/màn (khoảng 230 byte/node).
+
+**Bản thử 3 (dựng 3 màn lên Figma thật, 11 lượt gọi):** sau khi tách phần chênh do chữ, bố cục khớp 100% (A1), 92,9% (lịch), 90,7% (nhập liệu). Khớp: chia FILL kể cả padding, space-between bỏ qua gap, min/max trên FILL, ràng buộc trái/phải/hai bên/giữa, viền không ảnh hưởng bố cục, hình xoay. Khác: làm tròn khung chữ, viền trên ô FILL, ràng buộc SCALE, chữ nhiều cỡ trong một dòng, font thay thế (chi tiết ở mục 7).
+
+Mã bản thử 2 và 3 ở thư mục tạm (`spike2`, `spike3`), là code bỏ đi nhưng dùng làm tham khảo khi viết bản 1.

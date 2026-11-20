@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node ≥ 18, ESM `.mjs`, `node:test`. Playwright lấy từ bên ngoài (không đóng gói), Chromium của Playwright. So ảnh làm trong trình duyệt (canvas), không thêm thư viện.
 
-**Spec:** `docs/superpowers/specs/2026-11-21-vuong-design-plugin-design.md` (mục 6, 7, 14, 18 và phụ lục). Mã tham khảo (code bỏ đi, chỉ để đọc): bản thử 2 `…\scratchpad\spike2\` (`extract.js`, `infer.js`, `proxy.js`, `compare.js`, `mutate.js`) và bản thử 3 `…\scratchpad\spike3\` (`prep2.js` cho làm tròn chữ, `runtime.js`). Đường dẫn đầy đủ: `C:\Users\admin\AppData\Local\Temp\claude\113c57f678c9597b\d81955cf-2c6f-4da6-980c-6c8ed017fe13\scratchpad\`.
+**Spec:** `docs/superpowers/specs/2026-11-21-vuong-design-plugin-design.md` (mục 6, 7, 14, 18 và phụ lục). Mã tham khảo (code bỏ đi, chỉ để đọc): bản thử 2 `…\scratchpad\spike2\` (`extract.js`, `infer.js`, `proxy.js`, `compare.js`, `mutate.js`) và bản thử 3 `…\scratchpad\spike3\` (`prep2.js` cho làm tròn chữ, `runtime.js`). (chỉ có code; dữ liệu và ảnh của bản thử không lưu).
 
 Các kế hoạch tiếp theo: 2 design system + chuẩn hoá, 3 ghi Figma (biến, component có trạng thái, cập nhật theo phần khác, bảo vệ phần sửa tay, sổ ID, `design-data.json`), 4 đóng gói plugin (skill, lệnh, hai chế độ, ngân sách, chạy tiếp).
 

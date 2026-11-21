@@ -131,7 +131,7 @@ test('root selector matching nothing rejects with "không tìm thấy màn" and 
 test('zero-size and clipped elements are excluded with reasons; rotated box is measured un-rotated', { skip }, async () => {
   const ir = await captureScreens(join(FIX, 'capture-hidden.html'), { root: '.scr' });
   const s = ir.screens[0];
-  assert.deepEqual(s.excluded.map((e) => e.reason).sort(), ['clipped', 'zero-size']);
+  assert.deepEqual(s.excluded.map((e) => e.reason).sort(), ['clipped', 'visibility:hidden', 'zero-size']);
   const rot = walk(s.tree).find((n) => n.cls === 'rot');
   assert.ok(rot, 'rotated node present');
   assert.deepEqual(rot.rA.slice(2), [100, 20]);
@@ -147,6 +147,42 @@ async function withVariant(edit, fn) {
     return await fn(p);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
+
+test('visible child inside a visibility:hidden parent is kept; only the parent is excluded', { skip }, async () => {
+  const s = (await captureScreens(join(FIX, 'capture-hidden.html'), { root: '.scr' })).screens[0];
+  const hidden = s.excluded.find((e) => e.reason === 'visibility:hidden');
+  const seen = walk(s.tree).find((n) => n.cls === 'seen');
+  assert.ok(seen, 'visible child is a node');
+  assert.ok(seen.id.startsWith(hidden.path + '.'), `${seen.id} under ${hidden.path}`);
+  assert.equal(seen.runs[0].t, 'Thấy');
+  const texts = walk(s.tree).flatMap((n) => (n.runs || []).map((r) => r.t || ''));
+  assert.ok(!texts.some((t) => t.includes('Ẩn')), 'hidden parent text is not a run');
+});
+
+test('a childless zero-height box that paints (box-shadow) is kept', { skip }, async () => {
+  const s = (await captureScreens(join(FIX, 'capture-hidden.html'), { root: '.scr' })).screens[0];
+  const line = walk(s.tree).find((n) => n.cls === 'line');
+  assert.ok(line, 'divider kept');
+  assert.equal(line.rA[3], 0);
+  assert.ok(line.paint.shadow);
+});
+
+test('bare text under white-space:pre keeps its spaces', { skip }, async () => {
+  const s = (await captureScreens(join(FIX, 'capture-hidden.html'), { root: '.scr' })).screens[0];
+  const pre = walk(s.tree).find((n) => n.cls === 'pre');
+  assert.equal(pre.kids[0].runs[0].t, 'a   b');
+});
+
+test('pseudo present only at width B does not shift sibling ids', { skip }, async () => {
+  const s = (await captureScreens(join(FIX, 'capture-pseudo-bp.html'), { root: '.scr', viewport: 300 })).screens[0];
+  assert.deepEqual(s.W, [300, 420]);
+  const row = walk(s.tree).find((n) => n.cls === 'row');
+  const xs = row.kids.filter((n) => n.cls === 'x');
+  assert.deepEqual(xs.map((n) => n.id), [`${row.id}.0`, `${row.id}.1`]);
+  for (const x of xs) assert.ok(x.rB, `${x.id} matched at B`);
+  assert.ok(xs[0].rB[0] > xs[0].rA[0], 'the ::before at B pushes the first item right');
+  assert.ok(s.excluded.some((e) => e.path === `${row.id}.b` && e.reason === 'only-at-B'), JSON.stringify(s.excluded));
+});
 
 test('breakpoint: viewport-bound root, widen is lowered to stay under min-width 380', { skip }, async () => {
   const ir = await captureScreens(join(FIX, 'capture-breakpoint.html'), { root: '.scr', viewport: 300 });

@@ -97,6 +97,10 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
     SIDES.some((s) => bw(cs, s) > 0) || cs.boxShadow !== 'none' || (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0);
   const pad = (cs) => SIDES.map((s) => parseFloat(cs['padding' + s]));
 
+  // Original-DOM child index of every node, recorded before any DOM edit so ids do not depend on inserted spans.
+  const origIdx = new WeakMap();
+  for (const r of roots) for (const el of [r, ...r.querySelectorAll('*')]) el.childNodes.forEach((ch, i) => origIdx.set(ch, i));
+
   // 2. materialise ::before/::after (with content, background or border) as spans carrying the pseudo's computed style
   const PROPS = [...getComputedStyle(document.documentElement)];
   const pend = [];
@@ -130,6 +134,7 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
     if (!/flex|grid/.test(getComputedStyle(el).display)) continue;
     for (const ch of [...el.childNodes]) if (ch.nodeType === 3 && ch.textContent.trim()) {
       const sp = document.createElement('span'); sp.dataset.tw = '1';
+      origIdx.set(sp, origIdx.get(ch));
       el.insertBefore(sp, ch); sp.appendChild(ch);
     }
   }
@@ -213,6 +218,8 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
     }
     return L;
   };
+  // path segment of a child: pseudo spans are '.b' / '.a', everything else keeps its original-DOM index
+  const seg = (ch, i) => (ch.dataset?.pseudo ? (ch.dataset.pseudo === 'before' ? 'b' : 'a') : (origIdx.get(ch) ?? i));
   const clsOf = (el) => String(el.className?.baseVal ?? el.className ?? '').replace(/__pz[ab]/g, '').trim();
 
   const screens = roots.map((root) => {
@@ -245,8 +252,8 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
             runs.push({ t: ch.textContent, ...(Object.keys(d).length ? { s: d } : {}) });
           } else if (ch.nodeType === 1) {
             if (ch.tagName === 'BR') { runs.push({ br: 1 }); return; }
-            if (getComputedStyle(ch).display === 'none') { excl(path + '.' + i, 'display:none'); return; }
-            rec(ch, path + '.' + i);
+            if (getComputedStyle(ch).display === 'none') { excl(path + '.' + seg(ch, i), 'display:none'); return; }
+            rec(ch, path + '.' + seg(ch, i));
           }
         });
       };
@@ -280,11 +287,19 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
       return c;
     };
 
-    const walk = (el, id, clip) => {
+    // Returns a node, null, or (for a visibility:hidden element) an array of its visible descendants' nodes.
+    const walk = (el, id, clip, inHidden = false) => {
       const cs = getComputedStyle(el);
       if (cs.display === 'none') { excl(id, 'display:none'); return null; }
-      if (cs.visibility === 'hidden' || cs.visibility === 'collapse') { excl(id, 'visibility:hidden'); return null; }
       const b = el.getBoundingClientRect();
+      if (cs.visibility === 'hidden' || cs.visibility === 'collapse') {
+        // Only the element that turns visibility off is listed; descendants that inherit it are covered by that entry.
+        if (!inHidden) excl(id, 'visibility:hidden');
+        if (el.tagName.toLowerCase() === 'svg') return null;
+        const out = [];
+        kidsInto(out, el, cs, id, clipFor(el, cs, b, clip), true);
+        return out;
+      }
       if (outside(b, clip)) { excl(id, 'clipped'); return null; }
       const tag = el.tagName.toLowerCase();
       const cls = clsOf(el);
@@ -335,31 +350,34 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
       kidsInto(n.kids, el, cs, id, clipFor(el, cs, b, clip));
       if (!n.kids.length) {
         delete n.kids;
-        if (b.width < 0.5 || b.height < 0.5) { excl(id, 'zero-size'); return null; }
+        if ((b.width < 0.5 || b.height < 0.5) && !hasBox(cs)) { excl(id, 'zero-size'); return null; }
       }
       if (el.dataset?.approx) n.approx = true;
       return n;
     };
     // children of el; display:contents children are flattened into the parent with their own path segment
-    const kidsInto = (out, el, cs, id, clip) => {
+    const kidsInto = (out, el, cs, id, clip, inHidden = false) => {
       el.childNodes.forEach((ch, i) => {
-        const cid = id + '.' + i;
+        const cid = id + '.' + seg(ch, i);
         if (ch.nodeType === 3) {
-          if (!ch.textContent.trim()) return;
+          if (!ch.textContent.trim() || cs.visibility !== 'visible') return; // hidden text is covered by its element's entry
           const rb = rangeBox(ch, cs); if (!rb) return;
           const f = useFont(font(cs));
-          out.push({ ...base(cid, 'text', '#text', '', rb.box, {}), font: f, runs: [{ t: ch.textContent.replace(/\s+/g, ' ').trim() }], lines: rb.lines, tw: rb.tw });
+          const t = /pre/.test(cs.whiteSpace) ? ch.textContent : ch.textContent.replace(/\s+/g, ' ').trim();
+          out.push({ ...base(cid, 'text', '#text', '', rb.box, {}), font: f, runs: [{ t }], lines: rb.lines, tw: rb.tw });
         } else if (ch.nodeType === 1) {
           if (ch.tagName === 'BR' || ch.tagName === 'STYLE' || ch.tagName === 'SCRIPT' || ch.tagName === 'TEMPLATE' || ch.tagName === 'HEAD') return;
           const ccs = getComputedStyle(ch);
-          if (ccs.display === 'contents') { kidsInto(out, ch, ccs, cid, clip); return; }
-          const k = walk(ch, cid, clip); if (k) out.push(k);
+          if (ccs.display === 'contents') { kidsInto(out, ch, ccs, cid, clip, inHidden); return; }
+          const k = walk(ch, cid, clip, inHidden);
+          if (Array.isArray(k)) out.push(...k); else if (k) out.push(k);
         }
       });
     };
 
     const INF = { left: -Infinity, top: -Infinity, right: Infinity, bottom: Infinity };
-    const tree = walk(root, 'n', INF);
+    let tree = walk(root, 'n', INF);
+    if (Array.isArray(tree)) tree = null; // a hidden root is reported as an error on the node side
 
     let name = '';
     if (nameOf) {
@@ -484,6 +502,13 @@ export async function captureScreens(htmlPath, opts = {}) {
       usedIds.add(id);
       const seen = new Set(sA.excluded.map((e) => e.path));
       const excluded = [...sA.excluded, ...sB.excluded.filter((e) => !seen.has(e.path)).map((e) => ({ ...e, at: 'B' }))];
+      // Nodes rendered only at B (the tree is A's) are listed too, top-most only, unless A already excluded them.
+      const idsA = new Set(); const indexA = (n) => { idsA.add(n.id); (n.kids || []).forEach(indexA); }; indexA(sA.tree);
+      const onlyB = (n) => {
+        if (!idsA.has(n.id)) { if (!seen.has(n.id)) excluded.push({ path: n.id, reason: 'only-at-B', at: 'B' }); return; }
+        (n.kids || []).forEach(onlyB);
+      };
+      onlyB(sB.tree);
       return {
         id, name: sA.name || id, W: [r2(sA.W), r2(sB.W)], H: [r2(sA.H), r2(sB.H)], widen: widens[i],
         tree: mergeNode(sA.tree, mapB), excluded, fonts: [...new Set([...sA.fonts, ...sB.fonts])],

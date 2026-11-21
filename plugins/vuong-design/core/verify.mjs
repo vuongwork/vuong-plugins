@@ -23,8 +23,8 @@
 //   ancestor or an earlier sibling, and a reference counts only if that reference node is itself outside tolerance
 //   (R16; an edge delta of a node within tolerance is never a reference); otherwise the node is a root. Per axis:
 //    - size is inherited when |dw| <= tol, or the node is FILL (spec sizing) and its nearest source ancestor's size
-//      moved the same way by at least as much, or the node is FILL and non-FILL siblings' size changes it absorbs
-//      account for it, or the node is HUG and its size change equals the extent change of its grounded children
+//      moved the same way by at least as much, or the node is FILL and it absorbs exactly its equal share of the
+//      non-FILL siblings' size changes (dz = -sum / number of FILL items, within tol, R28), or the node is HUG and its size change equals the extent change of its grounded children
 //      (non-FILL, not positioned only from this node's far/middle edge; a child whose position and size deltas on that
 //      axis are within tolerance counts as unchanged, R19/R25). So a wrongly sized parent whose FILL children
 //      absorb the change is the root, not its children; and a hugging frame around a wrong child is not a second root.
@@ -42,12 +42,15 @@
 //   since width A (R23). Other flags explain their own node. An ancestor's shrink/weightedFill explains a descendant's
 //   size only (never a position), only if that ancestor is a root by size on the flag's axis, and only through an
 //   unbroken FILL chain on that axis, or for a height under a width flag through a chain that can wrap (FILL width,
-//   FILL or text-hugging height) (R22). Another ancestor flag (not spaceAround, not text-only mixedRunHeight) explains
+//   FILL or text-hugging height) where the excused node is a text (R22, R28). When shrink/weightedFill excuses an
+//   item's main-axis size, the next flow sibling's near edge must follow the item's far edge within tol (the gap is
+//   kept), else that sibling is an unexplained root (`adjacency`: the item's id); not checked in space-between or
+//   wrapping containers (R28). Another ancestor flag (not spaceAround, not text-only mixedRunHeight) explains
 //   a descendant root only if that ancestor is itself a root at that width on the same axis, or its width is off and
 //   the deviation is a height (wrap; never the reverse) (R17, M1). A container without a known direction (spec lay.d)
 //   gives shrink and weightedFill no axis.
-//   R27: the layout proxy must be unmodelled and the model proxy modelled (renderProxy's `model` mark); otherwise
-//   verifyScreen throws.
+//   R27/R28: the layout proxy must carry model 'none' and the model proxy model 'figma' (renderProxy's mark); a
+//   missing or wrong mark makes verifyScreen throw.
 //   fontSubstitution explains nothing (R10: capture measures the source in the Figma font). On a screen flagged
 //   unsafeWiden, roots at width B are `unchecked` (reason unsafeWiden), never explained.
 // Layer 3, content (modelled proxy):
@@ -112,12 +115,16 @@ export function verifyScreen(input, opts = {}) {
   const { screen, spec, proxy, layout, flags = [], crops, pixel = null } = input;
   const skipped = [];
   if (!layout) skipped.push('layout');
-  // R27: renderProxy marks what it rendered (model 'figma' | 'none'); a swapped or wrongly built proxy is an error
+  // R27/R28: renderProxy marks what it rendered (model 'figma' | 'none'); the mark is required on both proxies, and a
+  // swapped, wrongly built or unmarked proxy is an error
   for (const M of W) {
     if (layout && layout[M] && layout[M].model === 'figma') {
       throw new Error(`verifyScreen: the layout proxy at ${M} is modelled (rendered from a spec with model 'figma'); render it from the inferred spec`);
     }
-    if (proxy && proxy[M] && proxy[M].model !== undefined && proxy[M].model !== 'figma') {
+    if (layout && layout[M] && layout[M].model !== 'none') {
+      throw new Error(`verifyScreen: the layout proxy at ${M} has no model mark (model ${JSON.stringify(layout[M].model)}); pass renderProxy's result`);
+    }
+    if (proxy && proxy[M] && proxy[M].model !== 'figma') {
       throw new Error(`verifyScreen: the model proxy at ${M} is not modelled (model ${JSON.stringify(proxy[M].model)}); render it from applyFigmaModel's spec`);
     }
   }
@@ -208,11 +215,13 @@ export function verifyScreen(input, opts = {}) {
       if (me === 'FILL' && a) {
         const pz = D.get(a.n.id)[ax + 2];
         if (Math.abs(pz) > tolOf(a.n) + EPS && Math.sign(pz) === Math.sign(dz) && Math.abs(dz) <= Math.abs(pz) + t + EPS) return true;
-        // absorbs size changes of non-FILL siblings (the sibling is attributed on its own)
+        // absorbs size changes of non-FILL siblings (the sibling is attributed on its own). R28: an equality, the FILL
+        // items (flex 1 1 0) sharing the change equally: dz = -sum / (number of FILL items), within tol
         const sib = (a.n.kids || []).filter((k) => k.id !== e.n.id && D.has(k.id) && sz(k.id, ax) !== 'FILL');
         const moved = sib.map((k) => D.get(k.id)[ax + 2]).filter((v) => Math.abs(v) > t + EPS);
         const sum = moved.reduce((x, y) => x + y, 0);
-        if (moved.length && Math.sign(sum) === -Math.sign(dz) && Math.abs(dz) <= Math.abs(sum) + t + EPS) return true;
+        const nFill = (a.n.kids || []).filter((k) => D.has(k.id) && sz(k.id, ax) === 'FILL').length;
+        if (moved.length && Math.abs(dz + sum / nFill) <= t + EPS) return true;
       }
       if (me === 'HUG' && hugAccounts(e, ax)) return true;
       return false;
@@ -278,10 +287,12 @@ export function verifyScreen(input, opts = {}) {
       if (!s || !nodes.length) return false;
       const z = (x, k) => (x.sz ? x.sz[k] : null);
       if (ax === m) return nodes.every((x) => z(x, ax) === 'FILL');
-      if (m === 0 && ax === 1) return nodes.every((x) => z(x, 0) === 'FILL' && (z(x, 1) === 'FILL' || (z(x, 1) === 'HUG' && hasText(x))));
+      // R28: on the wrap path only a text is excused (a HUG frame's own height error is never the flag's)
+      if (m === 0 && ax === 1) return nodes[0].t === 'T' && nodes.every((x) => z(x, 0) === 'FILL' && (z(x, 1) === 'FILL' || (z(x, 1) === 'HUG' && hasText(x))));
       return false;
     };
     const AX = { x: [0, false], y: [1, false], w: [0, true], h: [1, true] };
+    const flexSized = []; // [entry, main axis] whose main-axis size a shrink / weightedFill flag excused (R28 adjacency)
     const explain = (e, why) => {
       const kinds = [];
       for (const w of why) {
@@ -311,6 +322,7 @@ export function verifyScreen(input, opts = {}) {
         }
         if (!by) return null;
         if (!kinds.includes(by)) kinds.push(by);
+        if (size && (by === 'shrink' || by === 'weightedFill') && mainIn(e.n.id) === ax) flexSized.push([e, ax]);
       }
       return kinds.join('+') || null;
     };
@@ -324,9 +336,26 @@ export function verifyScreen(input, opts = {}) {
       if (!why.length) continue;
       const root = { id: e.n.id, width: M, delta: D.get(e.n.id), why };
       if (M === 'B' && unsafeWiden) { uncheck(e.n.id, `unsafeWiden: deviates at B (${why.join(',')})`); continue; }
+      const n0 = flexSized.length;
       const by = explain(e, why);
-      if (by) { root.explainedBy = by; explained.add(e.n.id); }
+      if (by) { root.explainedBy = by; explained.add(e.n.id); } else flexSized.length = n0;
       roots.push(root);
+    }
+    // R28 adjacency: a flag that excuses item i's main-axis size change does not move the gap after it, so the next
+    // flow sibling's near edge must follow i's far edge within tol (FIXED followers pushed along, a FILL neighbour
+    // absorbing it). Otherwise that sibling is an unexplained root on that axis. Not checked in space-between or
+    // wrapping containers, where the gap legitimately changes.
+    for (const [e, ax] of flexSized) {
+      const c = specParent.get(e.n.id);
+      if (!c || !c.lay || c.lay.sb || c.lay.wrap) continue;
+      const ks = flowKids(c), i = ks.findIndex((k) => k.id === e.n.id), k = ks[i + 1];
+      if (!k || !D.has(k.id) || !byId.has(k.id)) continue;
+      const de = D.get(e.n.id), dk = D.get(k.id), kn = byId.get(k.id).n;
+      if (Math.abs(dk[ax] - (de[ax] + de[ax + 2])) <= tolOf(kn) + EPS) continue;
+      const w = ax ? 'y' : 'x';
+      const prev = roots.find((r) => r.id === k.id && r.width === M);
+      if (prev) { if (!prev.why.includes(w)) prev.why.push(w); delete prev.explainedBy; explained.delete(k.id); prev.adjacency = e.n.id; }
+      else roots.push({ id: k.id, width: M, delta: dk, why: [w], adjacency: e.n.id });
     }
   }
 

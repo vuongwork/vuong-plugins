@@ -51,8 +51,8 @@ function fixture() {
     dom[n.id] = o; (n.kids || []).forEach(v);
   };
   v(screen.tree);
-  const proxy = { A: { boxes: boxes('A'), fontsMissing: [], dom }, B: { boxes: boxes('B'), fontsMissing: [], dom } };
-  const layout = { A: { boxes: boxes('A') }, B: { boxes: boxes('B') } };
+  const proxy = { A: { boxes: boxes('A'), fontsMissing: [], dom, model: 'figma' }, B: { boxes: boxes('B'), fontsMissing: [], dom, model: 'figma' } };
+  const layout = { A: { boxes: boxes('A'), model: 'none' }, B: { boxes: boxes('B'), model: 'none' } };
   return { screen, spec, proxy, layout, flags: [], crops: [] };
 }
 // a layout error shows in both proxies; a Figma-model deviation only in the modelled one
@@ -163,8 +163,8 @@ const flat = (kids) => ({ id: 'n', kind: 'frame', rA: [0, 0, 400, 100], rB: [0, 
 function probe(tree, mut, flags = [], spec = { id: 'n', t: 'F', kids: [] }) {
   const boxes = () => { const o = {}; const v = (n) => { o[n.id] = [...n.rA]; (n.kids || []).forEach(v); }; v(tree); return o; };
   const dom = {}; const v = (n) => { dom[n.id] = { color: 'rgb(0, 0, 0)', bg: 'rgba(0, 0, 0, 0)', ...(n.kind === 'icon' ? { icon: 'svg' } : {}) }; (n.kids || []).forEach(v); }; v(tree);
-  const proxy = { A: { boxes: boxes(), fontsMissing: [], dom }, B: { boxes: boxes(), fontsMissing: [], dom } };
-  const layout = { A: { boxes: boxes() }, B: { boxes: boxes() } };
+  const proxy = { A: { boxes: boxes(), fontsMissing: [], dom, model: 'figma' }, B: { boxes: boxes(), fontsMissing: [], dom, model: 'figma' } };
+  const layout = { A: { boxes: boxes(), model: 'none' }, B: { boxes: boxes(), model: 'none' } };
   mut(proxy, layout);
   return verifyScreen({ screen: { id: 's', tree }, spec, proxy, layout, flags, crops: [] });
 }
@@ -215,7 +215,7 @@ test('probe (R12): a flag on an exact ancestor does not excuse a descendant (ico
 
 test('verifyScreen (R12): an ancestor flag explains a descendant root when that ancestor deviates too', () => {
   const inp = fixture();
-  shift(inp, 'n.0', [0, 0, 0, -3]);
+  shift(inp, 'n.0', [0, 0, 0, -3]); shift(inp, 'n.1', [0, -3, 0, 0]); // the next sibling follows (R28 adjacency)
   shift(inp, 'n.0.0', [0, 0, 0, -3]);
   shift(inp, 'n.0.1', [0, 0, 0, -3]);
   inp.flags = [{ id: 'n.0', kind: 'shrink', detail: 'x' }];
@@ -402,8 +402,8 @@ test('R20: shrink on an item drives width to height (wrap) but never height to w
 function probeAB(tree, mut, flags = [], spec = { id: 'n', t: 'F', kids: [] }) {
   const boxes = (M) => { const o = {}; const v = (n) => { o[n.id] = [...(M === 'A' ? n.rA : n.rB)]; (n.kids || []).forEach(v); }; v(tree); return o; };
   const dom = {}; const v = (n) => { dom[n.id] = { color: 'rgb(0, 0, 0)', bg: 'rgba(0, 0, 0, 0)' }; (n.kids || []).forEach(v); }; v(tree);
-  const proxy = { A: { boxes: boxes('A'), fontsMissing: [], dom }, B: { boxes: boxes('B'), fontsMissing: [], dom } };
-  const layout = { A: { boxes: boxes('A') }, B: { boxes: boxes('B') } };
+  const proxy = { A: { boxes: boxes('A'), fontsMissing: [], dom, model: 'figma' }, B: { boxes: boxes('B'), fontsMissing: [], dom, model: 'figma' } };
+  const layout = { A: { boxes: boxes('A'), model: 'none' }, B: { boxes: boxes('B'), model: 'none' } };
   mut(proxy, layout);
   return verifyScreen({ screen: { id: 's', tree }, spec, proxy, layout, flags, crops: [] });
 }
@@ -511,13 +511,70 @@ test('R25: a child counts as unchanged per axis in a HUG extent (its height devi
   assert.equal(r.pass, false);
 });
 
-test('R27: verifyScreen refuses a modelled layout proxy and an unmodelled model proxy', () => {
+test('R27/R28: verifyScreen refuses a modelled layout proxy, an unmodelled model proxy and a missing mark', () => {
   let inp = fixture(); inp.layout.A.model = 'figma';
   assert.throws(() => verifyScreen(inp), /layout proxy.*modelled/i);
   inp = fixture(); inp.proxy.B.model = 'none';
   assert.throws(() => verifyScreen(inp), /model proxy.*not modelled/i);
-  inp = fixture(); for (const M of ['A', 'B']) { inp.layout[M].model = 'none'; inp.proxy[M].model = 'figma'; }
-  assert.equal(verifyScreen(inp).pass, true);
+  inp = fixture(); delete inp.layout.B.model;
+  assert.throws(() => verifyScreen(inp), /layout proxy at B/i);
+  inp = fixture(); delete inp.proxy.A.model;
+  assert.throws(() => verifyScreen(inp), /model proxy at A/i);
+  assert.equal(verifyScreen(fixture()).pass, true);
+});
+
+// ---- fix round 7 (R28) ----
+test('R28: shrink never excuses a HUG frame whose own height is off (only a wrapping text)', () => {
+  const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 300, 100], rB: [0, 0, 300, 100], kids: [
+    { id: 'n.0.0', kind: 'frame', rA: [0, 0, 200, 60], rB: [0, 0, 200, 60], kids: [
+      { id: 'n.0.0.0', kind: 'frame', rA: [10, 10, 180, 30], rB: [10, 10, 180, 30], kids: [{ id: 'n.0.0.0.0', kind: 'text', rA: [10, 10, 180, 20], rB: [10, 10, 180, 20] }] }] }] }]);
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.0', ['FIXED', 'FIXED'], 'H', [Fd('n.0.0', ['FIXED', 'FIXED'], 'V', [
+    Fd('n.0.0.0', ['FILL', 'HUG'], 'V', [{ id: 'n.0.0.0.0', t: 'T', sz: ['FILL', 'HUG'] }])])])]);
+  // squeezed 10px: the text only gets narrower, but its HUG frame is 10px taller (a padding error)
+  const r = probe(tree, both((b) => { b['n.0.0'][2] -= 10; b['n.0.0.0'][2] -= 10; b['n.0.0.0.0'][2] -= 10; b['n.0.0.0'][3] += 10; }), [{ id: 'n.0.0', kind: 'shrink' }], spec);
+  assert.deepEqual(unexplained(r).map((x) => x.id), ['n.0.0.0', 'n.0.0.0'], JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+});
+
+test('R28: a FILL item absorbs exactly its share of its siblings\' size change; a flagged size change keeps the next item adjacent', () => {
+  // row 300: FIXED 100 (shrink, 10px narrower in the proxy) | gap 10 | FILL 190
+  const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 300, 40], rB: [0, 0, 300, 40], kids: [
+    { id: 'n.0.0', kind: 'frame', rA: [0, 0, 100, 40], rB: [0, 0, 100, 40] }, { id: 'n.0.1', kind: 'frame', rA: [110, 0, 190, 40], rB: [110, 0, 190, 40] }] }]);
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.0', ['FIXED', 'FIXED'], 'H', [F('n.0.0', ['FIXED', 'FIXED']), F('n.0.1', ['FILL', 'FILL'])])]);
+  const m = (g) => both((b) => { b['n.0.0'][2] -= 10; b['n.0.1'][0] += -10 + g; b['n.0.1'][2] += 10 - g; });
+  const flags = [{ id: 'n.0.0', kind: 'shrink' }];
+  let r = probe(tree, m(0), flags, spec); // legit: the FILL item takes the 10px
+  assert.ok(r.roots.length && r.roots.every((x) => x.explainedBy === 'shrink'), JSON.stringify(r.roots));
+  assert.equal(r.pass, true);
+  for (const g of [5, 10]) { // gap 5 / 10 larger as well
+    r = probe(tree, m(g), flags, spec);
+    assert.ok(unexplained(r).some((x) => x.id === 'n.0.1'), `gap +${g}: ${JSON.stringify(r.roots)}`);
+    assert.equal(r.pass, false, `gap +${g}`);
+  }
+  // two FILL items share a FIXED sibling's +10 equally (-5 each): no root on them
+  const t3 = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 300, 40], rB: [0, 0, 300, 40], kids: [
+    { id: 'n.0.0', kind: 'frame', rA: [0, 0, 60, 40], rB: [0, 0, 60, 40] }, { id: 'n.0.1', kind: 'frame', rA: [60, 0, 120, 40], rB: [60, 0, 120, 40] }, { id: 'n.0.2', kind: 'frame', rA: [180, 0, 120, 40], rB: [180, 0, 120, 40] }] }]);
+  const s3 = Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.0', ['FIXED', 'FIXED'], 'H', [F('n.0.0', ['FIXED', 'FIXED']), F('n.0.1', ['FILL', 'FILL']), F('n.0.2', ['FILL', 'FILL'])])]);
+  r = probe(t3, both((b) => { b['n.0.0'][2] += 10; b['n.0.1'][0] += 10; b['n.0.1'][2] -= 5; b['n.0.2'][0] += 5; b['n.0.2'][2] -= 5; }), [{ id: 'n.0.0', kind: 'shrink' }], s3);
+  assert.deepEqual(rootIds(r), ['n.0.0'], JSON.stringify(r.roots));
+});
+
+test('R28: weightedFill with a gap error hidden by a padding error is not excused (adjacency)', () => {
+  const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 210, 40], rB: [0, 0, 210, 40], kids: [
+    { id: 'n.0.0', kind: 'frame', rA: [0, 0, 120, 40], rB: [0, 0, 120, 40] }, { id: 'n.0.1', kind: 'frame', rA: [130, 0, 80, 40], rB: [130, 0, 80, 40] }] }]);
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.0', ['FIXED', 'FIXED'], 'H', [F('n.0.0', ['FILL', 'FILL']), F('n.0.1', ['FILL', 'FILL'])])]);
+  const r = probe(tree, both((b) => { b['n.0.0'][2] += 10; b['n.0.1'][0] += 20; b['n.0.1'][2] -= 10; }), wfFlags, spec);
+  assert.ok(unexplained(r).some((x) => x.id === 'n.0.1'), JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+});
+
+test('R28: a shrunk item in an overflowing row pushes its FIXED followers along: explained', () => {
+  const kids = [0, 1, 2].map((i) => ({ id: `n.0.${i}`, kind: 'frame', rA: [i * 110, 0, 100, 40], rB: [i * 110, 0, 100, 40] }));
+  const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 300, 40], rB: [0, 0, 300, 40], kids }]);
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.0', ['FIXED', 'FIXED'], 'H', [0, 1, 2].map((i) => F(`n.0.${i}`, ['FIXED', 'FIXED'])))]);
+  const r = probe(tree, both((b) => { b['n.0.0'][2] -= 10; b['n.0.1'][0] -= 10; b['n.0.2'][0] -= 10; }), [{ id: 'n.0.0', kind: 'shrink' }], spec);
+  assert.deepEqual(rootIds(r), ['n.0.0'], JSON.stringify(r.roots));
+  assert.equal(r.pass, true);
 });
 
 // ---- coverage, flags, tolerances ----
@@ -560,6 +617,7 @@ test('verifyScreen: syn frames and excluded nodes are not counted', () => {
 test('verifyScreen: a root on a node flagged shrink is explained and the screen can still pass', () => {
   const inp = fixture();
   shift(inp, 'n.0', [0, 0, 0, -3]); // squeezed on the main axis of its column (R20)
+  shift(inp, 'n.1', [0, -3, 0, 0]); // the next sibling follows (R28 adjacency)
   inp.flags = [{ id: 'n.0', kind: 'shrink', detail: 'x' }];
   const r = verifyScreen(inp);
   assert.deepEqual(rootIds(r), ['n.0']);

@@ -517,9 +517,11 @@ async function applyOverride({ rootSel, map, links, faces, timeoutMs, probeText 
   }))));
   await within(Promise.all(faces.map(([fam, ital, w]) => document.fonts.load(`${ital ? 'italic ' : ''}${w} 16px "${fam}"`).catch(() => null))));
   const ctx = document.createElement('canvas').getContext('2d');
-  const probe = (fam, fb) => { ctx.font = `72px "${fam}", ${fb}`; const a = ctx.measureText(probeText).width; ctx.font = `72px ${fb}`; return a !== ctx.measureText(probeText).width; };
+  // every weight/style the page uses must render in the target, or the target counts as failed
+  const probe = (st, fam, fb) => { ctx.font = `${st} 72px "${fam}", ${fb}`; const a = ctx.measureText(probeText).width; ctx.font = `${st} 72px ${fb}`; return a !== ctx.measureText(probeText).width; };
+  const faceOK = (fam, ital, w) => { const st = `${ital ? 'italic ' : ''}${w}`; return document.fonts.check(`${st} 16px "${fam}"`) && (probe(st, fam, 'monospace') || probe(st, fam, 'serif')); };
   const targets = [...new Set(Object.values(map))];
-  const failed = targets.filter((f) => !(document.fonts.check(`16px "${f}"`) && (probe(f, 'monospace') || probe(f, 'serif'))));
+  const failed = targets.filter((f) => !faces.filter(([fam]) => fam === f).every(([fam, ital, w]) => faceOK(fam, ital, w)));
   const ok = Object.entries(map).filter(([, to]) => !failed.includes(to));
   const key = new Map(ok.map(([list], i) => [list, String(i)]));
   const rules = [];

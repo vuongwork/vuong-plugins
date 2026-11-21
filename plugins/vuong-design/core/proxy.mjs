@@ -17,7 +17,8 @@
 //    pinned to figmaTextBox(natural size) before boxes are read (re-measure-then-pin).
 //  - fonts: every family goes through fontMap.substitute(firstFamily(ff)), i.e. the font Figma will really use.
 // Boxes are [x, y, w, h] relative to the root's top-left, rounded to 0.01, measured with transforms off — the same
-// convention as capture's rA/rB. The PNG keeps transforms.
+// convention as capture's rA/rB. The PNG keeps transforms. `dom` is what the page rendered per node id: { text? (leaf
+// text, <br> as a space), icon? (<use> ref or 'svg'), color, bg, ff } — computed values, for verify's content checks.
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -264,11 +265,26 @@ export async function renderProxy(browser, html, width) {
         const own = faces.filter((x) => x.family.replace(/^["']|["']$/g, '') === f);
         return own.length ? !own.some((x) => x.status === 'loaded') : !(probe(f, 'monospace') || probe(f, 'serif'));
       });
+      // what the page really rendered, per node (verify layer 3): text of leaves (runs, <br> = space), icon reference,
+      // computed colour / background colour / first font family
+      const dom = {};
+      for (const el of document.querySelectorAll('[data-id]')) {
+        const cs = getComputedStyle(el); const o = { color: cs.color, bg: cs.backgroundColor, ff: cs.fontFamily };
+        const use = el.querySelector(':scope > svg use');
+        if (use) o.icon = (use.getAttribute('href') || '').replace(/^#/, '');
+        else if (el.querySelector(':scope > svg')) o.icon = 'svg';
+        if (!el.querySelector('[data-id]') && !el.querySelector(':scope > svg')) {
+          let t = '';
+          const rec = (x) => { for (const c of x.childNodes) { if (c.nodeType === 3) t += c.textContent; else if (c.tagName === 'BR') t += ' '; else if (c.nodeType === 1) rec(c); } };
+          rec(el); if (t) o.text = t;
+        }
+        dom[el.dataset.id] = o;
+      }
       document.getElementById('__vd_nt').remove();
-      return { boxes, fontsMissing };
+      return { boxes, fontsMissing, dom };
     });
     const png = await page.locator('[data-root]').screenshot({ animations: 'disabled' });
-    return { boxes: res.boxes, png, fontsMissing: res.fontsMissing };
+    return { boxes: res.boxes, png, fontsMissing: res.fontsMissing, dom: res.dom };
   } finally {
     await page.close();
     rmSync(dir, { recursive: true, force: true });

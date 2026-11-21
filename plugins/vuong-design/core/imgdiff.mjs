@@ -1,14 +1,15 @@
 // Image comparison in the browser with canvas (no image dependencies on the Node side). PNG buffers are decoded by
 // Chromium, composited over white, and compared pixel by pixel as pixelmatch does: YIQ colour distance (threshold 0.1),
 // anti-aliased pixels ignored (sub-pixel text placement changes edge pixels without changing content).
-//  - cropDiff: one region of each image (rects in CSS px, [x, y, w, h], scaled by the device scale factor). The window
-//    has the size of rectA in both images; it is placed at rectA in image A and at rectB in image B, and image B's
-//    window may move up to `shift` CSS px (default 1) in each direction: the best match counts, so sub-pixel placement
-//    inside the position tolerance is not a content error; the best whole-pixel offset is then refined in quarter
-//    device pixels (bilinear). Both windows are box-blurred 3x3 first (opts.blur, default on): glyph stems that fall
-//    differently on the pixel grid otherwise differ by ~7% on small text, while a removed thin tick still differs
-//    by ~7% and a changed icon or text by >= 12%. Pixels outside an image are white.
-//    Returns the share of differing device pixels (0..1).
+//  - cropDiffDetail / cropDiffMany: one region of each image (rects in CSS px, [x, y, w, h], scaled by the device
+//    scale factor). The window has the size of rectA in both images; it is placed at rectA in image A and at rectB in
+//    image B, and image B's window may move up to `shift` CSS px (default 1) on each axis, in whole device pixels and
+//    then quarter-pixel (bilinear) steps around the best one, never beyond `shift` in total: the best match counts. Both windows are box-blurred 3x3 first (opts.blur, default on) so glyph stems that fall
+//    differently on the pixel grid do not count. Pixels outside an image are white.
+//    Result { diff, ink, ratio }: diff = differing device pixels at the best offset; ink = pixels that differ from
+//    their window's background (its most common colour) in either window; ratio = diff / ink (0 when there is no
+//    ink). Normalising by ink, not by area, keeps a removed thin mark from being diluted by a large empty box.
+//  - cropDiff: the ratio only.
 //  - pixelDiff: whole images, top-left aligned; area covered by only one of the two images counts as different.
 //    Reference only.
 
@@ -45,9 +46,7 @@ async function compareInPage({ imgs, jobs, dsf, shift, threshold, blurOn }) {
     const out = new Uint8ClampedArray(w * h * 4);
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       const o = (y * w + x) * 4, a = (y * W1 + x) * 4, b = a + 4, c = a + W1 * 4, d = c + 4;
-      for (let ch = 0; ch < 3; ch++) {
-        out[o + ch] = (g[a + ch] * (1 - tx) + g[b + ch] * tx) * (1 - ty) + (g[c + ch] * (1 - tx) + g[d + ch] * tx) * ty;
-      }
+      for (let ch = 0; ch < 3; ch++) out[o + ch] = (g[a + ch] * (1 - tx) + g[b + ch] * tx) * (1 - ty) + (g[c + ch] * (1 - tx) + g[d + ch] * tx) * ty;
       out[o + 3] = 255;
     }
     return out;
@@ -102,6 +101,15 @@ async function compareInPage({ imgs, jobs, dsf, shift, threshold, blurOn }) {
       (manySiblings(a, maxX, maxY, w, h) && manySiblings(b, maxX, maxY, w, h));
   };
   const maxDelta = 35215 * threshold * threshold;
+  // most common colour of a window, as a 1-pixel RGBA array
+  const mode = (a) => {
+    const m = new Map(); let best = 0, key = 0xffffff;
+    for (let k = 0; k < a.length; k += 4) {
+      const c = (a[k] << 16) | (a[k + 1] << 8) | a[k + 2]; const n = (m.get(c) || 0) + 1; m.set(c, n);
+      if (n > best) { best = n; key = c; }
+    }
+    return [key >> 16, (key >> 8) & 255, key & 255, 255];
+  };
   // differing, non-anti-aliased pixels of two w x h windows; stops counting at `stop`
   const count = (a, b, w, h, stop = Infinity) => {
     let n = 0;
@@ -112,6 +120,14 @@ async function compareInPage({ imgs, jobs, dsf, shift, threshold, blurOn }) {
       if (++n >= stop) return n;
     }
     return n;
+  };
+  const diffMask = (a, b, w, h) => {
+    const m = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const k = (y * w + x) * 4;
+      if (delta(a, b, k, k, false) > maxDelta && !antialiased(a, x, y, w, h, b) && !antialiased(b, x, y, w, h, a)) m[y * w + x] = 1;
+    }
+    return m;
   };
   const dec = await Promise.all(imgs.map(decode));
   return jobs.map((j) => {
@@ -127,21 +143,37 @@ async function compareInPage({ imgs, jobs, dsf, shift, threshold, blurOn }) {
     const ax = Math.round(j.ra[0] * dsf), ay = Math.round(j.ra[1] * dsf);
     const w = Math.max(1, Math.round(j.ra[2] * dsf)), h = Math.max(1, Math.round(j.ra[3] * dsf));
     const bx = Math.round(j.rb[0] * dsf), by = Math.round(j.rb[1] * dsf);
-    const s = Math.round(shift * dsf);
+    const s = Math.floor(shift * dsf + 1e-9);
     const BL = blurOn ? (x) => blur(x, w, h) : (x) => x;
-    const wa = BL(win(A, ax, ay, w, h));
-    let best = Infinity, bdx = 0, bdy = 0;
-    for (let dy = -s; dy <= s && best > 0; dy++) for (let dx = -s; dx <= s && best > 0; dx++) {
-      const n = count(wa, BL(win(B, bx + dx, by + dy, w, h)), w, h, best);
-      if (n < best) { best = n; bdx = dx; bdy = dy; }
-    }
-    // sub-pixel refinement: text and thin shapes placed at another fractional offset rasterise differently; resample
-    // image B bilinearly at quarter-pixel offsets around the best whole-pixel match
+    const rawA = win(A, ax, ay, w, h);
+    const wa = BL(rawA), bgA = mode(rawA);
+    let best = Infinity, bw = null, bdx = 0, bdy = 0;
+    const tryAt = (dx, dy) => {
+      const wb = Number.isInteger(dx) && Number.isInteger(dy) ? win(B, bx + dx, by + dy, w, h) : winF(B, bx + dx, by + dy, w, h);
+      const n = count(wa, BL(wb), w, h, best);
+      if (n < best) { best = n; bw = wb; bdx = dx; bdy = dy; }
+    };
+    for (let dy = -s; dy <= s && best > 0; dy++) for (let dx = -s; dx <= s && best > 0; dx++) tryAt(dx, dy);
+    // quarter-pixel refinement around the best whole-pixel offset (bilinear), never beyond `shift` CSS px in total
+    const ix = bdx, iy = bdy;
     for (let fy = -0.75; fy <= 0.75 && best > 0; fy += 0.25) for (let fx = -0.75; fx <= 0.75 && best > 0; fx += 0.25) {
-      if (!fx && !fy) continue;
-      best = Math.min(best, count(wa, BL(winF(B, bx + bdx + fx, by + bdy + fy, w, h)), w, h, best));
+      if ((!fx && !fy) || Math.abs(ix + fx) > s || Math.abs(iy + fy) > s) continue;
+      tryAt(ix + fx, iy + fy);
     }
-    return best / (w * h);
+    const wbB = BL(bw), bgB = mode(bw);
+    let ink = 0;
+    for (let k = 0; k < w * h * 4; k += 4) if (delta(wa, bgA, k, 0, false) > maxDelta || delta(wbB, bgB, k, 0, false) > maxDelta) ink++;
+    // peak: most differing pixels inside any P x P device-pixel square (P = 8 CSS px). A removed or changed mark is a
+    // dense cluster; sub-pixel noise is spread thin, so the peak separates them where the total cannot.
+    const mask = diffMask(wa, wbB, w, h);
+    const P = Math.round(8 * dsf), S = new Int32Array((w + 1) * (h + 1));
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) S[(y + 1) * (w + 1) + x + 1] = mask[y * w + x] + S[y * (w + 1) + x + 1] + S[(y + 1) * (w + 1) + x] - S[y * (w + 1) + x];
+    let peak = 0;
+    for (let y = 0; y <= Math.max(0, h - P); y++) for (let x = 0; x <= Math.max(0, w - P); x++) {
+      const x1 = Math.min(w, x + P), y1 = Math.min(h, y + P);
+      peak = Math.max(peak, S[y1 * (w + 1) + x1] - S[y * (w + 1) + x1] - S[y1 * (w + 1) + x] + S[y * (w + 1) + x]);
+    }
+    return { diff: best, ink, ratio: ink ? best / ink : 0, peak };
   });
 }
 
@@ -159,15 +191,19 @@ async function run(browser, imgs, jobs, opts = {}) {
 const r4 = (v) => Math.round(v * 10000) / 10000;
 
 export async function cropDiff(browser, pngA, rectA, pngB, rectB, opts) {
+  return (await cropDiffDetail(browser, pngA, rectA, pngB, rectB, opts)).ratio;
+}
+
+export async function cropDiffDetail(browser, pngA, rectA, pngB, rectB, opts) {
   const [r] = await cropDiffMany(browser, pngA, pngB, [{ rectA, rectB }], opts);
   return r;
 }
 
-// Many regions of the same two images, decoded once. pairs: [{ rectA, rectB }] -> ratios in the same order.
+// Many regions of the same two images, decoded once. pairs: [{ rectA, rectB }] -> [{ diff, ink, ratio }] in order.
 export async function cropDiffMany(browser, pngA, pngB, pairs, opts) {
   if (!pairs.length) return [];
   const res = await run(browser, [pngA, pngB], pairs.map((p) => ({ a: 0, b: 1, ra: p.rectA, rb: p.rectB })), opts);
-  return res.map(r4);
+  return res.map((r) => ({ ...r, ratio: r4(r.ratio) }));
 }
 
 export async function pixelDiff(browser, pngA, pngB, opts) {

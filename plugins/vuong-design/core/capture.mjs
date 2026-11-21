@@ -1,5 +1,6 @@
 // Capture: render an HTML file in headless Chromium and measure every visible thing inside each screen root at two
 // widths (native W and W + delta). Reads computed style only. Writes nothing to disk, never touches the source file.
+// opts.png: also return screen.png = [PNG Buffer at A, at B], each clipped to the screen root (device scale 2).
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -160,7 +161,7 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
     for (const p of ['translate', 'rotate', 'scale']) if (cs[p] && cs[p] !== 'none') parts.push(`${p}(${cs[p]})`);
     if (parts.length) tfs.set(el, { value: parts.join(' '), origin: cs.transformOrigin });
   }
-  const notf = document.createElement('style');
+  const notf = document.createElement('style'); notf.id = '__vd_notf';
   notf.textContent = '*,*::before,*::after{transform:none!important;translate:none!important;rotate:none!important;scale:none!important}';
   document.head.appendChild(notf);
 
@@ -456,12 +457,31 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
 
 // ---------------- node side ----------------
 
-async function measure(browser, url, args, width) {
+// png: also screenshot every root (clipped to the root, device scale 2, transforms back on) after measuring, so the
+// image shows the same widened layout the boxes were measured on. Used by verify (Task 6) for crops and pixel %.
+async function measure(browser, url, args, width, png = false) {
   const page = await browser.newPage({ viewport: { width: Math.round(width), height: VIEWPORT_HEIGHT }, deviceScaleFactor: 2 });
   try {
     await page.goto(url, { waitUntil: 'load' });
     await page.evaluate(() => document.fonts.ready.then(() => 0));
-    return await page.evaluate(measurePage, args);
+    const res = await page.evaluate(measurePage, args);
+    if (png && res.count && res.screens) {
+      // transforms back on; ancestors of the roots paint nothing and the page is white (as in the proxy), so what
+      // shows through a root's rounded corners or transparent areas is not the surrounding mockup chrome
+      await page.evaluate((sel) => {
+        const s = document.getElementById('__vd_notf'); if (s) s.remove();
+        const anc = new Set();
+        for (const r of document.querySelectorAll(sel)) for (let a = r.parentElement; a; a = a.parentElement) anc.add(a);
+        for (const a of anc) {
+          for (const [k, v] of [['background', 'transparent'], ['box-shadow', 'none'], ['border-color', 'transparent'], ['outline-color', 'transparent']]) a.style.setProperty(k, v, 'important');
+        }
+        document.documentElement.style.setProperty('background', '#fff', 'important');
+      }, args.rootSel);
+      const loc = page.locator(args.rootSel);
+      res.png = [];
+      for (let i = 0; i < res.count; i++) res.png.push(await loc.nth(i).screenshot({ animations: 'disabled' }));
+    }
+    return res;
   } finally { await page.close(); }
 }
 
@@ -502,7 +522,7 @@ function mergeNode(a, mapB) {
 }
 
 export async function captureScreens(htmlPath, opts = {}) {
-  const { root, widen, widenBy = 120, nameOf, viewport = DEFAULT_VIEWPORT } = opts;
+  const { root, widen, widenBy = 120, nameOf, viewport = DEFAULT_VIEWPORT, png = false } = opts;
   if (!root) throw new Error('captureScreens: thiếu opts.root (selector của màn)');
   if (!(widenBy > 0)) throw new Error(`captureScreens: widenBy phải > 0 (nhận ${widenBy})`);
   if (!(viewport > 0)) throw new Error(`captureScreens: viewport phải > 0 (nhận ${viewport})`);
@@ -513,7 +533,7 @@ export async function captureScreens(htmlPath, opts = {}) {
 
   const browser = await launchBrowser();
   try {
-    const A = await measure(browser, url, args, viewport);
+    const A = await measure(browser, url, args, viewport, png);
     if (A.badSelector) throw new Error(`không tìm thấy màn: selector "${root}" không hợp lệ (${A.badSelector})`);
     if (!A.count) throw new Error(`không tìm thấy màn: selector "${root}" không khớp phần tử nào trong ${abs}`);
     if (A.widenMissing != null) {
@@ -541,13 +561,14 @@ export async function captureScreens(htmlPath, opts = {}) {
     const anyBound = bound.some(Boolean), anyFree = bound.some((b) => !b);
     const passB = async (forBound) => {
       const res = await measure(browser, url, { ...args, extras: widens.map((w, i) => (bound[i] === forBound && !forBound ? w.by : 0)) },
-        forBound ? viewport + boundWiden.by : viewport);
+        forBound ? viewport + boundWiden.by : viewport, png);
       if (res.count !== A.count) throw new Error(`số màn khác nhau giữa hai lần đo (${A.count} và ${res.count}) với selector "${root}"`);
       return res;
     };
     const Bbound = anyBound ? await passB(true) : null;
     const Bfree = anyFree ? await passB(false) : null;
     const B = { screens: A.screens.map((_, i) => (bound[i] ? Bbound : Bfree).screens[i]) };
+    const pngB = (i) => (bound[i] ? Bbound : Bfree).png[i];
 
     const usedIds = new Set();
     const screens = A.screens.map((sA, i) => {
@@ -575,6 +596,7 @@ export async function captureScreens(htmlPath, opts = {}) {
         id, name: sA.name || id, W: [r2(sA.W), r2(sB.W)], H: [r2(sA.H), r2(sB.H)], widen: widens[i],
         tree: mergeNode(sA.tree, mapB), excluded, fonts: [...new Set([...sA.fonts, ...sB.fonts])], fontsRendered: { ...sA.fontsRendered, ...sB.fontsRendered },
         svgDefs: { ...sA.svgDefs, ...sB.svgDefs }, fontCss: A.fontCss,
+        ...(png ? { png: [A.png[i], pngB(i)] } : {}),
       };
     });
     return { screens };

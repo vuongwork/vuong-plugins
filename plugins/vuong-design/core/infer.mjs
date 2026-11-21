@@ -290,6 +290,31 @@ export function inferScreen(screen) {
         const cb0 = union(items.map((i) => i.A));
         lay.p = [cb0[1] - L.A[1], L.A[0] + L.A[2] - (cb0[0] + cb0[2]), L.A[1] + L.A[3] - (cb0[1] + cb0[3]), cb0[0] - L.A[0]].map((v) => r2(Math.max(0, v)));
         lay.g = plan.g; lay.pa = 'S'; lay.ca = 'S';
+        // R37: the end padding is only bounded by the breaks (every line fits, the next line's first item did not),
+        // at A and at B. Use the midpoint of that interval, never the exact slack of the fullest line: Figma's text
+        // round-up would push that line's last item to the next line.
+        const rowsAt = (M) => bands(items, 1, M).map((b) => [...b].sort((a, c) => a[M][0] - c[M][0]));
+        const rowsAB = { A: arr.rows, B: rowsAt('B') };
+        {
+          let lo = 0, hi = Infinity;
+          for (const M of ['A', 'B']) {
+            const endX = L[M][0] + L[M][2];
+            rowsAB[M].forEach((r, i) => {
+              const re = Math.max(...r.map((x) => x[M][0] + x[M][2]));
+              hi = Math.min(hi, endX - re);
+              const nx = rowsAB[M][i + 1];
+              if (nx) lo = Math.max(lo, endX - (re + plan.g + nx[0][M][2]));
+            });
+          }
+          if (Number.isFinite(hi) && hi >= lo) lay.p[1] = r2(Math.max(0, (lo + hi) / 2));
+        }
+        // R37: cross alignment of the items inside each line (Figma applies the counter alignment per line)
+        const fitsRow = (a) => ['A', 'B'].every((M) => rowsAB[M].every((r) => {
+          const t = Math.min(...r.map((x) => x[M][1])), b = Math.max(...r.map((x) => x[M][1] + x[M][3]));
+          return r.every((x) => (a === 'S' ? Math.abs(x[M][1] - t) : a === 'E' ? Math.abs(x[M][1] + x[M][3] - b)
+            : Math.abs((x[M][1] - t) - (b - x[M][1] - x[M][3]))) <= 0.5);
+        }));
+        if (!fitsRow('S')) lay.ca = fitsRow('C') ? 'C' : fitsRow('E') ? 'E' : 'S';
         finalItems = items.map((it) => ({ c: { stretch: false }, it }));
       } else {
         plan = primaryPlan(items, d);

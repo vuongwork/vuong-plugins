@@ -291,3 +291,20 @@ test('R36: counter-axis alignment is chosen by smallest residual, not loop order
   assert.equal(spec.lay.ca, 'C');
   assert.deepEqual(spec.kids.filter((k) => k.syn).map((k) => k.id), []);
 });
+
+test('R37: wrap row end padding sits mid-slack, cross alignment fitted per row', () => {
+  // 5 chips 90 wide, gap 8, rows 8 apart; the 27-high chip n.1 centres its 25-high neighbours (y 1)
+  // A (300): 3 + 2 per row, fullest line ends at 286 (slack 14); B (420): 4 + 1, fullest line ends at 384
+  const chip = (i, A, B, h = 25) => N(`n.${i}`, [A[0], A[1], 90, h], [B[0], B[1], 90, h]);
+  const tree = N('n', [0, 0, 300, 60], [0, 0, 420, 60], {
+    kids: [
+      chip(0, [0, 1], [0, 1]), chip(1, [98, 0], [98, 0], 27), chip(2, [196, 1], [196, 1]),
+      chip(3, [0, 35], [294, 1]), chip(4, [98, 35], [0, 35]),
+    ],
+  });
+  const { spec } = inferScreen(screenOf(tree));
+  assert.equal(spec.lay.wrap, 1);
+  assert.equal(spec.lay.ca, 'C');
+  // feasible end padding at both widths: [0, 14] ∩ [0, 36] → midpoint 7, not the exact slack 14
+  assert.equal(spec.lay.p[1], 7);
+});

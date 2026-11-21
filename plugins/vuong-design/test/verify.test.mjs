@@ -222,10 +222,15 @@ test('verifyScreen (R12): an ancestor flag explains a descendant root when that 
   // R17: the card hugs its height, so its -3px comes from its children: no excuse for them
   let r = verifyScreen(inp);
   assert.deepEqual(unexplained(r).map((x) => x.id).sort(), ['n.0.0', 'n.0.0', 'n.0.1', 'n.0.1'], JSON.stringify(r.roots));
-  // a FIXED-height card squeezed 3px in its column deviates for its own reason: its flag explains it and its children
+  // a FIXED-height card squeezed 3px in its column deviates for its own reason: its flag explains it. R22: in its
+  // subtree the flag explains a size only through a FILL chain on that axis: the FILL-height text follows the card
+  // (no root), while a squeeze cannot change the FIXED icon's height, so that stays an unexplained root
   inp.spec.kids[0].sz = ['HUG', 'FIXED'];
+  inp.spec.kids[0].kids[0].sz = ['HUG', 'FILL'];
   r = verifyScreen(inp);
-  assert.ok(r.roots.length && r.roots.every((x) => x.explainedBy === 'shrink'), JSON.stringify(r.roots));
+  assert.ok(r.roots.some((x) => x.id === 'n.0' && x.explainedBy === 'shrink'), JSON.stringify(r.roots));
+  assert.ok(!rootIds(r).includes('n.0.0'), JSON.stringify(r.roots));
+  assert.deepEqual(unexplained(r).map((x) => x.id), ['n.0.1', 'n.0.1'], JSON.stringify(r.roots));
 });
 
 test('probe (R12): on an unsafeWiden screen a B-only deviation is unchecked, never explained', () => {
@@ -336,8 +341,12 @@ const row3 = () => flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 300, 40], rB: [0
   ({ id: `n.0.${i}`, kind: 'frame', rA: [30 + i * 100, 10, 40, 20], rB: [30 + i * 100, 10, 40, 20] })) }]);
 const row3Spec = (sz = ['FIXED', 'FIXED']) => Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.0', ['FIXED', 'FIXED'], 'H', [0, 1, 2].map((i) => F(`n.0.${i}`, sz)))]);
 
-test('R20: spaceAround on an exact container explains the main-axis offsets of its children', () => {
-  const r = probe(row3(), both((b) => { b['n.0.0'][0] -= 6; b['n.0.2'][0] += 6; }), [{ id: 'n.0', kind: 'spaceAround' }], row3Spec());
+test('R20/R23: spaceAround explains the computed main-axis offsets of its children (row 36px wider at B)', () => {
+  // A exact (infer: padding 30 + space-between). B: free space +36; source space-around 36 | 148 | 260, proxy
+  // 30 | 148 | 266: the children move -6 / 0 / +6 exactly as computed
+  const tree = row3(); tree.kids[0].rB = [0, 0, 336, 40]; [36, 148, 260].forEach((x, i) => { tree.kids[0].kids[i].rB = [x, 10, 40, 20]; });
+  const spec = row3Spec(); spec.kids[0].lay = { d: 'H', p: [0, 30, 0, 30], sb: 1 };
+  const r = probeAB(tree, (P, L) => { for (const X of [P, L]) { X.B.boxes['n.0.0'][0] -= 6; X.B.boxes['n.0.2'][0] += 6; } }, [{ id: 'n.0', kind: 'spaceAround' }], spec);
   assert.deepEqual(rootIds(r).sort(), ['n.0.0', 'n.0.2']);
   assert.ok(r.roots.every((x) => x.explainedBy === 'spaceAround'), JSON.stringify(r.roots));
   assert.equal(r.pass, true);
@@ -375,12 +384,140 @@ test('R20: shrink on an item drives width to height (wrap) but never height to w
   assert.ok(r.roots.some((x) => x.id === 'n.0.0' && x.explainedBy === 'shrink'), JSON.stringify(r.roots));
   assert.deepEqual(unexplained(r).map((x) => x.id), ['n.0.0.0', 'n.0.0.0'], JSON.stringify(r.roots));
   assert.equal(r.pass, false);
-  // squeezed 10px in width in a row; the grandchild 6px taller (wraps): explained
-  r = probe(tree, both((b) => { b['n.0.0'][2] -= 10; b['n.0.0.0'][3] += 6; }), flags, spec('H'));
+  // squeezed 10px in width in a row; a wrapping text inside (FILL width, HUG height) 6px taller: explained (R22)
+  const tt = structuredClone(tree); tt.kids[0].kids[0].kids[0].kind = 'text';
+  const ts = spec('H'); Object.assign(ts.kids[0].kids[0].kids[0], { t: 'T', sz: ['FILL', 'HUG'] });
+  r = probe(tt, both((b) => { b['n.0.0'][2] -= 10; b['n.0.0.0'][2] -= 10; b['n.0.0.0'][3] += 6; }), flags, ts);
   assert.ok(r.roots.length && r.roots.every((x) => x.explainedBy === 'shrink'), JSON.stringify(r.roots));
+  // ... but a FIXED frame there cannot wrap: its 6px are not the shrink's (R22)
+  r = probe(tree, both((b) => { b['n.0.0'][2] -= 10; b['n.0.0.0'][3] += 6; }), flags, spec('H'));
+  assert.deepEqual(unexplained(r).map((x) => x.id), ['n.0.0.0', 'n.0.0.0'], JSON.stringify(r.roots));
   // a cross-axis size change of the item itself is not the shrink's
   r = probe(tree, both((b) => { b['n.0.0'][2] -= 10; }), flags, spec('V'));
   assert.deepEqual(unexplained(r).map((x) => x.id), ['n.0.0', 'n.0.0'], JSON.stringify(r.roots));
+});
+
+// ---- fix round 6 (R22-R27) ----
+// boxes from rA at A and rB at B (probe() uses rA at both widths)
+function probeAB(tree, mut, flags = [], spec = { id: 'n', t: 'F', kids: [] }) {
+  const boxes = (M) => { const o = {}; const v = (n) => { o[n.id] = [...(M === 'A' ? n.rA : n.rB)]; (n.kids || []).forEach(v); }; v(tree); return o; };
+  const dom = {}; const v = (n) => { dom[n.id] = { color: 'rgb(0, 0, 0)', bg: 'rgba(0, 0, 0, 0)' }; (n.kids || []).forEach(v); }; v(tree);
+  const proxy = { A: { boxes: boxes('A'), fontsMissing: [], dom }, B: { boxes: boxes('B'), fontsMissing: [], dom } };
+  const layout = { A: { boxes: boxes('A') }, B: { boxes: boxes('B') } };
+  mut(proxy, layout);
+  return verifyScreen({ screen: { id: 's', tree }, spec, proxy, layout, flags, crops: [] });
+}
+// n.0 (FIXED row 200) > n.0.0 (FILL, row, holds a FIXED 40x20 frame), n.0.1 (FILL); both FILL items flagged weightedFill
+const wfTree = () => flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 200, 60], rB: [0, 0, 200, 60], kids: [
+  { id: 'n.0.0', kind: 'frame', rA: [0, 0, 120, 60], rB: [0, 0, 120, 60], kids: [{ id: 'n.0.0.0', kind: 'frame', rA: [10, 10, 40, 20], rB: [10, 10, 40, 20] }] },
+  { id: 'n.0.1', kind: 'frame', rA: [120, 0, 80, 60], rB: [120, 0, 80, 60] }] }]);
+const wfSpec = () => Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.0', ['FIXED', 'FIXED'], 'H', [
+  Fd('n.0.0', ['FILL', 'FILL'], 'H', [F('n.0.0.0', ['FIXED', 'FIXED'])]), F('n.0.1', ['FILL', 'FILL'])])]);
+const wfFlags = [{ id: 'n.0.0', kind: 'weightedFill' }, { id: 'n.0.1', kind: 'weightedFill' }];
+const wfSplit = (b) => { b['n.0.0'][2] += 10; b['n.0.1'][0] += 10; b['n.0.1'][2] -= 10; };
+
+test('R22: an explained weightedFill item does not excuse a FIXED descendant (size, wrap height or position)', () => {
+  for (const [what, d] of [['w+6', [0, 0, 6, 0]], ['h+6', [0, 0, 0, 6]], ['x+30', [30, 0, 0, 0]]]) {
+    const r = probe(wfTree(), both((b) => { wfSplit(b); for (let i = 0; i < 4; i++) b['n.0.0.0'][i] += d[i]; }), wfFlags, wfSpec());
+    assert.ok(r.roots.some((x) => x.id === 'n.0.0' && x.explainedBy === 'weightedFill'), `${what}: ${JSON.stringify(r.roots)}`);
+    assert.deepEqual(unexplained(r).map((x) => x.id), ['n.0.0.0', 'n.0.0.0'], `${what}: ${JSON.stringify(r.roots)}`);
+    assert.equal(r.pass, false, what);
+  }
+});
+
+test('R22 (M1): an ancestor shrink explains nothing below it unless the ancestor is a root on the shrink axis', () => {
+  const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 200, 60], rB: [0, 0, 200, 60], kids: [{ id: 'n.0.0', kind: 'frame', rA: [10, 10, 40, 20], rB: [10, 10, 40, 20] }] }]);
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'H', [Fd('n.0', ['FIXED', 'FIXED'], 'H', [F('n.0.0', ['FILL', 'FIXED'])])]);
+  // n.0 is off only on y (explained by its own raster flag); its FILL child 6px wider is not the shrink's (width exact)
+  const r = probe(tree, both((b) => { b['n.0'][1] += 5; b['n.0.0'][1] += 5; b['n.0.0'][2] += 6; }), [{ id: 'n.0', kind: 'shrink' }, { id: 'n.0', kind: 'raster' }], spec);
+  assert.ok(r.roots.some((x) => x.id === 'n.0' && x.explainedBy === 'raster'), JSON.stringify(r.roots));
+  assert.deepEqual(unexplained(r).map((x) => x.id), ['n.0.0', 'n.0.0'], JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+});
+
+test('R22: shrink in a row explains a wrapping text through a HUG frame, not through a FIXED-width one', () => {
+  const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 300, 100], rB: [0, 0, 300, 100], kids: [
+    { id: 'n.0.0', kind: 'frame', rA: [0, 0, 200, 60], rB: [0, 0, 200, 60], kids: [
+      { id: 'n.0.0.0', kind: 'frame', rA: [10, 10, 180, 20], rB: [10, 10, 180, 20], kids: [{ id: 'n.0.0.0.0', kind: 'text', rA: [10, 10, 180, 20], rB: [10, 10, 180, 20] }] }] }] }]);
+  const spec = (innerW) => Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.0', ['FIXED', 'FIXED'], 'H', [Fd('n.0.0', ['FIXED', 'FIXED'], 'V', [
+    Fd('n.0.0.0', [innerW, 'HUG'], 'V', [{ id: 'n.0.0.0.0', t: 'T', sz: ['FILL', 'HUG'] }])])])]);
+  // the item is squeezed 20px; the inner HUG-height frame and its text get 20px narrower and wrap one more line
+  const mut = both((b) => { b['n.0.0'][2] -= 20; for (const id of ['n.0.0.0', 'n.0.0.0.0']) { b[id][2] -= 20; b[id][3] += 20; } });
+  let r = probe(tree, mut, [{ id: 'n.0.0', kind: 'shrink' }], spec('FILL'));
+  assert.ok(r.roots.length && r.roots.every((x) => x.explainedBy === 'shrink'), JSON.stringify(r.roots));
+  assert.ok(rootIds(r).includes('n.0.0.0.0'), JSON.stringify(r.roots));
+  assert.equal(r.pass, true);
+  // the inner frame FIXED in width cannot pass the squeeze on: no excuse for the text
+  r = probe(tree, mut, [{ id: 'n.0.0', kind: 'shrink' }], spec('FIXED'));
+  assert.ok(unexplained(r).some((x) => x.id === 'n.0.0.0.0'), JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+});
+
+test('R23: spaceAround does not excuse an offset that is not the computed space-around difference', () => {
+  // middle child 50px off where infer reproduced the spacing exactly (expected difference 0)
+  const spec = row3Spec(); spec.kids[0].lay = { d: 'H', p: [0, 30, 0, 30], sb: 1 };
+  let r = probe(row3(), both((b) => { b['n.0.1'][0] += 50; }), [{ id: 'n.0', kind: 'spaceAround' }], spec);
+  assert.deepEqual(unexplained(r).map((x) => x.id), ['n.0.1', 'n.0.1'], JSON.stringify(r.roots));
+  // all children 20px further (a padding error)
+  r = probe(row3(), both((b) => { for (const i of [0, 1, 2]) b[`n.0.${i}`][0] += 20; }), [{ id: 'n.0', kind: 'spaceAround' }], spec);
+  assert.ok(unexplained(r).length > 0, JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+});
+
+test('R23: a correct space-around row widened at B is explained; 5px beyond the computed offset is not', () => {
+  // A: 300 wide, 3x40 children, space-around: free 180 -> 30 | 130 | 230 (infer: padding 30 + space-between, exact)
+  // B: 420 wide: free 300 -> 50 | 190 | 330; the proxy (padding 30, space-between) gives 30 | 190 | 350 (-20, 0, +20)
+  const xs = { A: [30, 130, 230], B: [50, 190, 330] };
+  const tree = { id: 'n', kind: 'frame', rA: [0, 0, 300, 100], rB: [0, 0, 420, 100], kids: [{ id: 'n.0', kind: 'frame', rA: [0, 0, 300, 40], rB: [0, 0, 420, 40],
+    kids: [0, 1, 2].map((i) => ({ id: `n.0.${i}`, kind: 'frame', rA: [xs.A[i], 10, 40, 20], rB: [xs.B[i], 10, 40, 20] })) }] };
+  const spec = Fd('n', ['FILL', 'FIXED'], 'V', [{ ...F('n.0', ['FILL', 'FIXED'], [0, 1, 2].map((i) => F(`n.0.${i}`, ['FIXED', 'FIXED']))), lay: { d: 'H', p: [0, 30, 0, 30], sb: 1 } }]);
+  const flags = [{ id: 'n.0', kind: 'spaceAround' }];
+  const atB = (dx) => (P, L) => { for (const X of [P, L]) { X.B.boxes['n.0.0'][0] += -20 + dx; X.B.boxes['n.0.2'][0] += 20 + dx; } };
+  let r = probeAB(tree, atB(0), flags, spec);
+  assert.deepEqual(rootIds(r).sort(), ['n.0.0', 'n.0.2'], JSON.stringify(r.roots));
+  assert.ok(r.roots.every((x) => x.width === 'B' && x.explainedBy === 'spaceAround'), JSON.stringify(r.roots));
+  assert.equal(r.pass, true);
+  r = probeAB(tree, atB(5), flags, spec);
+  assert.ok(unexplained(r).length > 0, JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+});
+
+test('R24: weightedFill does not excuse a gap error absorbed by FILL items, nor a position-only move', () => {
+  const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 210, 40], rB: [0, 0, 210, 40], kids: [
+    { id: 'n.0.0', kind: 'frame', rA: [0, 0, 120, 40], rB: [0, 0, 120, 40] }, { id: 'n.0.1', kind: 'frame', rA: [130, 0, 80, 40], rB: [130, 0, 80, 40] }] }]);
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.0', ['FIXED', 'FIXED'], 'H', [F('n.0.0', ['FILL', 'FILL']), F('n.0.1', ['FILL', 'FILL'])])]);
+  // gap 30 instead of 10: each FILL item 10px narrower (sizes not conserved)
+  let r = probe(tree, both((b) => { b['n.0.0'][2] -= 10; b['n.0.1'][0] += 10; b['n.0.1'][2] -= 10; }), wfFlags, spec);
+  assert.ok(unexplained(r).length > 0, JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+  // the second item 40px further, sizes unchanged
+  r = probe(tree, both((b) => { b['n.0.1'][0] += 40; }), wfFlags, spec);
+  assert.deepEqual(unexplained(r).map((x) => x.id), ['n.0.1', 'n.0.1'], JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+  // a different split that conserves the container's width stays explained
+  r = probe(wfTree(), both(wfSplit), wfFlags, wfSpec());
+  assert.ok(r.roots.length && r.roots.every((x) => x.explainedBy === 'weightedFill'), JSON.stringify(r.roots));
+  assert.equal(r.pass, true);
+});
+
+test('R25: a child counts as unchanged per axis in a HUG extent (its height deviation does not unlock width drift)', () => {
+  const ids = ['n.a', 'n.a.b', 'n.a.b.c', 'n.a.b.c.d'];
+  let node = { id: 'n.a.b.c.d.0', kind: 'frame', rA: [50, 10, 20, 20], rB: [50, 10, 20, 20] }, sp = F(node.id, ['FIXED', 'FIXED']);
+  for (const id of ids.slice().reverse()) { node = { id, kind: 'frame', rA: [0, 0, 120, 40], rB: [0, 0, 120, 40], kids: [node] }; sp = F(id, ['HUG', 'HUG'], [sp]); }
+  // leaf 5px taller (its own raster flag explains it); each HUG level 0.5px wider than its child (outer 2px)
+  const mut = both((b) => { b['n.a.b.c.d.0'][3] += 5; ids.slice().reverse().forEach((id, i) => { b[id][2] += 0.5 * (i + 1); b[id][3] += 5; }); });
+  const r = probe(flat([node]), mut, [{ id: 'n.a.b.c.d.0', kind: 'raster' }], F('n', ['FIXED', 'FIXED'], [sp]));
+  assert.ok(unexplained(r).some((x) => x.id === 'n.a.b.c' && x.why.includes('w')), JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+});
+
+test('R27: verifyScreen refuses a modelled layout proxy and an unmodelled model proxy', () => {
+  let inp = fixture(); inp.layout.A.model = 'figma';
+  assert.throws(() => verifyScreen(inp), /layout proxy.*modelled/i);
+  inp = fixture(); inp.proxy.B.model = 'none';
+  assert.throws(() => verifyScreen(inp), /model proxy.*not modelled/i);
+  inp = fixture(); for (const M of ['A', 'B']) { inp.layout[M].model = 'none'; inp.proxy[M].model = 'figma'; }
+  assert.equal(verifyScreen(inp).pass, true);
 });
 
 // ---- coverage, flags, tolerances ----

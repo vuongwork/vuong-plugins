@@ -25,22 +25,29 @@
 //    - size is inherited when |dw| <= tol, or the node is FILL (spec sizing) and its nearest source ancestor's size
 //      moved the same way by at least as much, or the node is FILL and non-FILL siblings' size changes it absorbs
 //      account for it, or the node is HUG and its size change equals the extent change of its grounded children
-//      (non-FILL, not positioned only from this node's far/middle edge; a child within tolerance counts as unchanged,
-//      R19). So a wrongly sized parent whose FILL children
+//      (non-FILL, not positioned only from this node's far/middle edge; a child whose position and size deltas on that
+//      axis are within tolerance counts as unchanged, R19/R25). So a wrongly sized parent whose FILL children
 //      absorb the change is the root, not its children; and a hugging frame around a wrong child is not a second root.
 //    - position is inherited when one of its edges (near, far, middle) is within tol of 0, or matches a moved edge of
 //      the nearest source ancestor (near, far, middle) or of the previous source sibling (near, far), that reference
 //      node being outside tolerance.
 //   Small offsets cannot add up unseen: the first node whose offset exceeds tol while its references stayed within
 //   tol is a root. root.why lists the axes: x/y position, w/h size.
-//   Flags (R12, R17, R20): a flag explains only deviations it can cause, axis by axis (every axis in root.why must be
-//   covered). shrink: the item's own size on its container's main axis. weightedFill: main-axis size/position of the
-//   FILL items of that container, only when the container's main size is ok or it is an explained root. spaceAround:
-//   main-axis position of the container's direct children, whether or not the container is off. Other flags explain
-//   their own node. An ancestor's flag (not spaceAround, not text-only mixedRunHeight) explains a descendant root
-//   only if that ancestor is itself a root at that width, on the flag's axis or an axis it drives (width drives
-//   height through wrap, never the reverse). A container without a known direction (spec lay.d) gives shrink and
-//   weightedFill no axis.
+//   Flags (R12, R17, R20, R22-R24): a flag explains only deviations it can cause, axis by axis (every axis in root.why
+//   must be covered). shrink: the item's own size on its container's main axis. weightedFill: main-axis SIZE of the
+//   FILL items of that container (never a position), only when the container's main size is ok or it is an explained
+//   root, and only if the items' main sizes add up to the container's change (conserved, R24). spaceAround: main-axis
+//   position of the container's direct children, whether or not the container is off, only within tol of the
+//   computed difference between the source's space-around/evenly and the proxy's spacing for the change in free space
+//   since width A (R23). Other flags explain their own node. An ancestor's shrink/weightedFill explains a descendant's
+//   size only (never a position), only if that ancestor is a root by size on the flag's axis, and only through an
+//   unbroken FILL chain on that axis, or for a height under a width flag through a chain that can wrap (FILL width,
+//   FILL or text-hugging height) (R22). Another ancestor flag (not spaceAround, not text-only mixedRunHeight) explains
+//   a descendant root only if that ancestor is itself a root at that width on the same axis, or its width is off and
+//   the deviation is a height (wrap; never the reverse) (R17, M1). A container without a known direction (spec lay.d)
+//   gives shrink and weightedFill no axis.
+//   R27: the layout proxy must be unmodelled and the model proxy modelled (renderProxy's `model` mark); otherwise
+//   verifyScreen throws.
 //   fontSubstitution explains nothing (R10: capture measures the source in the Figma font). On a screen flagged
 //   unsafeWiden, roots at width B are `unchecked` (reason unsafeWiden), never explained.
 // Layer 3, content (modelled proxy):
@@ -105,6 +112,15 @@ export function verifyScreen(input, opts = {}) {
   const { screen, spec, proxy, layout, flags = [], crops, pixel = null } = input;
   const skipped = [];
   if (!layout) skipped.push('layout');
+  // R27: renderProxy marks what it rendered (model 'figma' | 'none'); a swapped or wrongly built proxy is an error
+  for (const M of W) {
+    if (layout && layout[M] && layout[M].model === 'figma') {
+      throw new Error(`verifyScreen: the layout proxy at ${M} is modelled (rendered from a spec with model 'figma'); render it from the inferred spec`);
+    }
+    if (proxy && proxy[M] && proxy[M].model !== undefined && proxy[M].model !== 'figma') {
+      throw new Error(`verifyScreen: the model proxy at ${M} is not modelled (model ${JSON.stringify(proxy[M].model)}); render it from applyFigmaModel's spec`);
+    }
+  }
 
   const specById = new Map();
   const specParent = new Map(); // spec id -> its spec parent (syn frames included: they are the real containers)
@@ -115,6 +131,7 @@ export function verifyScreen(input, opts = {}) {
   if (spec) indexSpec(spec);
   const flagsById = new Map();
   for (const f of flags) { if (!flagsById.has(f.id)) flagsById.set(f.id, []); flagsById.get(f.id).push(f.kind); }
+  const evenly = new Set(flags.filter((f) => f.kind === 'spaceAround' && /evenly/.test(f.detail || '')).map((f) => f.id));
   const unsafeWiden = flags.some((f) => f.kind === 'unsafeWiden');
 
   const list = flatten(screen.tree);
@@ -170,13 +187,16 @@ export function verifyScreen(input, opts = {}) {
     // HUG on axis ax: does the size change equal the extent change of the grounded children? Grounded = non-FILL and
     // not positioned from this node's far/middle edge (a child that only follows those edges would be circular).
     // R19: a child within tolerance counts as unchanged (its source box), so nested HUG levels cannot each hide tol.
+    // R25: decided per axis (that axis's position and size deltas both within tol), so a deviation on the other axis
+    // does not make the child's sub-tolerance drift on this one count.
+    const changedOn = (k, ax) => { const d = D.get(k.id), t = tolOf(k); return Math.abs(d[ax]) > t + EPS || Math.abs(d[ax + 2]) > t + EPS; };
     const hugAccounts = (e, ax) => {
       const d = D.get(e.n.id), t = tolOf(e.n);
       const ks = (e.n.kids || []).filter((k) => D.has(k.id) && sz(k.id, ax) !== 'FILL' &&
         (posOK(byId.get(k.id), ax, false) || !posOK(byId.get(k.id), ax, true)));
       if (!ks.length) return false;
       const ext = (boxes) => Math.max(...boxes.map((b) => b[ax] + b[ax + 2])) - Math.min(...boxes.map((b) => b[ax]));
-      const now = (k) => (outside(k.id) ? layout[M].boxes[k.id] : src(k, M));
+      const now = (k) => (changedOn(k, ax) ? layout[M].boxes[k.id] : src(k, M));
       const dU = ext(ks.map(now)) - ext(ks.map((k) => src(k, M)));
       return Math.abs(d[ax + 2] - dU) <= t + EPS;
     };
@@ -198,26 +218,68 @@ export function verifyScreen(input, opts = {}) {
       return false;
     };
     // R17 (amended): an ancestor deviates for its own reason only when it is itself a root at this width; a size or
-    // position it inherited (pushed by a sibling, FILL growing with its parent, HUG growing with a child) is no excuse
-    const ownDeviation = (a) => [0, 1].some((ax) => !sizeOK(a, ax) || !posOK(a, ax, true));
+    // position it inherited (pushed by a sibling, FILL growing with its parent, HUG growing with a child) is no excuse.
+    // Kept per axis (M1): the axes on which the ancestor is a root.
+    const rootAxes = (a) => [0, 1].filter((ax) => !sizeOK(a, ax) || !posOK(a, ax, true));
     // R20: a flag explains only deviations it can cause. Every axis in root.why must be covered:
     //  - shrink (own): the item's size on the main axis of its container;
-    //  - weightedFill (own or on a sibling): main-axis size/position of a FILL item, only when the container's
-    //    main-axis size is ok or the container is itself an explained root;
-    //  - spaceAround (on the direct container): the item's main-axis position, whether or not the container is off;
+    //  - weightedFill (own or on a sibling): main-axis SIZE of a FILL item when the container's main size is ok or the
+    //    container is an explained root, and only if the sizes are conserved (R24); never a position;
+    //  - spaceAround (on the direct container): the item's main-axis position, only within tol of the computed
+    //    space-around vs space-between difference (R23), whether or not the container is off;
     //  - other flags (own): anything; fontSubstitution / unsafeWiden: nothing;
-    //  - an ancestor's flag (not spaceAround, not text-only) only if that ancestor is itself a root (R17) and the
-    //    deviation is on the flag's axis or one it drives (width drives height through wrap; height never width).
+    //  - an ancestor's shrink / weightedFill (R22): a descendant's SIZE only, only if the ancestor is a root by size on
+    //    the flag axis, and only through an unbroken FILL chain on that axis (or, for height under a width flag, a
+    //    chain that can wrap: FILL width and FILL or text-hugging height). Never a descendant's position.
+    //  - an ancestor's other flag (not spaceAround, not text-only): only if that ancestor is a root on the same axis,
+    //    or its width is off and the deviation is a height (wrap) (R17, M1).
     const explained = new Set();
     const mainOf = (s) => (!s || !s.lay ? null : s.lay.d === 'H' ? 0 : s.lay.d === 'V' ? 1 : null);
     const mainIn = (id) => mainOf(specParent.get(id));
     const flagged = (id, k) => (flagsById.get(id) || []).includes(k);
+    const flowKids = (s) => (s.kids || []).filter((k) => !k.abs);
+    // R24: the FILL split is an excuse only if the main-axis sizes of the container's items add up to the container's
+    // own change (a gap or padding error absorbed by FILL items is not conserved)
     const wfOK = (e, ax) => {
       const cont = specParent.get(e.n.id);
-      if (mainOf(cont) !== ax || sz(e.n.id, ax) !== 'FILL') return false;
+      if (mainOf(cont) !== ax || sz(e.n.id, ax) !== 'FILL' || cont.syn || !D.has(cont.id)) return false;
       if (!flagged(e.n.id, 'weightedFill') && !(cont.kids || []).some((k) => k.id !== e.n.id && flagged(k.id, 'weightedFill'))) return false;
-      const a = ancestor(e);
-      return !a || Math.abs(D.get(a.n.id)[ax + 2]) <= tolOf(a.n) + EPS || explained.has(a.n.id);
+      const a = byId.get(cont.id), dc = D.get(cont.id)[ax + 2];
+      if (!(Math.abs(dc) <= tolOf(a.n) + EPS || explained.has(a.n.id))) return false;
+      const ks = flowKids(cont);
+      if (ks.some((k) => !D.has(k.id))) return false;
+      const sum = ks.reduce((s, k) => s + D.get(k.id)[ax + 2], 0);
+      return Math.abs(sum - dc) <= tolOf(e.n) + EPS;
+    };
+    // R23: expected main-axis delta of child e under a spaceAround container c at this width. infer reproduces the
+    // source spacing at A (padding + space-between or a gap), so the legitimate difference comes only from the change
+    // df of the source free space between A and this width: the source distributes df space-around
+    // (df/2n + i·df/n) or space-evenly (df(i+1)/(n+1)); the proxy distributes df plus its own container size delta
+    // per its spec (space-between i·df/(n-1); gap with start/centre/end alignment 0, df/2, df). This is the ruling's
+    // Δ_i = (p − f/2n) + i((f − 2p)/(n−1) − f/n) with p, f taken relative to A, so it does not trust the spec padding.
+    const saOK = (e, c, ax) => {
+      const lay = c.lay;
+      if (!lay || lay.wrap || !D.has(c.id) || !byId.has(c.id)) return false;
+      const ks = flowKids(c), n = ks.length, i = ks.findIndex((k) => k.id === e.n.id);
+      if (n < 2 || i < 0 || ks.some((k) => !byId.has(k.id) || !D.has(k.id))) return false;
+      const cn = byId.get(c.id).n, I = ax + 2;
+      const free = (Mx) => (Mx === 'A' ? cn.rA : cn.rB)[I] - ks.reduce((s, k) => s + (Mx === 'A' ? byId.get(k.id).n.rA : byId.get(k.id).n.rB)[I], 0);
+      const df = free(M) - free('A'), dc = D.get(c.id), dfP = df + dc[I];
+      const srcCh = evenly.has(c.id) ? (df * (i + 1)) / (n + 1) : df / (2 * n) + (i * df) / n;
+      const pxCh = lay.sb ? (i * dfP) / (n - 1) : lay.pa === 'E' ? dfP : lay.pa === 'C' ? dfP / 2 : 0;
+      return Math.abs(D.get(e.n.id)[ax] - dc[ax] - (pxCh - srcCh)) <= tolOf(e.n) + EPS;
+    };
+    // R22: the spec nodes from e up to (not including) ancestor a can pass a size change of a on axis m to e's axis ax
+    const hasText = (s) => s.t === 'T' || (s.kids || []).some(hasText);
+    const chainOK = (e, a, ax, m) => {
+      const nodes = [];
+      let s = specById.get(e.n.id);
+      while (s && s.id !== a.n.id) { nodes.push(s); s = specParent.get(s.id); }
+      if (!s || !nodes.length) return false;
+      const z = (x, k) => (x.sz ? x.sz[k] : null);
+      if (ax === m) return nodes.every((x) => z(x, ax) === 'FILL');
+      if (m === 0 && ax === 1) return nodes.every((x) => z(x, 0) === 'FILL' && (z(x, 1) === 'FILL' || (z(x, 1) === 'HUG' && hasText(x))));
+      return false;
     };
     const AX = { x: [0, false], y: [1, false], w: [0, true], h: [1, true] };
     const explain = (e, why) => {
@@ -229,18 +291,22 @@ export function verifyScreen(input, opts = {}) {
           if (NEVER_EXPLAINS.has(k) || k === 'spaceAround' || k === 'weightedFill') continue;
           if (k === 'shrink' ? size && mainIn(e.n.id) === ax : true) { by = k; break; }
         }
-        if (!by && wfOK(e, ax)) by = 'weightedFill';
+        if (!by && size && wfOK(e, ax)) by = 'weightedFill';
         if (!by && !size) {
           const c = specParent.get(e.n.id);
-          if (c && !c.syn && flagged(c.id, 'spaceAround') && mainOf(c) === ax) by = 'spaceAround';
+          if (c && !c.syn && flagged(c.id, 'spaceAround') && mainOf(c) === ax && saOK(e, c, ax)) by = 'spaceAround';
         }
         for (let a = e.parent; !by && a; a = a.parent) {
-          if (!D.has(a.n.id) || !ownDeviation(a)) continue;
+          if (!D.has(a.n.id)) continue;
+          const ra = rootAxes(a);
+          if (!ra.length) continue;
           for (const k of flagsById.get(a.n.id) || []) {
             if (NEVER_EXPLAINS.has(k) || SELF_ONLY.has(k) || k === 'spaceAround') continue;
-            const m = k === 'shrink' || k === 'weightedFill' ? mainIn(a.n.id) : -1;
-            if (m === null) continue;
-            if (m === -1 || m === ax || (m === 0 && ax === 1)) { by = k; break; }
+            if (k === 'shrink' || k === 'weightedFill') {
+              const m = mainIn(a.n.id);
+              if (m === null || !size || sizeOK(a, m) || !chainOK(e, a, ax, m)) continue;
+            } else if (!ra.includes(ax) && !(ax === 1 && !sizeOK(a, 0))) continue;
+            by = k; break;
           }
         }
         if (!by) return null;

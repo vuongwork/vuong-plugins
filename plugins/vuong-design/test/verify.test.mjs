@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { verifyScreen, measureCrops, normColor } from '../core/verify.mjs';
-import { cropDiff, cropDiffDetail, pixelDiff } from '../core/imgdiff.mjs';
+import { cropDiff, cropDiffDetail, cropDiffMany, pixelDiff } from '../core/imgdiff.mjs';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const skip = process.env.VD_PLAYWRIGHT_FROM
@@ -1191,4 +1191,36 @@ test('R46: box-shadow and background-image are compared with the proxy DOM at an
   assert.deepEqual(verifyScreen(inp).data, []);
   delete inp.proxy.A.dom['n.1'].shadow;
   assert.ok(verifyScreen(inp).skipped.includes('effect'));
+});
+
+// ---- R45: a container crop compares the container's own paint, children masked ----
+test('R45: children shifted differently inside a container window: masked, the container passes; its own paint still fails', { skip }, async () => {
+  const box = (extra = '') => `<div style="position:absolute;left:10px;top:10px;width:60px;height:30px;background:#e8f0ee;border-radius:6px${extra}"></div>`;
+  const kids = (ix, dx) => `<div style="position:absolute;left:${ix}px;top:14px;width:16px;height:16px;background:#234"></div>` +
+    `<div style="position:absolute;left:${dx}px;top:20px;width:6px;height:6px;background:#c33;border-radius:3px"></div>`;
+  const src = await shot(box() + kids(14, 40)), prx = await shot(box() + kids(15, 39)), bad = await shot(box(';box-shadow:inset 0 -2px 0 0 #234') + kids(15, 39));
+  const C = [10, 10, 60, 30];
+  const plain = await cropDiffDetail(browser, src, C, prx, C);
+  assert.ok(fails(plain), `unmasked container window fails: ${JSON.stringify(plain)}`);
+  const masks = { masksA: [[14, 14, 16, 16], [40, 20, 6, 6]], masksB: [[15, 14, 16, 16], [39, 20, 6, 6]] };
+  const [own] = await cropDiffMany(browser, src, prx, [{ rectA: C, rectB: C, ...masks }]);
+  assert.ok(!fails(own), `own paint matches: ${JSON.stringify(own)}`);
+  const [changed] = await cropDiffMany(browser, src, bad, [{ rectA: C, rectB: C, ...masks }]);
+  assert.ok(fails(changed), `own paint changed (bottom stroke): ${JSON.stringify(changed)}`);
+});
+
+test('R45: measureCrops masks the cropped descendants of a container (each is compared on its own)', { skip }, async () => {
+  const box = `<div style="position:absolute;left:10px;top:10px;width:60px;height:30px;background:#e8f0ee;border-radius:6px"></div>`;
+  const kids = (ix, dx) => `<div style="position:absolute;left:${ix}px;top:14px;width:16px;height:16px;background:#234"></div>` +
+    `<div style="position:absolute;left:${dx}px;top:20px;width:6px;height:6px;background:#c33;border-radius:3px"></div>`;
+  const src = await shot(box + kids(14, 40)), prx = await shot(box + kids(15, 39));
+  const tree = { id: 'n', kind: 'frame', rA: [0, 0, 100, 100], rB: [0, 0, 100, 100], kids: [
+    { id: 'n.0', kind: 'frame', rA: [10, 10, 60, 30], rB: [10, 10, 60, 30], kids: [
+      { id: 'n.0.0', kind: 'frame', rA: [14, 14, 16, 16], rB: [14, 14, 16, 16] },
+      { id: 'n.0.1', kind: 'frame', rA: [40, 20, 6, 6], rB: [40, 20, 6, 6] }] }] };
+  const boxes = { n: [0, 0, 100, 100], 'n.0': [10, 10, 60, 30], 'n.0.0': [15, 14, 16, 16], 'n.0.1': [39, 20, 6, 6] };
+  const crops = await measureCrops(browser, { tree, png: [src, src] }, { A: { png: prx, boxes }, B: { png: prx, boxes } });
+  const bad = crops.filter(fails).map((c) => [c.id, c.width]);
+  assert.deepEqual(bad, []);
+  assert.equal(crops.filter((c) => c.id === 'n.0').length, 2);
 });

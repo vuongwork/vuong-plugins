@@ -88,7 +88,8 @@
 //   vs the proxy DOM's `shadow` / `bgImage`; a DOM without them puts 'effect' in `skipped`). Data findings are never
 //   allowlistable (pipeline gate).
 //   crops: input.crops = [{id, width, ratio, diff, peak}] from measureCrops at A and B on source nodes whose box has
-//   area <= 4000px². Fails when ratio (differing / ink pixels) > 0.05 or peak (differing pixels in the densest
+//   area <= 4000px², each window with the boxes of its own cropped descendants masked (R45: a container compares its
+//   own paint; children are compared in their own crops). Fails when ratio (differing / ink pixels) > 0.05 or peak (differing pixels in the densest
 //   8x8 CSS px square) >= 40. A failure on a node that is (inside) a raster node is in `cropExplained`.
 // pixel (whole screen, modelled proxy) and strict (share of checked nodes within tolerance, modelled) are reference.
 import { firstFamily } from './font-map.mjs';
@@ -670,12 +671,20 @@ export async function measureCrops(browser, screen, proxy, opts = {}) {
     const P = proxy[M];
     if (!P || !P.png) throw new Error(`measureCrops: proxy PNG at ${M} is missing`);
     const pairs = [];
-    for (const { n } of flatten(screen.tree)) {
-      const s = M === 'A' ? n.rA : n.rB, b = P.boxes[n.id];
-      if (!s || !b) continue;
-      const area = s[2] * s[3];
-      if (!(area > 0) || area > maxArea) continue;
-      pairs.push({ id: n.id, rectA: s, rectB: b });
+    const flat = flatten(screen.tree);
+    const rect = (n) => { const s = M === 'A' ? n.rA : n.rB, b = P.boxes[n.id]; return s && b && s[2] * s[3] > 0 && s[2] * s[3] <= maxArea ? [s, b] : null; };
+    const cropped = new Map(flat.map(({ n }) => [n.id, rect(n)]).filter(([, r]) => r));
+    // R45: a container compares its own paint only: every descendant that has its own crop is masked (in the source
+    // image at its source box, in the proxy image at its proxy box); a descendant without a crop stays in the window
+    const descMasks = (n, out = [[], []]) => {
+      for (const k of n.kids || []) { const r = cropped.get(k.id); if (r) { out[0].push(r[0]); out[1].push(r[1]); } descMasks(k, out); }
+      return out;
+    };
+    for (const { n } of flat) {
+      const r = cropped.get(n.id);
+      if (!r) continue;
+      const [ma, mb] = descMasks(n);
+      pairs.push({ id: n.id, rectA: r[0], rectB: r[1], ...(ma.length ? { masksA: ma, masksB: mb } : {}) });
     }
     const res = await cropDiffMany(browser, screen.png[i], P.png, pairs, opts);
     pairs.forEach((p, k) => out.push({ id: p.id, width: M, ratio: res[k].ratio, diff: res[k].diff, peak: res[k].peak }));

@@ -12,6 +12,8 @@
 //    i.e. the parent's background just outside the box (R31: a uniformly filled box is ink); ratio = diff / ink (0
 //    when there is no ink). Normalising by ink, not by area, keeps a removed thin mark from being diluted by a large
 //    empty box.
+//    R45: optional masks (pair.masksA / masksB, rects in each image) are left out of diff, ink and background, so a
+//    container window can compare the container's own paint with its children (cropped on their own) masked.
 //  - cropDiff: the ratio only.
 //  - pixelDiff: whole images, top-left aligned; area covered by only one of the two images counts as different.
 //    Reference only.
@@ -116,9 +118,10 @@ async function compareInPage({ imgs, jobs, dsf, shift, threshold, blurOn }) {
     return [key >> 16, (key >> 8) & 255, key & 255, 255];
   };
   // differing, non-anti-aliased pixels of two w x h windows; stops counting at `stop`
-  const count = (a, b, w, h, stop = Infinity) => {
+  const count = (a, b, w, h, stop = Infinity, M = null) => {
     let n = 0;
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (M && M[y * w + x]) continue;
       const k = (y * w + x) * 4;
       if (delta(a, b, k, k, false) <= maxDelta) continue;
       if (antialiased(a, x, y, w, h, b) || antialiased(b, x, y, w, h, a)) continue;
@@ -126,9 +129,10 @@ async function compareInPage({ imgs, jobs, dsf, shift, threshold, blurOn }) {
     }
     return n;
   };
-  const diffMask = (a, b, w, h) => {
+  const diffMask = (a, b, w, h, M = null) => {
     const m = new Uint8Array(w * h);
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (M && M[y * w + x]) continue;
       const k = (y * w + x) * 4;
       if (delta(a, b, k, k, false) > maxDelta && !antialiased(a, x, y, w, h, b) && !antialiased(b, x, y, w, h, a)) m[y * w + x] = 1;
     }
@@ -153,14 +157,28 @@ async function compareInPage({ imgs, jobs, dsf, shift, threshold, blurOn }) {
     const ax = Math.round(j.ra[0] * dsf) - p, ay = Math.round(j.ra[1] * dsf) - p;
     const w = bw0 + 2 * p, h = bh0 + 2 * p;
     const bx = Math.round(j.rb[0] * dsf) - p, by = Math.round(j.rb[1] * dsf) - p;
-    const ring = p > 0 ? (i) => { const x = i % w, y = (i / w) | 0; return x < p || y < p || x >= p + bw0 || y >= p + bh0; } : null;
+    // R45: masked pixels (children's boxes in either image, grown by the search radius + the blur radius) are left
+    // out of the diff, the ink and the background, so a container window compares the container's own paint only
+    let M = null;
+    if ((j.ma && j.ma.length) || (j.mb && j.mb.length)) {
+      M = new Uint8Array(w * h); const e = s + 1;
+      const put = (r, ox, oy) => {
+        const x0 = Math.max(0, Math.round(r[0] * dsf) - ox - e), x1 = Math.min(w, Math.round((r[0] + r[2]) * dsf) - ox + e);
+        const y0 = Math.max(0, Math.round(r[1] * dsf) - oy - e), y1 = Math.min(h, Math.round((r[1] + r[3]) * dsf) - oy + e);
+        for (let y = y0; y < y1; y++) M.fill(1, y * w + x0, Math.max(y * w + x0, y * w + x1));
+      };
+      for (const r of j.ma || []) put(r, ax, ay);
+      for (const r of j.mb || []) put(r, bx, by);
+    }
+    const ring0 = p > 0 ? (i) => { const x = i % w, y = (i / w) | 0; return x < p || y < p || x >= p + bw0 || y >= p + bh0; } : null;
+    const ring = M && ring0 ? (i) => ring0(i) && !M[i] : ring0;
     const BL = blurOn ? (x) => blur(x, w, h) : (x) => x;
     const rawA = win(A, ax, ay, w, h);
     const wa = BL(rawA), bgA = mode(rawA, ring);
     let best = Infinity, bw = null, bdx = 0, bdy = 0;
     const tryAt = (dx, dy) => {
       const wb = Number.isInteger(dx) && Number.isInteger(dy) ? win(B, bx + dx, by + dy, w, h) : winF(B, bx + dx, by + dy, w, h);
-      const n = count(wa, BL(wb), w, h, best);
+      const n = count(wa, BL(wb), w, h, best, M);
       if (n < best) { best = n; bw = wb; bdx = dx; bdy = dy; }
     };
     for (let dy = -s; dy <= s && best > 0; dy++) for (let dx = -s; dx <= s && best > 0; dx++) tryAt(dx, dy);
@@ -172,10 +190,10 @@ async function compareInPage({ imgs, jobs, dsf, shift, threshold, blurOn }) {
     }
     const wbB = BL(bw), bgB = mode(bw, ring);
     let ink = 0;
-    for (let k = 0; k < w * h * 4; k += 4) if (delta(wa, bgA, k, 0, false) > maxDelta || delta(wbB, bgB, k, 0, false) > maxDelta) ink++;
+    for (let k = 0; k < w * h * 4; k += 4) if (!(M && M[k / 4]) && (delta(wa, bgA, k, 0, false) > maxDelta || delta(wbB, bgB, k, 0, false) > maxDelta)) ink++;
     // peak: most differing pixels inside any P x P device-pixel square (P = 8 CSS px). A removed or changed mark is a
     // dense cluster; sub-pixel noise is spread thin, so the peak separates them where the total cannot.
-    const mask = diffMask(wa, wbB, w, h);
+    const mask = diffMask(wa, wbB, w, h, M);
     const P = Math.round(8 * dsf), S = new Int32Array((w + 1) * (h + 1));
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) S[(y + 1) * (w + 1) + x + 1] = mask[y * w + x] + S[y * (w + 1) + x + 1] + S[(y + 1) * (w + 1) + x] - S[y * (w + 1) + x];
     let peak = 0;
@@ -209,10 +227,11 @@ export async function cropDiffDetail(browser, pngA, rectA, pngB, rectB, opts) {
   return r;
 }
 
-// Many regions of the same two images, decoded once. pairs: [{ rectA, rectB }] -> [{ diff, ink, ratio }] in order.
+// Many regions of the same two images, decoded once. pairs: [{ rectA, rectB, masksA?, masksB? }] -> [{ diff, ink,
+// ratio, peak }] in order. masksA / masksB (R45): rects (CSS px, in image A / image B) left out of the comparison.
 export async function cropDiffMany(browser, pngA, pngB, pairs, opts) {
   if (!pairs.length) return [];
-  const res = await run(browser, [pngA, pngB], pairs.map((p) => ({ a: 0, b: 1, ra: p.rectA, rb: p.rectB })), opts);
+  const res = await run(browser, [pngA, pngB], pairs.map((p) => ({ a: 0, b: 1, ra: p.rectA, rb: p.rectB, ma: p.masksA, mb: p.masksB })), opts);
   return res.map((r) => ({ ...r, ratio: r4(r.ratio) }));
 }
 

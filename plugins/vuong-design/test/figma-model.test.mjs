@@ -65,5 +65,34 @@ test('available fonts are kept, unknown fonts fall to Inter, substitutions dedup
   assert.equal(fm.substitute('Comic Foo'), 'Inter');
   const a = text('a', { font: font({ ff: 'Foo' }) }), b = text('b', { font: font({ ff: 'Foo' }) });
   const { substitutions } = applyFigmaModel(root(a, b, text('c')), fm);
-  assert.deepEqual(substitutions, [{ from: 'Foo', to: 'Inter' }]);
+  assert.deepEqual(substitutions, [{ from: 'Foo', to: 'Inter', reason: 'not-in-figma' }]);
+});
+
+test('whitelisted font that Chrome failed to load is substituted as not-loaded', () => {
+  const list = '"Be Vietnam Pro", sans-serif';
+  const t = text('a', { font: font({ ff: list }) });
+  const { spec: out, substitutions, flags } = applyFigmaModel(root(t), defaultFontMap(), { rendered: { [list]: 'sans-serif' } });
+  assert.deepEqual(substitutions, [{ from: 'Be Vietnam Pro', to: 'Inter', reason: 'not-loaded' }]);
+  assert.equal(out.kids[0].font.ff, 'Inter');
+  assert.ok(flags.some((f) => f.kind === 'fontSubstitution' && f.id === 'a'));
+});
+
+test('"Foo", Roboto: rendered Roboto keeps Roboto; rendered Foo -> Inter not-in-figma', () => {
+  const list = '"Foo", Roboto';
+  const mk = () => root(text('a', { font: font({ ff: list }) }));
+  const ok = applyFigmaModel(mk(), defaultFontMap(), { rendered: { [list]: 'Roboto' } });
+  assert.deepEqual(ok.substitutions, []);
+  assert.equal(ok.spec.kids[0].font.ff, 'Roboto');
+  assert.equal(ok.flags.length, 0);
+  const bad = applyFigmaModel(mk(), defaultFontMap(), { rendered: { [list]: 'Foo' } });
+  assert.deepEqual(bad.substitutions, [{ from: 'Foo', to: 'Inter', reason: 'not-in-figma' }]);
+});
+
+test('substituted HUG text is flagged, marked font.sub and not pinned', () => {
+  const t = text('a', { w: 33.2, h: 18.89, font: font({ ff: 'Segoe UI' }) });
+  const { spec: out, flags, substitutions } = applyFigmaModel(root(t), defaultFontMap());
+  assert.equal(substitutions[0].reason, 'system');
+  assert.equal(out.kids[0].font.sub, true);
+  assert.deepEqual([out.kids[0].w, out.kids[0].h], [33.2, 18.89]);
+  assert.equal(flags.find((f) => f.kind === 'fontSubstitution').detail, 'Segoe UI \u2192 Inter');
 });

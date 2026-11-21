@@ -225,9 +225,9 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
   const screens = roots.map((root) => {
     const R = root.getBoundingClientRect();
     const rel = (b) => [rnd(b.left - R.left), rnd(b.top - R.top), rnd(b.width), rnd(b.height)];
-    const excluded = []; const fonts = new Set();
+    const excluded = []; const fonts = new Set(); const fontLists = new Set();
     const excl = (path, reason) => excluded.push({ path, reason });
-    const useFont = (f) => { fonts.add(primary(f.ff)); return f; };
+    const useFont = (f) => { fonts.add(primary(f.ff)); fontLists.add(f.ff); return f; };
 
     // text box via Range + half-leading
     const rangeBox = (target, cs) => {
@@ -423,7 +423,18 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
         name = (pick.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80);
       }
     }
-    return { W: rnd(R.width), H: rnd(R.height), tree, excluded, fonts: [...fonts], name };
+    // Family Chrome really renders for each family list: first family that is a generic, or that is loaded/installed
+    // (document.fonts.check covers @font-face; a width probe against two different fallbacks covers installed fonts).
+    const GENERIC = /^(serif|sans-serif|monospace|cursive|fantasy|system-ui|ui-[a-z-]+|-apple-system|BlinkMacSystemFont|emoji|math|fangsong)$/i;
+    const ctx = document.createElement('canvas').getContext('2d');
+    const probe = (fam, fb) => { ctx.font = `72px "${fam}", ${fb}`; const a = ctx.measureText('mmmmmmmmmmlli1WÀỆ').width; ctx.font = `72px ${fb}`; return a !== ctx.measureText('mmmmmmmmmmlli1WÀỆ').width; };
+    const renders = (fam) => document.fonts.check(`16px "${fam}"`) && (probe(fam, 'monospace') || probe(fam, 'serif'));
+    const fontsRendered = {};
+    for (const list of fontLists) {
+      const fams = list.split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+      fontsRendered[list] = fams.find((f) => GENERIC.test(f) || renders(f)) || fams[fams.length - 1] || '';
+    }
+    return { W: rnd(R.width), H: rnd(R.height), tree, excluded, fonts: [...fonts], fontsRendered, name };
   });
   return { count: roots.length, screens, mediaTexts, unreadable };
 }
@@ -547,7 +558,7 @@ export async function captureScreens(htmlPath, opts = {}) {
       onlyB(sB.tree);
       return {
         id, name: sA.name || id, W: [r2(sA.W), r2(sB.W)], H: [r2(sA.H), r2(sB.H)], widen: widens[i],
-        tree: mergeNode(sA.tree, mapB), excluded, fonts: [...new Set([...sA.fonts, ...sB.fonts])],
+        tree: mergeNode(sA.tree, mapB), excluded, fonts: [...new Set([...sA.fonts, ...sB.fonts])], fontsRendered: { ...sA.fontsRendered, ...sB.fontsRendered },
       };
     });
     return { screens };

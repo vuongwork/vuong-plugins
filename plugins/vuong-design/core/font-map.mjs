@@ -27,3 +27,7 @@ export function defaultFontMap(extra = []) {
 
 // First family of a CSS font-family list (what Chrome renders when installed).
 export const firstFamily = (list) => clean(String(list).split(',')[0]);
+
+const SYSTEM = /^(segoe ui|system-ui|ui-[a-z-]+|-apple-system|blinkmacsystemfont|sans-serif|serif|monospace|cursive|fantasy|helvetica|helvetica neue|arial|sf pro[a-z ]*|san francisco)$/i;
+export const isSystemFont = (family) => SYSTEM.test(clean(family));
+export const isAvailable = (fontMap, family) => fontMap.available.some((a) => a.toLowerCase() === clean(family).toLowerCase());

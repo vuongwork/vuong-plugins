@@ -119,6 +119,8 @@ test('basic: node ids are stable paths, unique, and fonts are listed', { skip },
     assert.equal(typeof n.paint, 'object');
   }
   assert.ok(s.fonts.includes('Courier New'), s.fonts.join(','));
+  assert.equal(typeof s.fontsRendered, 'object');
+  for (const [list, fam] of Object.entries(s.fontsRendered)) assert.ok(fam && list.includes(fam.replace(/^["']|["']$/g, '')), `${list} -> ${fam}`);
 });
 
 test('root selector matching nothing rejects with "không tìm thấy màn" and the selector', { skip }, async () => {

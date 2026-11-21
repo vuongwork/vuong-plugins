@@ -30,8 +30,8 @@ function fixture() {
     },
   };
   const spec = {
-    id: 'n', t: 'F', sz: ['FIXED', 'FIXED'], kids: [
-      { id: 'n.0', t: 'F', sz: ['HUG', 'HUG'], kids: [
+    id: 'n', t: 'F', sz: ['FIXED', 'FIXED'], lay: { d: 'V' }, kids: [
+      { id: 'n.0', t: 'F', sz: ['HUG', 'HUG'], lay: { d: 'H' }, kids: [
         { id: 'n.0.0', t: 'T', sz: ['HUG', 'HUG'], font: FONT, runs: [{ t: 'Inbox' }] },
         { id: 'n.0.1', t: 'V', sz: ['FIXED', 'FIXED'], icon: { ref: 'ic' } },
       ] },
@@ -215,16 +215,17 @@ test('probe (R12): a flag on an exact ancestor does not excuse a descendant (ico
 
 test('verifyScreen (R12): an ancestor flag explains a descendant root when that ancestor deviates too', () => {
   const inp = fixture();
-  shift(inp, 'n.0', [0, 0, 3, 0]);
-  shift(inp, 'n.0.1', [0, 0, 3, 0]);
-  inp.flags = [{ id: 'n.0', kind: 'weightedFill', detail: 'x' }];
-  // R17: the card hugs its width, so its +3px comes from the icon: no excuse for the icon
+  shift(inp, 'n.0', [0, 0, 0, -3]);
+  shift(inp, 'n.0.0', [0, 0, 0, -3]);
+  shift(inp, 'n.0.1', [0, 0, 0, -3]);
+  inp.flags = [{ id: 'n.0', kind: 'shrink', detail: 'x' }];
+  // R17: the card hugs its height, so its -3px comes from its children: no excuse for them
   let r = verifyScreen(inp);
-  assert.deepEqual(unexplained(r).map((x) => x.id), ['n.0.1', 'n.0.1'], JSON.stringify(r.roots));
-  // a FIXED-width card off by 3px deviates for its own reason: its flag explains it and the icon
-  inp.spec.kids[0].sz = ['FIXED', 'HUG'];
+  assert.deepEqual(unexplained(r).map((x) => x.id).sort(), ['n.0.0', 'n.0.0', 'n.0.1', 'n.0.1'], JSON.stringify(r.roots));
+  // a FIXED-height card squeezed 3px in its column deviates for its own reason: its flag explains it and its children
+  inp.spec.kids[0].sz = ['HUG', 'FIXED'];
   r = verifyScreen(inp);
-  assert.ok(r.roots.length && r.roots.every((x) => x.explainedBy === 'weightedFill'), JSON.stringify(r.roots));
+  assert.ok(r.roots.length && r.roots.every((x) => x.explainedBy === 'shrink'), JSON.stringify(r.roots));
 });
 
 test('probe (R12): on an unsafeWiden screen a B-only deviation is unchecked, never explained', () => {
@@ -278,7 +279,7 @@ test('probe (R17): a HUG nav that grows only because its icon grew does not excu
 test('probe (R18): a model delta on a node outside tolerance in the layout proxy still needs approval', () => {
   const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 100, 40], rB: [0, 0, 100, 40] }, { id: 'n.1', kind: 'frame', rA: [0, 40, 100, 40], rB: [0, 40, 100, 40] }]);
   const r = probe(tree, (P, L) => { for (const M of ['A', 'B']) { L[M].boxes['n.0'][3] += 3; L[M].boxes['n.1'][1] += 3; P[M].boxes['n.0'][3] += 3; P[M].boxes['n.1'][1] += 43; } },
-    [{ id: 'n.0', kind: 'shrink' }]);
+    [{ id: 'n.0', kind: 'shrink' }], { id: 'n', t: 'F', lay: { d: 'V' }, kids: [{ id: 'n.0', t: 'F' }, { id: 'n.1', t: 'F' }] });
   assert.deepEqual(unexplained(r), [], JSON.stringify(r.roots));
   assert.deepEqual(r.needsApproval.map((m) => [m.id, m.width, m.magnitude]).sort(), [['n.1', 'A', 40], ['n.1', 'B', 40]]);
   assert.deepEqual(r.needsApproval[0].delta, [0, 40, 0, 0], 'delta = modelled delta minus layout delta');
@@ -309,7 +310,7 @@ test('probe (R19): four nested HUG frames each 0.5px wider around an exact leaf 
 test('probe (R17 amended): a card only pushed by an explained sibling does not excuse its child with its flag', () => {
   const a = { id: 'n.0', kind: 'frame', rA: [0, 0, 100, 40], rB: [0, 0, 100, 40] };
   const c = { id: 'n.1', kind: 'frame', rA: [0, 40, 100, 60], rB: [0, 40, 100, 60], kids: [{ id: 'n.1.0', kind: 'frame', rA: [10, 50, 40, 20], rB: [10, 50, 40, 20] }] };
-  const spec = F('n', ['FIXED', 'FIXED'], [F('n.0', ['FIXED', 'FIXED']), F('n.1', ['FIXED', 'FIXED'], [F('n.1.0', ['FIXED', 'FIXED'])])]);
+  const spec = { ...F('n', ['FIXED', 'FIXED'], [F('n.0', ['FIXED', 'FIXED']), F('n.1', ['FIXED', 'FIXED'], [F('n.1.0', ['FIXED', 'FIXED'])])]), lay: { d: 'V' } };
   const r = probe(flat([a, c]), both((b) => { b['n.0'][3] += 10; b['n.1'][1] += 10; b['n.1.0'][1] += 10; b['n.1.0'][2] += 8; }),
     [{ id: 'n.0', kind: 'shrink' }, { id: 'n.1', kind: 'weightedFill' }], spec);
   assert.deepEqual(unexplained(r).map((x) => x.id), ['n.1.0', 'n.1.0'], JSON.stringify(r.roots));
@@ -327,6 +328,59 @@ test('probe (R17 amended): a FILL child growing with its flagged parent does not
   // the parent's flag is not the excuse; a flagged root grandparent still explains it (R17 as amended)
   r = probe(flat([g]), mut, [{ id: 'n.0', kind: 'shrink' }, { id: 'n.0.0', kind: 'weightedFill' }], spec);
   assert.ok(!r.roots.some((x) => x.explainedBy === 'weightedFill'), JSON.stringify(r.roots));
+});
+
+// ---- R20: a flag explains only deviations it can cause ----
+const Fd = (id, sz, d, kids) => ({ ...F(id, sz, kids), lay: { d } });
+const row3 = () => flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 300, 40], rB: [0, 0, 300, 40], kids: [0, 1, 2].map((i) =>
+  ({ id: `n.0.${i}`, kind: 'frame', rA: [30 + i * 100, 10, 40, 20], rB: [30 + i * 100, 10, 40, 20] })) }]);
+const row3Spec = (sz = ['FIXED', 'FIXED']) => Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.0', ['FIXED', 'FIXED'], 'H', [0, 1, 2].map((i) => F(`n.0.${i}`, sz)))]);
+
+test('R20: spaceAround on an exact container explains the main-axis offsets of its children', () => {
+  const r = probe(row3(), both((b) => { b['n.0.0'][0] -= 6; b['n.0.2'][0] += 6; }), [{ id: 'n.0', kind: 'spaceAround' }], row3Spec());
+  assert.deepEqual(rootIds(r).sort(), ['n.0.0', 'n.0.2']);
+  assert.ok(r.roots.every((x) => x.explainedBy === 'spaceAround'), JSON.stringify(r.roots));
+  assert.equal(r.pass, true);
+});
+
+test('R20: spaceAround never explains a child size or cross-axis offset', () => {
+  const r = probe(row3(), both((b) => { b['n.0.1'][2] += 4; b['n.0.0'][1] += 3; }), [{ id: 'n.0', kind: 'spaceAround' }], row3Spec());
+  assert.deepEqual(unexplained(r).map((x) => x.id).sort(), ['n.0.0', 'n.0.0', 'n.0.1', 'n.0.1'], JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+});
+
+test('R20: weightedFill explains FILL siblings only when the container main size is ok or explained', () => {
+  const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 200, 40], rB: [0, 0, 200, 40], kids: [
+    { id: 'n.0.0', kind: 'frame', rA: [0, 0, 120, 40], rB: [0, 0, 120, 40] }, { id: 'n.0.1', kind: 'frame', rA: [120, 0, 80, 40], rB: [120, 0, 80, 40] }] }]);
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.0', ['FIXED', 'FIXED'], 'H', [F('n.0.0', ['FILL', 'FILL']), F('n.0.1', ['FILL', 'FILL'])])]);
+  const flags = [{ id: 'n.0.0', kind: 'weightedFill' }, { id: 'n.0.1', kind: 'weightedFill' }];
+  // container exact: the FILL split differs (weights), explained
+  let r = probe(tree, both((b) => { b['n.0.0'][2] += 10; b['n.0.1'][0] += 10; b['n.0.1'][2] -= 10; }), flags, spec);
+  assert.ok(r.roots.length && r.roots.every((x) => x.explainedBy === 'weightedFill'), JSON.stringify(r.roots));
+  assert.equal(r.pass, true);
+  // container 30px wider, unexplained: the FILL split is no excuse
+  r = probe(tree, both((b) => { b['n.0'][2] += 30; b['n.0.0'][2] += 40; b['n.0.1'][0] += 40; b['n.0.1'][2] -= 10; }), flags, spec);
+  assert.ok(unexplained(r).some((x) => x.id === 'n.0'), JSON.stringify(r.roots));
+  assert.ok(unexplained(r).some((x) => x.id === 'n.0.0'), JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+});
+
+test('R20: shrink on an item drives width to height (wrap) but never height to width in its descendants', () => {
+  const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 200, 80], rB: [0, 0, 200, 80], kids: [{ id: 'n.0.0', kind: 'frame', rA: [10, 10, 100, 40], rB: [10, 10, 100, 40], kids: [
+    { id: 'n.0.0.0', kind: 'frame', rA: [20, 20, 40, 20], rB: [20, 20, 40, 20] }] }] }]);
+  const spec = (d) => Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.0', ['FIXED', 'FIXED'], d, [Fd('n.0.0', ['FIXED', 'FIXED'], 'H', [F('n.0.0.0', ['FIXED', 'FIXED'])])])]);
+  const flags = [{ id: 'n.0.0', kind: 'shrink' }];
+  // squeezed 10px in height in a column; the grandchild 6px wider: not caused by it
+  let r = probe(tree, both((b) => { b['n.0.0'][3] -= 10; b['n.0.0.0'][2] += 6; }), flags, spec('V'));
+  assert.ok(r.roots.some((x) => x.id === 'n.0.0' && x.explainedBy === 'shrink'), JSON.stringify(r.roots));
+  assert.deepEqual(unexplained(r).map((x) => x.id), ['n.0.0.0', 'n.0.0.0'], JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+  // squeezed 10px in width in a row; the grandchild 6px taller (wraps): explained
+  r = probe(tree, both((b) => { b['n.0.0'][2] -= 10; b['n.0.0.0'][3] += 6; }), flags, spec('H'));
+  assert.ok(r.roots.length && r.roots.every((x) => x.explainedBy === 'shrink'), JSON.stringify(r.roots));
+  // a cross-axis size change of the item itself is not the shrink's
+  r = probe(tree, both((b) => { b['n.0.0'][2] -= 10; }), flags, spec('V'));
+  assert.deepEqual(unexplained(r).map((x) => x.id), ['n.0.0', 'n.0.0'], JSON.stringify(r.roots));
 });
 
 // ---- coverage, flags, tolerances ----
@@ -368,7 +422,7 @@ test('verifyScreen: syn frames and excluded nodes are not counted', () => {
 
 test('verifyScreen: a root on a node flagged shrink is explained and the screen can still pass', () => {
   const inp = fixture();
-  shift(inp, 'n.0', [0, 0, -3, 0]);
+  shift(inp, 'n.0', [0, 0, 0, -3]); // squeezed on the main axis of its column (R20)
   inp.flags = [{ id: 'n.0', kind: 'shrink', detail: 'x' }];
   const r = verifyScreen(inp);
   assert.deepEqual(rootIds(r), ['n.0']);

@@ -32,10 +32,14 @@
 //      node being outside tolerance.
 //   Small offsets cannot add up unseen: the first node whose offset exceeds tol while its references stayed within
 //   tol is a root. root.why lists the axes: x/y position, w/h size.
-//   Flags (R12, R17): a node's own flag explains its root; an ancestor's flag explains a descendant root only if that
-//   ancestor is itself a root at that width (deviates for its own reason) and the flag is not text-only
-//   (mixedRunHeight). An ancestor that only inherited its deviation (pushed by a sibling, FILL growing with its
-//   parent, HUG growing with the descendant) is no excuse.
+//   Flags (R12, R17, R20): a flag explains only deviations it can cause, axis by axis (every axis in root.why must be
+//   covered). shrink: the item's own size on its container's main axis. weightedFill: main-axis size/position of the
+//   FILL items of that container, only when the container's main size is ok or it is an explained root. spaceAround:
+//   main-axis position of the container's direct children, whether or not the container is off. Other flags explain
+//   their own node. An ancestor's flag (not spaceAround, not text-only mixedRunHeight) explains a descendant root
+//   only if that ancestor is itself a root at that width, on the flag's axis or an axis it drives (width drives
+//   height through wrap, never the reverse). A container without a known direction (spec lay.d) gives shrink and
+//   weightedFill no axis.
 //   fontSubstitution explains nothing (R10: capture measures the source in the Figma font). On a screen flagged
 //   unsafeWiden, roots at width B are `unchecked` (reason unsafeWiden), never explained.
 // Layer 3, content (modelled proxy):
@@ -102,7 +106,11 @@ export function verifyScreen(input, opts = {}) {
   if (!layout) skipped.push('layout');
 
   const specById = new Map();
-  const indexSpec = (s) => { if (!s.syn) specById.set(s.id, s); (s.kids || []).forEach(indexSpec); };
+  const specParent = new Map(); // spec id -> its spec parent (syn frames included: they are the real containers)
+  const indexSpec = (s) => {
+    if (!s.syn) specById.set(s.id, s);
+    for (const k of s.kids || []) { specParent.set(k.id, s); indexSpec(k); }
+  };
   if (spec) indexSpec(spec);
   const flagsById = new Map();
   for (const f of flags) { if (!flagsById.has(f.id)) flagsById.set(f.id, []); flagsById.get(f.id).push(f.kind); }
@@ -191,15 +199,53 @@ export function verifyScreen(input, opts = {}) {
     // R17 (amended): an ancestor deviates for its own reason only when it is itself a root at this width; a size or
     // position it inherited (pushed by a sibling, FILL growing with its parent, HUG growing with a child) is no excuse
     const ownDeviation = (a) => [0, 1].some((ax) => !sizeOK(a, ax) || !posOK(a, ax, true));
-    const explain = (e) => {
-      for (let a = e, self = true; a; a = a.parent, self = false) {
-        if (!self && (!D.has(a.n.id) || !outside(a.n.id) || !ownDeviation(a))) continue;
-        for (const k of flagsById.get(a.n.id) || []) {
-          if (NEVER_EXPLAINS.has(k) || (!self && SELF_ONLY.has(k))) continue;
-          return k;
+    // R20: a flag explains only deviations it can cause. Every axis in root.why must be covered:
+    //  - shrink (own): the item's size on the main axis of its container;
+    //  - weightedFill (own or on a sibling): main-axis size/position of a FILL item, only when the container's
+    //    main-axis size is ok or the container is itself an explained root;
+    //  - spaceAround (on the direct container): the item's main-axis position, whether or not the container is off;
+    //  - other flags (own): anything; fontSubstitution / unsafeWiden: nothing;
+    //  - an ancestor's flag (not spaceAround, not text-only) only if that ancestor is itself a root (R17) and the
+    //    deviation is on the flag's axis or one it drives (width drives height through wrap; height never width).
+    const explained = new Set();
+    const mainOf = (s) => (!s || !s.lay ? null : s.lay.d === 'H' ? 0 : s.lay.d === 'V' ? 1 : null);
+    const mainIn = (id) => mainOf(specParent.get(id));
+    const flagged = (id, k) => (flagsById.get(id) || []).includes(k);
+    const wfOK = (e, ax) => {
+      const cont = specParent.get(e.n.id);
+      if (mainOf(cont) !== ax || sz(e.n.id, ax) !== 'FILL') return false;
+      if (!flagged(e.n.id, 'weightedFill') && !(cont.kids || []).some((k) => k.id !== e.n.id && flagged(k.id, 'weightedFill'))) return false;
+      const a = ancestor(e);
+      return !a || Math.abs(D.get(a.n.id)[ax + 2]) <= tolOf(a.n) + EPS || explained.has(a.n.id);
+    };
+    const AX = { x: [0, false], y: [1, false], w: [0, true], h: [1, true] };
+    const explain = (e, why) => {
+      const kinds = [];
+      for (const w of why) {
+        const [ax, size] = AX[w];
+        let by = null;
+        for (const k of flagsById.get(e.n.id) || []) {
+          if (NEVER_EXPLAINS.has(k) || k === 'spaceAround' || k === 'weightedFill') continue;
+          if (k === 'shrink' ? size && mainIn(e.n.id) === ax : true) { by = k; break; }
         }
+        if (!by && wfOK(e, ax)) by = 'weightedFill';
+        if (!by && !size) {
+          const c = specParent.get(e.n.id);
+          if (c && !c.syn && flagged(c.id, 'spaceAround') && mainOf(c) === ax) by = 'spaceAround';
+        }
+        for (let a = e.parent; !by && a; a = a.parent) {
+          if (!D.has(a.n.id) || !ownDeviation(a)) continue;
+          for (const k of flagsById.get(a.n.id) || []) {
+            if (NEVER_EXPLAINS.has(k) || SELF_ONLY.has(k) || k === 'spaceAround') continue;
+            const m = k === 'shrink' || k === 'weightedFill' ? mainIn(a.n.id) : -1;
+            if (m === null) continue;
+            if (m === -1 || m === ax || (m === 0 && ax === 1)) { by = k; break; }
+          }
+        }
+        if (!by) return null;
+        if (!kinds.includes(by)) kinds.push(by);
       }
-      return null;
+      return kinds.join('+') || null;
     };
     for (const e of list) {
       if (!D.has(e.n.id) || !outside(e.n.id)) continue;
@@ -211,8 +257,8 @@ export function verifyScreen(input, opts = {}) {
       if (!why.length) continue;
       const root = { id: e.n.id, width: M, delta: D.get(e.n.id), why };
       if (M === 'B' && unsafeWiden) { uncheck(e.n.id, `unsafeWiden: deviates at B (${why.join(',')})`); continue; }
-      const by = explain(e);
-      if (by) root.explainedBy = by;
+      const by = explain(e, why);
+      if (by) { root.explainedBy = by; explained.add(e.n.id); }
       roots.push(root);
     }
   }

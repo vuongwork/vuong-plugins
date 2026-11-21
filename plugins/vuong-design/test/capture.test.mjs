@@ -138,24 +138,46 @@ test('zero-size and clipped elements are excluded with reasons; rotated box is m
   assert.ok(rot.paint.transform, 'transform recorded in paint');
 });
 
-test('breakpoint: widen is lowered to stay under min-width 380', { skip }, async () => {
-  const ir = await captureScreens(join(FIX, 'capture-breakpoint.html'), { root: '.scr' });
+// Fixture variant written to a temp dir (cleaned) so the source fixture is never modified.
+async function withVariant(edit, fn) {
+  const dir = mkdtempSync(join(tmpdir(), 'vd-bp-'));
+  try {
+    const p = join(dir, 'variant.html');
+    writeFileSync(p, edit(readFileSync(join(FIX, 'capture-breakpoint.html'), 'utf8')));
+    return await fn(p);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
+test('breakpoint: viewport-bound root, widen is lowered to stay under min-width 380', { skip }, async () => {
+  const ir = await captureScreens(join(FIX, 'capture-breakpoint.html'), { root: '.scr', viewport: 300 });
   const s = ir.screens[0];
   assert.equal(s.widen.by, 79);
   assert.deepEqual(s.W, [300, 379]);
   assert.equal(s.widen.unsafe, false);
   assert.deepEqual(s.widen.breakpoints, [380]);
+  // real behaviour: at 379 the min-width:380 rule is still off, so both items stay on one row
+  const items = walk(s.tree).filter((n) => n.cls === 'item');
+  assert.equal(items.length, 2);
+  assert.equal(items[0].rB[1], items[1].rB[1]);
+  assert.ok(items[1].rB[0] > items[0].rB[0]);
 });
 
 test('breakpoint: a 310 breakpoint leaves no safe delta -> unsafe, by 120', { skip }, async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'vd-bp-'));
-  try {
-    const src = readFileSync(join(FIX, 'capture-breakpoint.html'), 'utf8').replace('380px', '310px');
-    const p = join(dir, 'bp310.html');
-    writeFileSync(p, src);
-    const s = (await captureScreens(p, { root: '.scr' })).screens[0];
+  await withVariant((src) => src.replace('380px', '310px'), async (p) => {
+    const s = (await captureScreens(p, { root: '.scr', viewport: 300 })).screens[0];
     assert.equal(s.widen.unsafe, true);
     assert.equal(s.widen.by, 120);
     assert.match(s.widen.reason, /310/);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+test('breakpoint: root inside a wider page is not viewport-bound -> full delta, reason given', { skip }, async () => {
+  await withVariant((src) => src.replace('.scr {', '.scr { width: 300px;'), async (p) => {
+    const s = (await captureScreens(p, { root: '.scr' })).screens[0];
+    assert.deepEqual(s.W, [300, 420]);
+    assert.equal(s.widen.by, 120);
+    assert.equal(s.widen.unsafe, false);
+    assert.deepEqual(s.widen.breakpoints, [380]);
+    assert.match(s.widen.reason, /viewport/);
+  });
 });

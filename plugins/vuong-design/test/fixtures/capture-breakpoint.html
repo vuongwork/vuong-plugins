@@ -5,7 +5,8 @@
 <title>capture-breakpoint</title>
 <style>
   body { margin: 0; font-family: Arial, sans-serif; }
-  .scr { width: 300px; height: 200px; background: #ffffff; }
+  /* No width: the root fills the viewport, so it is viewport-bound. */
+  .scr { height: 200px; background: #ffffff; }
   .row { display: flex; gap: 8px; }
   .item { flex: 1; height: 40px; background: #e5e5e5; }
   @media (min-width: 380px) {

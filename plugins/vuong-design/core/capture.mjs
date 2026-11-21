@@ -6,7 +6,8 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { launchBrowser } from './browser.mjs';
 
 const MIN_SAFE_DELTA = 24;
-const VIEWPORT = { width: 1400, height: 1000 };
+const DEFAULT_VIEWPORT = 1400;
+const VIEWPORT_HEIGHT = 1000;
 const r2 = (v) => Math.round(v * 100) / 100;
 
 // ---------------- breakpoints ----------------
@@ -349,7 +350,7 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
           const f = useFont(font(cs));
           out.push({ ...base(cid, 'text', '#text', '', rb.box, {}), font: f, runs: [{ t: ch.textContent.replace(/\s+/g, ' ').trim() }], lines: rb.lines, tw: rb.tw });
         } else if (ch.nodeType === 1) {
-          if (ch.tagName === 'BR' || ch.tagName === 'STYLE' || ch.tagName === 'SCRIPT' || ch.tagName === 'TEMPLATE') return;
+          if (ch.tagName === 'BR' || ch.tagName === 'STYLE' || ch.tagName === 'SCRIPT' || ch.tagName === 'TEMPLATE' || ch.tagName === 'HEAD') return;
           const ccs = getComputedStyle(ch);
           if (ccs.display === 'contents') { kidsInto(out, ch, ccs, cid, clip); return; }
           const k = walk(ch, cid, clip); if (k) out.push(k);
@@ -377,8 +378,8 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
 
 // ---------------- node side ----------------
 
-async function measure(browser, url, args) {
-  const page = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: 2 });
+async function measure(browser, url, args, width) {
+  const page = await browser.newPage({ viewport: { width: Math.round(width), height: VIEWPORT_HEIGHT }, deviceScaleFactor: 2 });
   try {
     await page.goto(url, { waitUntil: 'load' });
     await page.evaluate(() => document.fonts.ready.then(() => 0));
@@ -421,9 +422,10 @@ function mergeNode(a, mapB) {
 }
 
 export async function captureScreens(htmlPath, opts = {}) {
-  const { root, widen, widenBy = 120, nameOf } = opts;
+  const { root, widen, widenBy = 120, nameOf, viewport = DEFAULT_VIEWPORT } = opts;
   if (!root) throw new Error('captureScreens: thiếu opts.root (selector của màn)');
   if (!(widenBy > 0)) throw new Error(`captureScreens: widenBy phải > 0 (nhận ${widenBy})`);
+  if (!(viewport > 0)) throw new Error(`captureScreens: viewport phải > 0 (nhận ${viewport})`);
   const abs = resolve(htmlPath);
   if (!existsSync(abs)) throw new Error(`không đọc được file HTML: ${abs}`);
   const url = pathToFileURL(abs).href;
@@ -431,23 +433,41 @@ export async function captureScreens(htmlPath, opts = {}) {
 
   const browser = await launchBrowser();
   try {
-    const A = await measure(browser, url, args);
+    const A = await measure(browser, url, args, viewport);
     if (A.badSelector) throw new Error(`không tìm thấy màn: selector "${root}" không hợp lệ (${A.badSelector})`);
     if (!A.count) throw new Error(`không tìm thấy màn: selector "${root}" không khớp phần tử nào trong ${abs}`);
     if (A.widenMissing != null) {
       throw new Error(`selector nới rộng "${widen}" không khớp chính màn hay tổ tiên của màn #${A.widenMissing} ("${root}")`);
     }
     const { bps, unread } = collectBreakpoints(A);
-    const widens = A.screens.map((s) => {
-      const w = chooseWiden(s.W, bps, widenBy);
-      if (unread.length) {
-        const msg = `không đọc được stylesheet (khác nguồn): ${unread.join(', ')}; mốc trong đó không được xét`;
-        w.reason = w.reason ? `${w.reason}; ${msg}` : msg;
+    // Media queries follow the viewport, so breakpoints matter only for viewport-bound screens (root is html/body or
+    // spans the whole viewport). Those are widened by widening the viewport; the others by widening the element.
+    const bound = A.screens.map((s) => s.tree && (s.tree.tag === 'html' || s.tree.tag === 'body' || Math.abs(s.W - viewport) <= 0.5));
+    const unreadMsg = unread.length ? `không đọc được stylesheet (khác nguồn): ${unread.join(', ')}; mốc trong đó không được xét` : '';
+    // All bound screens share one viewport and one breakpoint list, so they get the same delta.
+    const boundWiden = chooseWiden(viewport, bps, widenBy);
+    const widens = A.screens.map((s, i) => {
+      let w;
+      if (bound[i]) w = { ...boundWiden };
+      else {
+        w = { by: widenBy, requested: widenBy, breakpoints: chooseWiden(s.W, bps, widenBy).breakpoints, unsafe: false };
+        if (w.breakpoints.length) {
+          w.reason = `media query theo viewport (${viewport}px); màn rộng ${s.W}px không gắn với viewport nên nới khung không vượt mốc nào`;
+        }
       }
+      if (unreadMsg) w.reason = w.reason ? `${w.reason}; ${unreadMsg}` : unreadMsg;
       return w;
     });
-    const B = await measure(browser, url, { ...args, extras: widens.map((w) => w.by) });
-    if (B.count !== A.count) throw new Error(`số màn khác nhau giữa hai lần đo (${A.count} và ${B.count}) với selector "${root}"`);
+    const anyBound = bound.some(Boolean), anyFree = bound.some((b) => !b);
+    const passB = async (forBound) => {
+      const res = await measure(browser, url, { ...args, extras: widens.map((w, i) => (bound[i] === forBound && !forBound ? w.by : 0)) },
+        forBound ? viewport + boundWiden.by : viewport);
+      if (res.count !== A.count) throw new Error(`số màn khác nhau giữa hai lần đo (${A.count} và ${res.count}) với selector "${root}"`);
+      return res;
+    };
+    const Bbound = anyBound ? await passB(true) : null;
+    const Bfree = anyFree ? await passB(false) : null;
+    const B = { screens: A.screens.map((_, i) => (bound[i] ? Bbound : Bfree).screens[i]) };
 
     const usedIds = new Set();
     const screens = A.screens.map((sA, i) => {

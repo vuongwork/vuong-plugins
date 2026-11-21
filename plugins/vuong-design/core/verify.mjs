@@ -246,7 +246,8 @@ export function verifyScreen(input, opts = {}) {
       // An aligned node whose own edge stayed while its ancestor's same edge moved beyond tolerance is not at its
       // source place relative to its anchor (a centred tallest item with a padding swap keeps its middle): no excuse.
       const a = ancestor(e);
-      const ix = al === 'S' ? 0 : al === 'E' ? 1 : al === 'C' ? 2 : -1;
+      // R35: unknown alignment is taken as start (only the near edge excuses; no middle / far edge, no R33)
+      const ix = al === 'S' || al === null ? 0 : al === 'E' ? 1 : al === 'C' ? 2 : -1;
       const anchorMoved = ix >= 0 && !!a && outside(a.n.id) && Math.abs(edges(D.get(a.n.id), ax)[ix]) > t + EPS;
       const own = ix >= 0 ? [all[ix]] : [all[0], all[1]];
       if (!anchorMoved && own.some((v) => Math.abs(v) <= t + EPS)) return true;

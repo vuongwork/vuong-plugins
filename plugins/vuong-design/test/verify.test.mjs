@@ -148,6 +148,7 @@ test('verifyScreen: a HUG frame around a wrong text is not a second root', () =>
 
 test('verifyScreen: an end-anchored frame growing leftwards with its content is not a root', () => {
   const inp = fixture();
+  inp.spec.lay.ca = 'E'; // R35: the end anchor must be in the spec (unknown alignment is start)
   shift(inp, 'n.0', [-1.2, 0, 1.2, 0]);
   shift(inp, 'n.0.0', [-1.2, 0, 1.2, 0]); // text 1.2 wider (a root itself), the frame's start moves with it
   assert.deepEqual(rootIds(verifyScreen(inp)), ['n.0.0']);
@@ -156,6 +157,7 @@ test('verifyScreen: an end-anchored frame growing leftwards with its content is 
 test('verifyScreen: a parent that grows and drags an end-aligned child is the root (no circular excuse)', () => {
   const inp = fixture();
   inp.spec.kids[0].sz = ['FIXED', 'HUG']; // a FIXED-width card: its far edge can drag an end-aligned child
+  inp.spec.kids[0].kids[1].abs = { x: 60, y: 10, c: 'R' }; // R35: the icon is pinned to the right in the spec
   shift(inp, 'n.0', [0, 0, 3, 0]);
   shift(inp, 'n.0.1', [3, 0, 0, 0]); // end-aligned icon follows the parent's far edge
   assert.deepEqual(rootIds(verifyScreen(inp)), ['n.0']);
@@ -928,6 +930,7 @@ test('R29: five HUG rows each 0.4px taller in a HUG card (card 2px taller) is a 
 test('R29: an end-aligned item of a FIXED column still follows the column\'s far edge', () => {
   const { tree, spec } = hugColumn(2);
   spec.kids[0].sz = ['FIXED', 'FIXED'];
+  spec.kids[0].kids[1].abs = { x: 0, y: 20, cy: 'B' }; // R35: pinned to the bottom in the spec
   const r = probe(tree, both((b) => { b['n.c'][3] += 6; b['n.c.1'][1] += 6; }), [], spec);
   assert.deepEqual(rootIds(r), ['n.c'], JSON.stringify(r.roots));
 });
@@ -987,7 +990,7 @@ test('R30b/R31: a 1px line on the edge of a text box and a removed solid box fai
 function miniRow() {
   const kids = Array.from({ length: 9 }, (_, i) => ({ id: `n.m.${i}`, kind: 'frame', rA: [196 + i * 12, 4, 8, 8], rB: [196 + i * 12, 4, 8, 8] }));
   const tree = { id: 'n', kind: 'frame', rA: [0, 0, 300, 20], rB: [0, 0, 300, 20], kids: [{ id: 'n.m', kind: 'frame', rA: [196, 4, 104, 8], rB: [196, 4, 104, 8], kids }] };
-  const spec = Fd('n', ['FIXED', 'FIXED'], 'H', [Fd('n.m', ['HUG', 'HUG'], 'H', kids.map((k) => F(k.id, ['FIXED', 'FIXED'])))]);
+  const spec = { ...Fd('n', ['FIXED', 'FIXED'], 'H', [Fd('n.m', ['HUG', 'HUG'], 'H', kids.map((k) => F(k.id, ['FIXED', 'FIXED'])))]), lay: { d: 'H', pa: 'E' } };
   return { tree, spec };
 }
 
@@ -1077,7 +1080,7 @@ test('R33: the growth is judged with the referencing item held at its source box
 // generated sweep (reviewer shape rv33d): a HUG row n.0 (lay H, gap 10, cross align ca) of three FIXED kids of heights
 // hs; optionally kid wi is a shrink-flagged HUG column around a wrapping FILL text that loses 20px of width (the next
 // kids follow, gap kept) and grows `grow` px in height. Error: the row's padding top / bottom changes by (pt, pb).
-function rowSweep(ca, hs, wi, grow, pt, pb) {
+function rowSweep(ca, hs, wi, grow, pt, pb, specCa = ca) {
   const geo = (hz, narrow, padT, padB) => {
     const inner = Math.max(...hz); let x = 10;
     const kids = hz.map((h, i) => { const w = i === wi && narrow ? 30 : 50; const y = 10 + padT + (ca === 'S' ? 0 : ca === 'C' ? (inner - h) / 2 : inner - h); const b = [x, y, w, h]; x += w + 10; return b; });
@@ -1087,7 +1090,7 @@ function rowSweep(ca, hs, wi, grow, pt, pb) {
   const tree = { id: 'n', kind: 'frame', rA: [0, 0, 400, 300], rB: [0, 0, 400, 300], kids: [{ id: 'n.0', kind: 'frame', rA: s.row, rB: s.row,
     kids: s.kids.map((b, i) => ({ id: `n.0.${i}`, kind: 'frame', rA: b, rB: b, ...(i === wi ? { kids: [{ id: `n.0.${i}.t`, kind: 'text', rA: b, rB: b }] } : {}) })) }] };
   const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [{ ...F('n.0', ['HUG', 'HUG'], s.kids.map((b, i) => (i === wi
-    ? Fd(`n.0.${i}`, ['FIXED', 'HUG'], 'V', [{ id: `n.0.${i}.t`, t: 'T', sz: ['FILL', 'HUG'] }]) : F(`n.0.${i}`, ['FIXED', 'FIXED'])))), lay: { d: 'H', g: 10, pa: 'S', ca } }]);
+    ? Fd(`n.0.${i}`, ['FIXED', 'HUG'], 'V', [{ id: `n.0.${i}.t`, t: 'T', sz: ['FILL', 'HUG'] }]) : F(`n.0.${i}`, ['FIXED', 'FIXED'])))), lay: { d: 'H', g: 10, pa: 'S', ...(specCa ? { ca: specCa } : {}) } }]);
   return probe(tree, both((b) => {
     b['n.0'] = [...p.row]; p.kids.forEach((k, i) => { b[`n.0.${i}`] = [...k]; if (i === wi) b[`n.0.${i}.t`] = [...k]; });
   }), wi >= 0 ? [{ id: `n.0.${wi}`, kind: 'shrink' }] : [], spec);
@@ -1152,4 +1155,11 @@ test('R34 (C1): a row padding-top error does not ride on the size change of a wr
     assert.equal(r.pass, false, `pt ${pt}: ${JSON.stringify(r.roots)}`);
   }
   assert.equal(rowSweep('E', [30, 30, 30], 1, 20, 0, 0).pass, true);
+});
+
+test('R35: with no cross alignment in the spec, end-aligned kids shifted by a padding swap (top -10, bottom +10) are not a silent pass', () => {
+  for (const [hs, grow] of [[[30, 30, 30], 10], [[20, 40, 30], 20], [[20, 20, 40], 10], [[30, 20, 20], 20]]) {
+    const r = rowSweep('E', hs, 2, grow, -10, 10, null);
+    assert.equal(r.pass, false, `${JSON.stringify(hs)} grow ${grow}: ${JSON.stringify(r.roots)}`);
+  }
 });

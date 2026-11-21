@@ -501,6 +501,33 @@ export function inferScreen(screen) {
     }
     (n.kids || []).forEach(norm);
   };
+  const keepP = (n) => { if (n.lay) internal.get(n).p0 = [...n.lay.p]; (n.kids || []).forEach(keepP); };
+  keepP(spec);
   norm(spec);
+  // R38: FILL items share the main axis like flex 1 1 0 (CSS and Figma alike): each gets its own main-axis padding
+  // plus an equal share. An end padding norm zeroed (start-aligned content) changes that split, so give it back
+  // until (size - main padding) is equal across the FILL siblings, capped at what norm removed. Containers or FILL
+  // items flagged shrink / weightedFill keep the plain normalisation: their split is the flag's, not padding's.
+  const flagged = new Set(flags.filter((f) => f.kind === 'shrink' || f.kind === 'weightedFill').map((f) => f.id));
+  const fillPad = (c) => {
+    const l = c.lay;
+    if (l && !l.wrap && c.kids && !flagged.has(c.id)) {
+      const ax = l.d === 'H' ? 0 : 1, si = ax === 0 ? 3 : 0, ei = ax === 0 ? 1 : 2, Z = ax === 0 ? 'w' : 'h';
+      const F = c.kids.filter((k) => !k.abs && k.sz && k.sz[ax] === 'FILL' && k.lay);
+      if (F.length > 1 && !F.some((k) => flagged.has(k.id))) {
+        const net = (k) => k[Z] - k.lay.p[si] - k.lay.p[ei];
+        const share = Math.min(...F.map(net));
+        for (const k of F) {
+          const al = (k.lay.d === 'H' ? 0 : 1) === ax ? (k.lay.sb ? null : k.lay.pa) : k.lay.ca;
+          const p0 = internal.get(k).p0, extra = net(k) - share;
+          if (!p0 || extra <= 0.5) continue;
+          if (al === 'S') k.lay.p[ei] = r2(k.lay.p[ei] + Math.min(extra, p0[ei] - k.lay.p[ei]));
+          else if (al === 'E') k.lay.p[si] = r2(k.lay.p[si] + Math.min(extra, p0[si] - k.lay.p[si]));
+        }
+      }
+    }
+    (c.kids || []).forEach(fillPad);
+  };
+  fillPad(spec);
   return { spec, stats, flags };
 }

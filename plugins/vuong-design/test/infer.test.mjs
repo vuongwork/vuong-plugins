@@ -308,3 +308,23 @@ test('R37: wrap row end padding sits mid-slack, cross alignment fitted per row',
   // feasible end padding at both widths: [0, 14] ∩ [0, 36] → midpoint 7, not the exact slack 14
   assert.equal(spec.lay.p[1], 7);
 });
+
+test('R38: FILL siblings keep the end padding that equalises their content share', () => {
+  // two equal FILL cells (flex 1 1 0): cell 0 has its content 10 in, cell 1 at its left edge. CSS and Figma give each
+  // FILL item its own padding plus an equal share, so cell 1 needs end padding 10 or the split becomes 151 / 141.
+  const cells = (extra0 = {}, extra1 = {}) => N('n', [0, 0, 300, 40], [0, 0, 420, 40], {
+    kids: [
+      N('n.0', [0, 0, 146, 40], [0, 0, 206, 40], { ...extra0, kids: [N('n.0.0', [10, 0, 50, 40], [10, 0, 50, 40])] }),
+      N('n.1', [154, 0, 146, 40], [214, 0, 206, 40], { ...extra1, kids: [N('n.1.0', [154, 0, 50, 40], [214, 0, 50, 40])] }),
+    ],
+  });
+  const { spec } = inferScreen(screenOf(cells()));
+  const [c0, c1] = spec.kids;
+  assert.deepEqual([c0.sz[0], c1.sz[0]], ['FILL', 'FILL']);
+  assert.equal(c0.lay.p[3] + c0.lay.p[1], 10);
+  assert.equal(c1.lay.p[3] + c1.lay.p[1], 10);
+  // guard: FILL items flagged weightedFill keep the plain normalisation (their split is already excused)
+  const g = inferScreen(screenOf(cells({ flex: { g: 1, s: 1, b: '0%' } }, { flex: { g: 2, s: 1, b: '0%' } })));
+  assert.ok(g.flags.some((f) => f.kind === 'weightedFill'));
+  assert.equal(g.spec.kids[1].lay.p[1], 0);
+});

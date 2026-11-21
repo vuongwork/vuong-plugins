@@ -38,6 +38,15 @@ const cmpKey = (a, b) => {
   return 0;
 };
 const keyOf = (L) => (L.src ? L.id : L.kids.map(keyOf).sort(cmpKey)[0]);
+// R39 CSS paint order within a parent: negative z-index first, then non-positioned content, then positioned /
+// transformed / translucent content with z-index auto or 0, then positive z-index; DOM order inside a layer.
+const paintKey = (L) => {
+  if (!L.src) return L.kids.map(paintKey).sort(cmpPaint)[0];
+  const p = L.src.paint || {}, z = p.z ?? 0;
+  const stacking = !!p.pos || p.z != null || !!p.transform || (p.opacity != null && p.opacity < 1);
+  return { rank: !stacking ? 0 : z < 0 ? -1 : z > 0 ? 2 : 1, z, key: L.id };
+};
+const cmpPaint = (a, b) => a.rank - b.rank || a.z - b.z || cmpKey(a.key, b.key);
 
 const isTextSrc = (n) => !!n && !n.icon && (n.kind === 'text' || (n.kind === 'pseudo' && !!n.runs));
 const isText = (L) => isTextSrc(L.src);
@@ -222,7 +231,7 @@ export function inferScreen(screen) {
   // ---- recursive frame inference ----
   function infer(L) {
     const sp = baseSpec(L);
-    const inf = { hugOK: [false, false], fillAx: [false, false], key: keyOf(L) };
+    const inf = { hugOK: [false, false], fillAx: [false, false], key: keyOf(L), pk: paintKey(L) };
     internal.set(sp, inf);
     if (!L.kids || !L.kids.length) return sp;
     const kids = L.kids;
@@ -467,11 +476,12 @@ export function inferScreen(screen) {
       cs.sz = [defaultSize(k, cs, 0), defaultSize(k, cs, 1)];
       childSpecs.push(cs);
     }
-    // z-order: flow children keep primary order; absolute children are inserted by paint-order key
+    // z-order: flow children keep primary order (auto layout order is paint order); absolute children are inserted
+    // by CSS paint order (R39), before the first child CSS paints above them
     const out = childSpecs.filter((c) => !c.abs);
-    for (const a of childSpecs.filter((c) => c.abs)) {
-      const ka = internal.get(a).key; let pos = out.length;
-      for (let i = 0; i < out.length; i++) if (cmpKey(internal.get(out[i]).key, ka) > 0) { pos = i; break; }
+    for (const a of childSpecs.filter((c) => c.abs).sort((x, y) => cmpPaint(internal.get(x).pk, internal.get(y).pk))) {
+      const ka = internal.get(a).pk; let pos = out.length;
+      for (let i = 0; i < out.length; i++) if (cmpPaint(internal.get(out[i]).pk, ka) > 0) { pos = i; break; }
       out.splice(pos, 0, a);
     }
     sp.kids = out;

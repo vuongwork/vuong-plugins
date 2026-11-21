@@ -40,7 +40,7 @@ function ctx(screen) {
   return { ...res, inodes, snodes, byId, node, box };
 }
 
-const FIXTURES = ['row-gap', 'push', 'proximity', 'overlap', 'overflow', 'sizing', 'text', 'flags', 'baseline', 'raster', 'noflags'];
+const FIXTURES = ['row-gap', 'push', 'proximity', 'overlap', 'overflow', 'sizing', 'text', 'flags', 'baseline', 'raster', 'noflags', 'zorder'];
 const C = {};
 before(async () => {
   if (skip) return;
@@ -159,6 +159,18 @@ test('raster: filter blur and conic-gradient are flagged, linear-gradient is not
 });
 
 // ---- invariants over every fixture ----
+
+test('R39: children are ordered by CSS paint order (positioned above flow, negative z below)', { skip }, () => {
+  const c = C.zorder;
+  const badge = c.node('badge'), icon = c.node('icon'), under = c.node('under'), icon2 = c.node('icon2');
+  assert.equal(badge.paint.pos, 'absolute', 'capture records the position of the badge');
+  assert.equal(badge.paint.z, undefined);
+  assert.equal(under.paint.z, -1);
+  const order = (id) => c.snodes.find((s) => (s.kids || []).some((k) => k.id === id)).kids.map((k) => k.id);
+  const o1 = order(badge.id), o2 = order(under.id);
+  assert.ok(o1.indexOf(icon.id) < o1.indexOf(badge.id), JSON.stringify(o1));
+  assert.ok(o2.indexOf(under.id) < o2.indexOf(icon2.id), JSON.stringify(o2));
+});
 
 test('every source node appears exactly once; syn ids are <parent>.g<k>', { skip }, () => {
   for (const f of FIXTURES) {

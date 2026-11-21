@@ -201,6 +201,11 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
     if (rad.some((x) => x !== '0px')) p.radius = rad;
     if (cs.boxShadow !== 'none') p.shadow = cs.boxShadow;
     if (cs.opacity !== '1') p.opacity = Number(cs.opacity);
+    // R39 paint order: positioned elements (and z-indexed flex/grid items) paint in CSS stacking order, not DOM order
+    if (cs.position !== 'static') p.pos = cs.position;
+    if (cs.zIndex !== 'auto' && (cs.position !== 'static' || (el && el.parentElement && /flex|grid/.test(getComputedStyle(el.parentElement).display)))) {
+      p.z = Number(cs.zIndex);
+    }
     if (cs.textDecorationLine && cs.textDecorationLine !== 'none') p.textDecoration = cs.textDecorationLine;
     if (cs.overflowX !== 'visible' || cs.overflowY !== 'visible') p.clip = true;
     const tf = el && tfs.get(el);

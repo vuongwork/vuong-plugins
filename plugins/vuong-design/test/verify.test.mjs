@@ -1017,8 +1017,8 @@ function centredRow() {
   const tree = flat([{ id: 'n.r', kind: 'frame', rA: [0, 0, 200, 40], rB: [0, 0, 200, 40], kids: [
     { id: 'n.r.0', kind: 'frame', rA: [0, 0, 150, 40], rB: [0, 0, 150, 40], kids: [{ id: 'n.r.0.0', kind: 'text', rA: [0, 10, 150, 20], rB: [0, 10, 150, 20] }] },
     { id: 'n.r.1', kind: 'frame', rA: [160, 10, 20, 20], rB: [160, 10, 20, 20] }] }]);
-  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.r', ['HUG', 'HUG'], 'H', [
-    Fd('n.r.0', ['FIXED', 'HUG'], 'V', [{ id: 'n.r.0.0', t: 'T', sz: ['FILL', 'HUG'] }]), F('n.r.1', ['FIXED', 'FIXED'])])]);
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [{ ...Fd('n.r', ['HUG', 'HUG'], 'H', [
+    Fd('n.r.0', ['FIXED', 'HUG'], 'V', [{ id: 'n.r.0.0', t: 'T', sz: ['FILL', 'HUG'] }]), F('n.r.1', ['FIXED', 'FIXED'])]), lay: { d: 'H', ca: 'C' } }]);
   return { tree, spec };
 }
 
@@ -1046,8 +1046,8 @@ test('R33: an end-aligned first item follows its HUG row\'s far edge when the ne
   const tree = flat([{ id: 'n.r', kind: 'frame', rA: [0, 0, 200, 40], rB: [0, 0, 200, 40], kids: [
     { id: 'n.r.0', kind: 'frame', rA: [0, 20, 20, 20], rB: [0, 20, 20, 20] },
     { id: 'n.r.1', kind: 'frame', rA: [30, 0, 170, 40], rB: [30, 0, 170, 40], kids: [{ id: 'n.r.1.0', kind: 'text', rA: [30, 10, 170, 20], rB: [30, 10, 170, 20] }] }] }]);
-  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.r', ['HUG', 'HUG'], 'H', [F('n.r.0', ['FIXED', 'FIXED']),
-    Fd('n.r.1', ['FIXED', 'HUG'], 'V', [{ id: 'n.r.1.0', t: 'T', sz: ['FILL', 'HUG'] }])])]);
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [{ ...Fd('n.r', ['HUG', 'HUG'], 'H', [F('n.r.0', ['FIXED', 'FIXED']),
+    Fd('n.r.1', ['FIXED', 'HUG'], 'V', [{ id: 'n.r.1.0', t: 'T', sz: ['FILL', 'HUG'] }])]), lay: { d: 'H', ca: 'E' } }]);
   const r = probe(tree, both((b) => {
     b['n.r'][2] -= 20; b['n.r'][3] += 30; b['n.r.0'][1] += 30;
     b['n.r.1'][2] -= 20; b['n.r.1'][3] += 30; b['n.r.1.0'][2] -= 20; b['n.r.1.0'][3] += 30;
@@ -1060,8 +1060,8 @@ test('R33: the growth is judged with the referencing item held at its source box
   const tree = flat([{ id: 'n.r', kind: 'frame', rA: [0, 0, 200, 40], rB: [0, 0, 200, 40], kids: [
     { id: 'n.r.0', kind: 'frame', rA: [0, 0, 40, 40], rB: [0, 0, 40, 40] },
     { id: 'n.r.1', kind: 'frame', rA: [50, 4, 150, 36], rB: [50, 4, 150, 36], kids: [{ id: 'n.r.1.0', kind: 'text', rA: [50, 13, 150, 18], rB: [50, 13, 150, 18] }] }] }]);
-  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.r', ['HUG', 'HUG'], 'H', [F('n.r.0', ['FIXED', 'FIXED']),
-    Fd('n.r.1', ['FIXED', 'HUG'], 'V', [{ id: 'n.r.1.0', t: 'T', sz: ['FILL', 'HUG'] }])])]);
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [{ ...Fd('n.r', ['HUG', 'HUG'], 'H', [F('n.r.0', ['FIXED', 'FIXED']),
+    Fd('n.r.1', ['FIXED', 'HUG'], 'V', [{ id: 'n.r.1.0', t: 'T', sz: ['FILL', 'HUG'] }])]), lay: { d: 'H', ca: 'E' } }]);
   // bubble 18 taller (36 -> 54, now the tallest), row 14 taller, the bottom-aligned avatar 14 lower
   const r = probe(tree, both((b) => {
     b['n.r'][3] += 14; b['n.r.0'][1] += 14;
@@ -1071,4 +1071,85 @@ test('R33: the growth is judged with the referencing item held at its source box
   // ... but the same 14px with nothing grown is a root
   const r2 = probe(tree, both((b) => { b['n.r'][3] += 14; b['n.r.0'][1] += 14; b['n.r.1'][1] += 14; }), [], spec);
   assert.equal(r2.pass, false, JSON.stringify(r2.roots));
+});
+
+// ---- Task 7 fix round 3 (R34) ----
+// generated sweep (reviewer shape rv33d): a HUG row n.0 (lay H, gap 10, cross align ca) of three FIXED kids of heights
+// hs; optionally kid wi is a shrink-flagged HUG column around a wrapping FILL text that loses 20px of width (the next
+// kids follow, gap kept) and grows `grow` px in height. Error: the row's padding top / bottom changes by (pt, pb).
+function rowSweep(ca, hs, wi, grow, pt, pb) {
+  const geo = (hz, narrow, padT, padB) => {
+    const inner = Math.max(...hz); let x = 10;
+    const kids = hz.map((h, i) => { const w = i === wi && narrow ? 30 : 50; const y = 10 + padT + (ca === 'S' ? 0 : ca === 'C' ? (inner - h) / 2 : inner - h); const b = [x, y, w, h]; x += w + 10; return b; });
+    return { row: [10, 10, x - 20, inner + padT + padB], kids };
+  };
+  const s = geo(hs, false, 0, 0), p = geo(hs.map((h, i) => (i === wi ? h + grow : h)), true, pt, pb);
+  const tree = { id: 'n', kind: 'frame', rA: [0, 0, 400, 300], rB: [0, 0, 400, 300], kids: [{ id: 'n.0', kind: 'frame', rA: s.row, rB: s.row,
+    kids: s.kids.map((b, i) => ({ id: `n.0.${i}`, kind: 'frame', rA: b, rB: b, ...(i === wi ? { kids: [{ id: `n.0.${i}.t`, kind: 'text', rA: b, rB: b }] } : {}) })) }] };
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [{ ...F('n.0', ['HUG', 'HUG'], s.kids.map((b, i) => (i === wi
+    ? Fd(`n.0.${i}`, ['FIXED', 'HUG'], 'V', [{ id: `n.0.${i}.t`, t: 'T', sz: ['FILL', 'HUG'] }]) : F(`n.0.${i}`, ['FIXED', 'FIXED'])))), lay: { d: 'H', g: 10, pa: 'S', ca } }]);
+  return probe(tree, both((b) => {
+    b['n.0'] = [...p.row]; p.kids.forEach((k, i) => { b[`n.0.${i}`] = [...k]; if (i === wi) b[`n.0.${i}.t`] = [...k]; });
+  }), wi >= 0 ? [{ id: `n.0.${wi}`, kind: 'shrink' }] : [], spec);
+}
+
+test('R34 sweep: a HUG row padding error never hides behind a wrapping or centred / end-aligned child; legit rows pass', () => {
+  const silent = [], ctrlFail = [];
+  for (const ca of ['S', 'C', 'E']) for (const hs of [[20, 40, 30], [40, 20, 30], [30, 30, 30], [20, 20, 40], [40, 40, 20], [30, 20, 20]]) {
+    for (const wi of [-1, 0, 1, 2]) for (const grow of wi < 0 ? [0] : [20, 10]) {
+      const tag = JSON.stringify({ ca, hs, wi, grow });
+      const c0 = rowSweep(ca, hs, wi, grow, 0, 0);
+      if (!c0.pass) ctrlFail.push(`${tag} ${JSON.stringify(c0.roots.filter((x) => x.width === 'A').map((x) => [x.id, x.why.join(','), x.explainedBy || '-']))}`);
+      for (const [pt, pb] of [[0, 6], [6, 0], [3, 3], [0, 20], [20, 0], [10, 10], [-6, 0], [0, -6], [-10, 10], [10, -10]]) {
+        if (rowSweep(ca, hs, wi, grow, pt, pb).pass) silent.push(`${tag} pt ${pt} pb ${pb}`);
+      }
+    }
+  }
+  assert.deepEqual(silent, [], `silent: ${silent.length}\n${silent.slice(0, 10).join('\n')}`);
+  assert.deepEqual(ctrlFail, [], `controls failing: ${ctrlFail.length}\n${ctrlFail.slice(0, 10).join('\n')}`);
+});
+
+// generated sweep (reviewer shape rv32): a HUG row of N FIXED kids (w 20, gap 10) placed at the start, centre or end of a
+// FIXED root; each kid d wider (below tolerance). Growth N·d > 1 must not pass; one kid N·d wider is legit.
+function driftRow(N, d, anchor, one) {
+  const geo = (ws) => { const w = ws.reduce((a, b) => a + b, 0) + 10 * (N - 1); const x = anchor === 'C' ? (400 - w) / 2 : anchor === 'E' ? 390 - w : 10;
+    let cx = x; return { row: [x, 50, w, 20], kids: ws.map((kw) => { const b = [cx, 50, kw, 20]; cx += kw + 10; return b; }) }; };
+  const s = geo(Array(N).fill(20)), p = geo(Array.from({ length: N }, (_, i) => (one ? (i === 1 ? 20 + N * d : 20) : 20 + d)));
+  const tree = { id: 'n', kind: 'frame', rA: [0, 0, 400, 300], rB: [0, 0, 400, 300], kids: [{ id: 'n.0', kind: 'frame', rA: s.row, rB: s.row,
+    kids: s.kids.map((b, i) => ({ id: `n.0.${i}`, kind: 'frame', rA: b, rB: b })) }] };
+  const spec = { ...Fd('n', ['FIXED', 'FIXED'], 'V', [{ ...F('n.0', ['HUG', 'HUG'], s.kids.map((b, i) => F(`n.0.${i}`, ['FIXED', 'FIXED']))), lay: { d: 'H', g: 10, pa: 'S', ca: 'S' } }]),
+    lay: { d: 'V', pa: 'S', ca: anchor === 'C' ? 'C' : anchor === 'E' ? 'E' : 'S' } };
+  return probe(tree, both((b) => { b['n.0'] = [...p.row]; p.kids.forEach((k, i) => { b[`n.0.${i}`] = [...k]; }); }), [], spec);
+}
+
+test('R34 sweep: sub-tolerance drift adding up in a start / centre / end-anchored HUG row is never a silent pass', () => {
+  const silent = [], ctrlFail = [];
+  for (const anchor of ['S', 'C', 'E']) for (const [N, d] of [[6, 0.2], [4, 0.3], [5, 0.3], [8, 0.15], [3, 0.4], [10, 0.12], [9, 0.4]]) {
+    if (driftRow(N, d, anchor, false).pass) silent.push(`${anchor} N ${N} d ${d}`);
+    const one = driftRow(N, d, anchor, true);
+    if (JSON.stringify(rootIds(one)) !== '["n.0.1"]') ctrlFail.push(`${anchor} N ${N} d ${d}: ${JSON.stringify(one.roots)}`);
+  }
+  assert.deepEqual(silent, []);
+  assert.deepEqual(ctrlFail, [], 'one kid N·d wider (a root itself) is the only root: the screen fails only because of it');
+});
+
+test('R34 (M1): a HUG frame that grew symmetrically (top -10, bottom +10) is a root unless it is centre-aligned', () => {
+  // n.0.0 hugs a FIXED child that is 20px taller (its own raster flag explains it); the frame's size follows, its
+  // middle stays: that is its place only when it is centred in n.0
+  const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 200, 100], rB: [0, 0, 200, 100], kids: [{ id: 'n.0.0', kind: 'frame', rA: [10, 40, 50, 20], rB: [10, 40, 50, 20],
+    kids: [{ id: 'n.0.0.0', kind: 'frame', rA: [10, 40, 50, 20], rB: [10, 40, 50, 20] }] }] }]);
+  for (const [ca, root] of [['S', true], ['E', true], [undefined, true], ['C', false]]) {
+    const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [{ ...F('n.0', ['FIXED', 'FIXED'], [Fd('n.0.0', ['HUG', 'HUG'], 'V', [F('n.0.0.0', ['FIXED', 'FIXED'])])]), lay: { d: 'H', pa: 'S', ...(ca ? { ca } : {}) } }]);
+    const r = probe(tree, both((b) => { for (const id of ['n.0.0', 'n.0.0.0']) { b[id][1] -= 10; b[id][3] += 20; } }), [{ id: 'n.0.0.0', kind: 'raster' }], spec);
+    assert.equal(unexplained(r).some((x) => x.id === 'n.0.0' && x.why.includes('y')), root, `ca ${ca}: ${JSON.stringify(r.roots)}`);
+  }
+});
+
+test('R34 (C1): a row padding-top error does not ride on the size change of a wrapping child (chat row)', () => {
+  // avatar (end-aligned) + bubble (shrink, wraps 20px taller); the row's padding top is 6px too large
+  for (const pt of [6, 20]) {
+    const r = rowSweep('E', [30, 30, 30], 1, 20, pt, 0);
+    assert.equal(r.pass, false, `pt ${pt}: ${JSON.stringify(r.roots)}`);
+  }
+  assert.equal(rowSweep('E', [30, 30, 30], 1, 20, 0, 0).pass, true);
 });

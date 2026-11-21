@@ -40,7 +40,7 @@
 // the mutation touched: the target, its ancestors and descendants, or a node whose layout or modelled proxy box
 // changed (moved, resized, gone). Failures and `by`: 'root' (unexplained root, key id+width), 'crop' (crop fail,
 // id+width), 'data' (id+kind), 'approval' (needsApproval, id+width), 'coverage' (unchecked node, id). A mutation that
-// only shows up as an explained root is NOT caught (listed in `explainedOnly`). allCaught = every result that was run
+// only shows up as an explained root is NOT caught (listed in `explainedOnly`). allCaught = null when no kind ran (R34), else every result that was run
 // is caught (skipped ones do not count).
 import { applyFigmaModel } from './figma-model.mjs';
 import { buildProxyHtml, renderProxy } from './proxy.mjs';
@@ -298,6 +298,6 @@ export async function runMutations(browser, screen, inferred, fontMap, opts = {}
     id: screen.id,
     baseline: { pass: b.pass, failures: before.size, roots: b.roots.filter((x) => !x.explainedBy).length, crop: b.crop.length, data: b.data.length, needsApproval: b.needsApproval.length, unchecked: b.unchecked.length },
     results,
-    allCaught: ran.every((r) => r.caught === true),
+    allCaught: ran.length ? ran.every((r) => r.caught === true) : null, // R34 (M3): null when no kind ran
   };
 }

@@ -94,6 +94,9 @@ test('runMutations: a screen without icons skips swapIcon and does not throw', {
   assert.deepEqual(r.results.map((x) => x.kind), ['swapIcon', 'moveShape']);
   assert.deepEqual(r.results[0], { kind: 'swapIcon', target: null, caught: null, by: [], skipped: 'no candidate' });
   assert.equal(r.results[1].caught, true, JSON.stringify(r.results[1]));
+  // R34 (M3): nothing ran -> allCaught is null, never a vacuous true
+  const none = await run('mutate-noicon.html', { kinds: ['swapIcon'] });
+  assert.equal(none.allCaught, null);
 });
 
 test('runMutations on a row of four icons: swapIcon is caught by the data check, drift (0.4px per item) is caught', { skip }, async () => {

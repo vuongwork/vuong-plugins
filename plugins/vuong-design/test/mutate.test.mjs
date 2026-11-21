@@ -80,6 +80,15 @@ test('R29-R31: the Task 7 holes are caught (HUG column gap, HUG-row card drift, 
   assert.ok(t.results[0].by.includes('crop') && t.results[0].by.includes('data'), JSON.stringify(t.results[0]));
 });
 
+// H4 (R32): mutate-mini.html n.1.1 = an end-anchored (margin-left:auto) HUG row of nine FIXED dots (planora `.mini`)
+test('R32: drift in an end-anchored HUG row of FIXED dots is caught by a layout root, not only by crop', { skip }, async () => {
+  const r = await run('mutate-mini.html', { kinds: ['drift'], targets: { drift: 'n.1.1' } });
+  assert.equal(r.baseline.pass, true, JSON.stringify(r.baseline));
+  const [d] = r.results;
+  assert.equal(d.caught, true, JSON.stringify(d));
+  assert.ok(d.by.includes('root'), JSON.stringify(d));
+});
+
 test('runMutations: a screen without icons skips swapIcon and does not throw', { skip }, async () => {
   const r = await run('mutate-noicon.html', { kinds: ['swapIcon', 'moveShape'] });
   assert.deepEqual(r.results.map((x) => x.kind), ['swapIcon', 'moveShape']);

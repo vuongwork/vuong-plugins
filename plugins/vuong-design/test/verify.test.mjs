@@ -981,3 +981,94 @@ test('R30b/R31: a 1px line on the edge of a text box and a removed solid box fai
   const g = await cropDiffDetail(browser, await shot(box), [20, 20, 40, 20], await shot(''), [20, 20, 40, 20]);
   assert.ok(fails(g), `removed solid box: ${JSON.stringify(g)}`);
 });
+
+// ---- Task 7 fix round 2 (R32, R33) ----
+// n.m: an end-anchored HUG row (lay H, gap 4) of nine FIXED 8x8 dots whose right edge sits at x 300 (planora `.mini`)
+function miniRow() {
+  const kids = Array.from({ length: 9 }, (_, i) => ({ id: `n.m.${i}`, kind: 'frame', rA: [196 + i * 12, 4, 8, 8], rB: [196 + i * 12, 4, 8, 8] }));
+  const tree = { id: 'n', kind: 'frame', rA: [0, 0, 300, 20], rB: [0, 0, 300, 20], kids: [{ id: 'n.m', kind: 'frame', rA: [196, 4, 104, 8], rB: [196, 4, 104, 8], kids }] };
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'H', [Fd('n.m', ['HUG', 'HUG'], 'H', kids.map((k) => F(k.id, ['FIXED', 'FIXED'])))]);
+  return { tree, spec };
+}
+
+test('R32: drift in an end-anchored HUG row (nine dots each 0.4 wider, row x -3.6) is a layout root', () => {
+  const { tree, spec } = miniRow();
+  const r = probe(tree, both((b) => {
+    b['n.m'][0] -= 3.6; b['n.m'][2] += 3.6;
+    for (let i = 0; i < 9; i++) { b[`n.m.${i}`][0] += -3.6 + 0.4 * i; b[`n.m.${i}`][2] += 0.4; }
+  }), [], spec);
+  assert.equal(r.pass, false);
+  assert.ok(unexplained(r).some((x) => x.id === 'n.m.2' && x.why.includes('x')), JSON.stringify(r.roots));
+});
+
+test('R32: the same row with one dot 3.6 wider is rooted at that dot only (the row and the others follow)', () => {
+  const { tree, spec } = miniRow();
+  const r = probe(tree, both((b) => {
+    b['n.m'][0] -= 3.6; b['n.m'][2] += 3.6;
+    for (let i = 0; i < 9; i++) b[`n.m.${i}`][0] -= 3.6;
+    b['n.m.4'][2] += 3.6; for (let i = 5; i < 9; i++) b[`n.m.${i}`][0] += 3.6;
+  }), [], spec);
+  assert.deepEqual(rootIds(r), ['n.m.4'], JSON.stringify(r.roots));
+});
+
+// n.r: HUG row (lay H) of S (n.r.0, FIXED width flagged shrink, HUG column around a wrapping FILL text n.r.0.0) and a
+// centred FIXED item C (n.r.1); the row's height comes from S
+function centredRow() {
+  const tree = flat([{ id: 'n.r', kind: 'frame', rA: [0, 0, 200, 40], rB: [0, 0, 200, 40], kids: [
+    { id: 'n.r.0', kind: 'frame', rA: [0, 0, 150, 40], rB: [0, 0, 150, 40], kids: [{ id: 'n.r.0.0', kind: 'text', rA: [0, 10, 150, 20], rB: [0, 10, 150, 20] }] },
+    { id: 'n.r.1', kind: 'frame', rA: [160, 10, 20, 20], rB: [160, 10, 20, 20] }] }]);
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.r', ['HUG', 'HUG'], 'H', [
+    Fd('n.r.0', ['FIXED', 'HUG'], 'V', [{ id: 'n.r.0.0', t: 'T', sz: ['FILL', 'HUG'] }]), F('n.r.1', ['FIXED', 'FIXED'])])]);
+  return { tree, spec };
+}
+
+test('R33: a centred item follows its HUG row\'s middle edge when the row grew because of another child (shrink wrap)', () => {
+  const { tree, spec } = centredRow();
+  const r = probe(tree, both((b) => {
+    b['n.r'][2] -= 20; b['n.r'][3] += 30;
+    b['n.r.0'][2] -= 20; b['n.r.0'][3] += 30; b['n.r.0.0'][2] -= 20; b['n.r.0.0'][3] += 30;
+    b['n.r.1'][0] -= 20; b['n.r.1'][1] += 15;
+  }), [{ id: 'n.r.0', kind: 'shrink' }], spec);
+  assert.ok(!r.roots.some((x) => x.id === 'n.r.1'), JSON.stringify(r.roots));
+  assert.ok(r.roots.length && r.roots.every((x) => x.explainedBy), JSON.stringify(r.roots));
+  assert.equal(r.pass, true);
+});
+
+test('R33: two centred items do not explain each other through the row\'s middle edge (row padding +30)', () => {
+  const { tree, spec } = centredRow();
+  tree.kids[0].kids[0].kids = []; spec.kids[0].kids[0].kids = [];
+  const r = probe(tree, both((b) => { b['n.r'][3] += 30; b['n.r.0'][1] += 15; b['n.r.1'][1] += 15; }), [], spec);
+  assert.equal(r.pass, false);
+  assert.ok(unexplained(r).length > 0, JSON.stringify(r.roots));
+});
+
+test('R33: an end-aligned first item follows its HUG row\'s far edge when the next item grew (its far edge matching is no dependency)', () => {
+  const tree = flat([{ id: 'n.r', kind: 'frame', rA: [0, 0, 200, 40], rB: [0, 0, 200, 40], kids: [
+    { id: 'n.r.0', kind: 'frame', rA: [0, 20, 20, 20], rB: [0, 20, 20, 20] },
+    { id: 'n.r.1', kind: 'frame', rA: [30, 0, 170, 40], rB: [30, 0, 170, 40], kids: [{ id: 'n.r.1.0', kind: 'text', rA: [30, 10, 170, 20], rB: [30, 10, 170, 20] }] }] }]);
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.r', ['HUG', 'HUG'], 'H', [F('n.r.0', ['FIXED', 'FIXED']),
+    Fd('n.r.1', ['FIXED', 'HUG'], 'V', [{ id: 'n.r.1.0', t: 'T', sz: ['FILL', 'HUG'] }])])]);
+  const r = probe(tree, both((b) => {
+    b['n.r'][2] -= 20; b['n.r'][3] += 30; b['n.r.0'][1] += 30;
+    b['n.r.1'][2] -= 20; b['n.r.1'][3] += 30; b['n.r.1.0'][2] -= 20; b['n.r.1.0'][3] += 30;
+  }), [{ id: 'n.r.1', kind: 'shrink' }], spec);
+  assert.ok(!r.roots.some((x) => x.id === 'n.r.0'), JSON.stringify(r.roots));
+  assert.equal(r.pass, true, JSON.stringify(r.roots));
+});
+
+test('R33: the growth is judged with the referencing item held at its source box (it was the tallest before)', () => {
+  const tree = flat([{ id: 'n.r', kind: 'frame', rA: [0, 0, 200, 40], rB: [0, 0, 200, 40], kids: [
+    { id: 'n.r.0', kind: 'frame', rA: [0, 0, 40, 40], rB: [0, 0, 40, 40] },
+    { id: 'n.r.1', kind: 'frame', rA: [50, 4, 150, 36], rB: [50, 4, 150, 36], kids: [{ id: 'n.r.1.0', kind: 'text', rA: [50, 13, 150, 18], rB: [50, 13, 150, 18] }] }] }]);
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [Fd('n.r', ['HUG', 'HUG'], 'H', [F('n.r.0', ['FIXED', 'FIXED']),
+    Fd('n.r.1', ['FIXED', 'HUG'], 'V', [{ id: 'n.r.1.0', t: 'T', sz: ['FILL', 'HUG'] }])])]);
+  // bubble 18 taller (36 -> 54, now the tallest), row 14 taller, the bottom-aligned avatar 14 lower
+  const r = probe(tree, both((b) => {
+    b['n.r'][3] += 14; b['n.r.0'][1] += 14;
+    b['n.r.1'][1] -= 4; b['n.r.1'][3] += 18; b['n.r.1.0'][1] -= 4; b['n.r.1.0'][3] += 18;
+  }), [{ id: 'n.r.1.0', kind: 'raster' }], spec);
+  assert.ok(!r.roots.some((x) => x.id === 'n.r.0'), JSON.stringify(r.roots));
+  // ... but the same 14px with nothing grown is a root
+  const r2 = probe(tree, both((b) => { b['n.r'][3] += 14; b['n.r.0'][1] += 14; b['n.r.1'][1] += 14; }), [], spec);
+  assert.equal(r2.pass, false, JSON.stringify(r2.roots));
+});

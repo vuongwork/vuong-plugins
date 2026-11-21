@@ -24,14 +24,21 @@
 //   (R16; an edge delta of a node within tolerance is never a reference); otherwise the node is a root. Per axis:
 //    - size is inherited when |dw| <= tol, or the node is FILL (spec sizing) and its nearest source ancestor's size
 //      moved the same way by at least as much, or the node is FILL and it absorbs exactly its equal share of the
-//      non-FILL siblings' size changes (dz = -sum / number of FILL items, within tol, R28), or the node is HUG and its size change equals the extent change of its grounded children
-//      (non-FILL, not positioned only from this node's far/middle edge; a child whose position and size deltas on that
-//      axis are within tolerance counts as unchanged, R19/R25). So a wrongly sized parent whose FILL children
+//      non-FILL siblings' size changes (dz = -sum / number of FILL items, within tol, R28), or the node is HUG and its size change equals the extent change of its non-FILL children
+//      where only grounded children (not positioned only from this node's far/middle edge) count as changed, the
+//      others held at their source box; a child whose position delta relative to this node's own near-edge delta and
+//      whose size delta on that axis are within tolerance counts as unchanged (R19/R25/R32). So a wrongly sized parent whose FILL children
 //      absorb the change is the root, not its children; and a hugging frame around a wrong child is not a second root.
 //    - position is inherited when one of its edges (near, far, middle) is within tol of 0, or matches a moved edge of
 //      the nearest source ancestor (near, far, middle) or of the previous source sibling (near, far), that reference
 //      node being outside tolerance. R29: on an axis where that ancestor HUGs, only its near edge is a reference (its
 //      far and middle edges move because of its children, so following them would be a cycle with hugAccounts).
+//      R32: in a HUG ancestor the previous sibling counts only if it changed relative to the ancestor's near-edge delta
+//      (a child that only moved with an end-anchored HUG row is no reference). R33: the HUG ancestor's far / middle
+//      edge is a reference after all when its size change on that axis equals the extent change of its non-FILL
+//      children counting only their own changes (a size change on that axis, or a position that is a root without
+//      R33), never a change of this node or of a sibling depending on it (later flow siblings on the main axis; on the
+//      cross axis a later sibling without a size change there that sits only on the previous one's edges).
 //   Small offsets cannot add up unseen: the first node whose offset exceeds tol while its references stayed within
 //   tol is a root. root.why lists the axes: x/y position, w/h size.
 //   Flags (R12, R17, R20, R22-R24): a flag explains only deviations it can cause, axis by axis (every axis in root.why
@@ -195,37 +202,91 @@ export function verifyScreen(input, opts = {}) {
     const sz = (id, ax) => { const s = specById.get(id); return s && s.sz ? s.sz[ax] : null; };
     const edges = (d, ax) => [d[ax], d[ax] + d[ax + 2], d[ax] + d[ax + 2] / 2]; // near, far, middle
     const outside = (id) => !within(byId.get(id).n, D.get(id));
+    const mainOf = (s) => (!s || !s.lay ? null : s.lay.d === 'H' ? 0 : s.lay.d === 'V' ? 1 : null);
     // R16: a reference (parent edge, previous sibling edge) counts only if that reference node is outside tolerance;
     // an edge delta of a node within tolerance is never a reference, so sub-tolerance offsets cannot add up unseen.
     // R29: on an axis where the ancestor HUGs, its far and middle edges are no reference: its size derives from its
     // children, so a child following them would explain the ancestor's growth and be explained by it (a cycle)
-    const posOK = (e, ax, withParentFar) => {
+    // R32: inside a HUG node a child is judged against the HUG node's own near-edge delta on that axis: a child that only
+    // moved with that near edge (an end-anchored HUG row moving with its content) is unchanged there, so it is no
+    // reference for the next sibling and counts as unchanged in hugAccounts.
+    // R33 (strict = false): the far / middle edge of a HUG ancestor is a reference after all when the ancestor's growth
+    // on that axis is accounted by its other children's own changes (r33Accounts), not by this node or its dependents.
+    const changedRel = (k, ax, a) => {
+      const d = D.get(k.id), t = tolOf(k), n0 = a ? D.get(a.n.id)[ax] : 0;
+      return Math.abs(d[ax] - n0) > t + EPS || Math.abs(d[ax + 2]) > t + EPS;
+    };
+    const posOK = (e, ax, withParentFar, strict = false) => {
       const t = tolOf(e.n), mine = edges(D.get(e.n.id), ax);
       if (mine.some((v) => Math.abs(v) <= t + EPS)) return true;
+      const hit = (r) => Math.abs(r) > t + EPS && mine.some((v) => Math.abs(v - r) <= t + EPS);
       const refs = [];
       const a = ancestor(e);
+      const aHug = !!a && sz(a.n.id, ax) === 'HUG';
+      let far = null;
       if (a && outside(a.n.id)) {
         const pe = edges(D.get(a.n.id), ax); refs.push(pe[0]);
-        if (withParentFar && sz(a.n.id, ax) !== 'HUG') refs.push(pe[1], pe[2]);
+        if (withParentFar && !aHug) refs.push(pe[1], pe[2]);
+        else if (withParentFar && !strict) far = [pe[1], pe[2]];
       }
       const p = prevOf(e);
-      if (p && outside(p.n.id)) { const se = edges(D.get(p.n.id), ax); refs.push(se[0], se[1]); }
-      return refs.filter((r) => Math.abs(r) > t + EPS).some((r) => mine.some((v) => Math.abs(v - r) <= t + EPS));
+      if (p && outside(p.n.id) && (!aHug || changedRel(p.n, ax, a))) { const se = edges(D.get(p.n.id), ax); refs.push(se[0], se[1]); }
+      if (refs.some(hit)) return true;
+      return !!far && far.some(hit) && r33Accounts(a, e, ax);
     };
-    // HUG on axis ax: does the size change equal the extent change of the grounded children? Grounded = non-FILL and
-    // not positioned from this node's far/middle edge (a child that only follows those edges would be circular).
+    // R33: does the HUG ancestor a's size change on ax equal the extent change of its children, counting no change of e
+    // or of the siblings depending on e (later flow siblings on a's main axis or when it is unknown; on the cross axis a later
+    // sibling whose edges follow e's, or a dependent's, previous-sibling edges)? Only a child's own change counts: a
+    // size change on ax (its own or attributed to its subtree) or a position that is a root without R33 (strict posOK).
+    // A child that only follows a reference counts as unchanged, so two centred items cannot explain each other.
+    const r33Accounts = (a, e, ax) => {
+      const da = D.get(a.n.id), t = tolOf(a.n);
+      const sibs = (a.n.kids || []).filter((k) => D.has(k.id));
+      const i = sibs.findIndex((k) => k.id === e.n.id);
+      if (i < 0) return false;
+      const main = mainOf(specById.get(a.n.id));
+      const dep = new Set([e.n.id]);
+      for (let j = i + 1; j < sibs.length; j++) {
+        if (main === null || main === ax) { dep.add(sibs[j].id); continue; }
+        const pv = sibs[j - 1];
+        if (!dep.has(pv.id)) continue;
+        // dependent: placed only from the previous sibling's edges (not at its own source edge, not at a's near edge).
+        // A cross-axis size change is never a dependency (flex siblings do not size each other on the cross axis).
+        const tk = tolOf(sibs[j]);
+        if (Math.abs(D.get(sibs[j].id)[ax + 2]) > tk + EPS) continue;
+        const pe = edges(D.get(pv.id), ax), me = edges(D.get(sibs[j].id), ax);
+        const match = (r) => me.some((v) => Math.abs(v - r) <= tk + EPS);
+        const alone = me.some((v) => Math.abs(v) <= tk + EPS) || (outside(a.n.id) && Math.abs(da[ax]) > tk + EPS && match(da[ax]));
+        if (!alone && (match(pe[0]) || match(pe[1]))) dep.add(sibs[j].id);
+      }
+      // e and its dependents stay in the extent, held at their source box (their change does not count)
+      const ks = sibs.filter((k) => sz(k.id, ax) !== 'FILL');
+      if (!ks.some((k) => !dep.has(k.id))) return false;
+      const own = (k) => !dep.has(k.id) && changedRel(k, ax, a) && (Math.abs(D.get(k.id)[ax + 2]) > tolOf(k) + EPS || !posOK(byId.get(k.id), ax, true, true));
+      const dU = extDelta(ks, ax, da[ax], own);
+      return Math.abs(da[ax + 2] - dU) <= t + EPS;
+    };
+    // extent change of children ks on ax: a changed child (changed(k)) at its layout box, an unchanged one at its source
+    // box moved with the HUG node's near edge (n0)
+    const extDelta = (ks, ax, n0, changed) => {
+      const ext = (boxes) => Math.max(...boxes.map((b) => b[ax] + b[ax + 2])) - Math.min(...boxes.map((b) => b[ax]));
+      const now = (k) => { if (changed(k)) return layout[M].boxes[k.id]; const b = [...src(k, M)]; b[ax] += n0; return b; };
+      return ext(ks.map(now)) - ext(ks.map((k) => src(k, M)));
+    };
+    // HUG on axis ax: does the size change equal the extent change of the non-FILL children, counting changes only of
+    // grounded ones? Grounded = not positioned only from this node's far/middle edge (following those is circular).
     // R19: a child within tolerance counts as unchanged (its source box), so nested HUG levels cannot each hide tol.
     // R25: decided per axis (that axis's position and size deltas both within tol), so a deviation on the other axis
     // does not make the child's sub-tolerance drift on this one count.
-    const changedOn = (k, ax) => { const d = D.get(k.id), t = tolOf(k); return Math.abs(d[ax]) > t + EPS || Math.abs(d[ax + 2]) > t + EPS; };
+    // R32: "unchanged" is relative to this HUG node's own near-edge delta on ax (an unchanged child sits at its source
+    // box moved with that edge).
     const hugAccounts = (e, ax) => {
       const d = D.get(e.n.id), t = tolOf(e.n);
-      const ks = (e.n.kids || []).filter((k) => D.has(k.id) && sz(k.id, ax) !== 'FILL' &&
-        (posOK(byId.get(k.id), ax, false) || !posOK(byId.get(k.id), ax, true)));
-      if (!ks.length) return false;
-      const ext = (boxes) => Math.max(...boxes.map((b) => b[ax] + b[ax + 2])) - Math.min(...boxes.map((b) => b[ax]));
-      const now = (k) => (changedOn(k, ax) ? layout[M].boxes[k.id] : src(k, M));
-      const dU = ext(ks.map(now)) - ext(ks.map((k) => src(k, M)));
+      // an ungrounded child stays in the extent, held at its source box (its change does not count, R33)
+      const ks = (e.n.kids || []).filter((k) => D.has(k.id) && sz(k.id, ax) !== 'FILL');
+      const grounded = (k) => posOK(byId.get(k.id), ax, false) || !posOK(byId.get(k.id), ax, true);
+      if (!ks.some(grounded)) return false;
+      const dU = extDelta(ks, ax, d[ax], (k) => grounded(k) && changedRel(k, ax, e));
       return Math.abs(d[ax + 2] - dU) <= t + EPS;
     };
     const sizeOK = (e, ax) => {
@@ -264,7 +325,6 @@ export function verifyScreen(input, opts = {}) {
     //  - an ancestor's other flag (not spaceAround, not text-only): only if that ancestor is a root on the same axis,
     //    or its width is off and the deviation is a height (wrap) (R17, M1).
     const explained = new Set();
-    const mainOf = (s) => (!s || !s.lay ? null : s.lay.d === 'H' ? 0 : s.lay.d === 'V' ? 1 : null);
     const mainIn = (id) => mainOf(specParent.get(id));
     const flagged = (id, k) => (flagsById.get(id) || []).includes(k);
     const flowKids = (s) => (s.kids || []).filter((k) => !k.abs);

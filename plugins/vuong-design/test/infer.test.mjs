@@ -280,3 +280,14 @@ test('free space on a non-HUG axis goes to alignment, not padding', () => {
   assert.equal(spec.lay.pa, 'S');
   assert.equal(spec.lay.ca, 'S');
 });
+
+test('R36: counter-axis alignment is chosen by smallest residual, not loop order', () => {
+  // row with padding 9: text 19.5 tall at y 9, icon 18 tall at y 9.75 → both fit S within EPS, both fit C exactly
+  const tree = N('n', [0, 0, 300, 37.5], [0, 0, 420, 37.5], {
+    kids: [N('n.0', [10, 9.75, 18, 18], [10, 9.75, 18, 18]), N('n.1', [36, 9, 100, 19.5], [36, 9, 100, 19.5])],
+  });
+  const { spec } = inferScreen(screenOf(tree));
+  assert.equal(spec.lay.d, 'H');
+  assert.equal(spec.lay.ca, 'C');
+  assert.deepEqual(spec.kids.filter((k) => k.syn).map((k) => k.id), []);
+});

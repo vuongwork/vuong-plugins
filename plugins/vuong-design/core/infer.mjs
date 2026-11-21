@@ -326,7 +326,10 @@ export function inferScreen(screen) {
         for (const a of ['S', 'C', 'E']) {
           const v = anyStretch ? (a === 'S' ? padCS : a === 'E' ? padCE : padCS - padCE) : (non.length ? modeOf(non.map(valOf[a])) : 0);
           const fits = non.filter((c) => fitFn[a](c, v)).length;
-          if (!best || fits > best.fits) best = { a, v, fits };
+          // R36: equal fit count → smallest summed residual wins (EPS is wider than verify's tolerance, so loop
+          // order would turn a sub-EPS offset into a root)
+          const res = non.reduce((s, c) => s + Math.abs(valOf[a](c) - v), 0);
+          if (!best || fits > best.fits || (fits === best.fits && res < best.res - 1e-6)) best = { a, v, fits, res };
         }
         let ca = best.a;
         // text items on one baseline: Figma baseline alignment replaces one wrapper per misfit

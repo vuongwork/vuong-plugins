@@ -9,6 +9,8 @@
 //   paint?, font?, runs?, icon?, src?, fit?, syn?, kids? }
 // Stretch on the counter axis is expressed per child (sz FILL), so ca 'X' is never emitted.
 // Every non-syn SNode id is its source INode id; synthetic frames are `<parentId>.g<k>` and have no source box.
+// syn kinds: 'row'/'col'/'prox'/'push' groups, 'align' wrappers (counter-axis offset), 'track' (R42: equal FILL
+// tracks with min = item width, item centred: CSS grid repeat(n, 1fr) + centred items, or space-around).
 
 const EPS = 0.75;  // geometric equality tolerance
 const GROW = 0.75; // "changed between widths"
@@ -147,6 +149,39 @@ export function inferScreen(screen) {
       cur = segs.map((s) => (s.length > 1 ? mkGroup(s, d, 'prox') : s[0]));
     }
     return { mode: 'gap', g: 0, items: cur };
+  }
+
+  // ---- R42 equal tracks: n equal items at a constant step whose offsets fit "centred in n equal tracks with gap g"
+  // at both widths (CSS grid repeat(n, 1fr) + justify-items centre, or space-around). The tracks grow by Δ/n, so
+  // the first item moves at B, which space-between cannot express. A track at A may sit on the item's width (the
+  // grid's min-content floor). Only the combination 2p − g is fixed by the free case, so try g = stepA − w (floor
+  // case) and g = 0. -> { g, tracks } (synthetic FILL wrappers, min = item width) | null
+  function equalTracks(L, items) {
+    const n = items.length;
+    if (n < 2) return null;
+    const w = items[0].A[2];
+    if (items.some((it) => Math.abs(it.A[2] - w) > 0.5 || Math.abs(it.B[2] - w) > 0.5)) return null;
+    const steps = (M) => items.slice(1).map((it, i) => it[M][0] - items[i][M][0]);
+    const sA = steps('A'), sB = steps('B');
+    if (Math.max(...sA) - Math.min(...sA) > 0.5 || Math.max(...sB) - Math.min(...sB) > 0.5) return null;
+    const stepA = mean(sA), stepB = mean(sB);
+    const c0B = items[0].B[0] - L.B[0] + w / 2;
+    for (const g of [stepA - w, 0]) {
+      if (g < 0) continue;
+      const TB = stepB - g;
+      if (TB < w - 0.01 || TB - w <= GROW) continue;
+      const pS = c0B - TB / 2, pE = L.B[2] - pS - n * TB - (n - 1) * g;
+      if (pS < -0.01 || pE < -0.01) continue;
+      const TA = Math.max(w, (L.A[2] - pS - pE - (n - 1) * g) / n);
+      const at = (M, T, i) => pS + i * (T + g) + (T - w) / 2;
+      if (!items.every((it, i) => Math.abs(it.A[0] - L.A[0] - at('A', TA, i)) <= 0.5 && Math.abs(it.B[0] - L.B[0] - at('B', TB, i)) <= 0.5)) continue;
+      const tracks = items.map((it, i) => ({
+        id: null, syn: 'track', hint: 'H', min: w, kids: [it],
+        A: [L.A[0] + pS + i * (TA + g), it.A[1], TA, it.A[3]], B: [L.B[0] + pS + i * (TB + g), it.B[1], TB, it.B[3]],
+      }));
+      return { g: r2(g), tracks };
+    }
+    return null;
   }
 
   // ---- baseline: first text leaf of each item; baseline ≈ line centre + κ·fontSize, κ = (ascent − descent) / 2 ----
@@ -327,6 +362,10 @@ export function inferScreen(screen) {
         finalItems = items.map((it) => ({ c: { stretch: false }, it }));
       } else {
         plan = primaryPlan(items, d);
+        if (plan.mode === 'sb' && d === 'H' && plan.items.length === items.length) {
+          const tr = equalTracks(L, items);
+          if (tr) { plan = { mode: 'gap', g: tr.g, items: tr.tracks }; stats.tracks = (stats.tracks || 0) + 1; stats.spaceBetween--; }
+        }
         items = plan.items;
         const first = items[0], last = items[items.length - 1];
         const padS = first.A[P] - L.A[P], padE = L.A[P] + L.A[Z] - (last.A[P] + last.A[Z]);
@@ -424,6 +463,7 @@ export function inferScreen(screen) {
         const prim = it.B[Z] - it.A[Z] > GROW ? 'FILL' : defaultSize(it, cs, P);
         const cnt = c.stretch ? 'FILL' : defaultSize(it, cs, C);
         cs.sz = d === 'H' ? [prim, cnt] : [cnt, prim];
+        if (it.syn === 'track' && prim === 'FILL') cs.min = r2(it.min); // R42: the grid's min-content floor
         if (prim === 'FILL') { inf.fillAx[P] = true; fills.push([it, cs]); }
         if (cnt === 'FILL') inf.fillAx[C] = true;
         childSpecs.push(cs);

@@ -340,3 +340,22 @@ test('R38: FILL siblings keep the end padding that equalises their content share
   assert.ok(g.flags.some((f) => f.kind === 'weightedFill'));
   assert.equal(g.spec.kids[1].lay.p[1], 0);
 });
+
+test('R42: equal tracks with centred items → FILL track wrappers (min = item width), items centred', () => {
+  // grid repeat(4, 1fr), gap 18, padding 10, items 56 centred. A (296): tracks hit the 56 floor; B (416): tracks 85.5
+  const item = (i) => N(`n.${i}`, [10 + i * 74, 10, 56, 56], [24.75 + i * 103.5, 10, 56, 56]);
+  const tree = N('n', [0, 0, 296, 76], [0, 0, 416, 76], { kids: [0, 1, 2, 3].map(item) });
+  const { spec } = inferScreen(screenOf(tree));
+  assert.equal(spec.lay.d, 'H');
+  assert.equal(spec.lay.sb, undefined);
+  assert.equal(spec.lay.g, 18);
+  assert.equal(spec.kids.length, 4);
+  for (const [i, t] of spec.kids.entries()) {
+    assert.ok(t.syn, `track ${i} is a synthetic wrapper`);
+    assert.equal(t.sz[0], 'FILL');
+    assert.equal(t.min, 56);
+    assert.equal(t.lay.pa, 'C');
+    assert.deepEqual(t.kids.map((k) => k.id), [`n.${i}`]);
+  }
+  assert.equal(spec.lay.p[3], 10);
+});

@@ -2,8 +2,9 @@
 //  - layout: renderProxy of the inferred spec WITHOUT applyFigmaModel (pure auto-layout semantics). Its deviations
 //    are layout errors and give the roots.
 //  - proxy: renderProxy of the modelled spec (after applyFigmaModel), i.e. what Figma will produce. A node outside
-//    tolerance here but within tolerance in the layout comparison deviates because of the Figma model: it is listed in
-//    `modelDeltas` (explainedBy 'figmaModel', with magnitude) for the normalisation report, never as a root. A model
+//    tolerance relative to the layout proxy (modelled delta minus layout delta, R18, whatever the node's layout state)
+//    deviates because of the Figma model: it is listed in `modelDeltas` (explainedBy 'figmaModel', delta = that
+//    difference, with magnitude) for the normalisation report, never as a root. A model
 //    delta larger than opts.tolModel (default 2px, R15) goes to `needsApproval` instead, and fails the screen until
 //    approved (Task 8: allowlist).
 //    Colours, text, icons and fonts are read from this proxy's DOM. Crops are taken from the layout proxy: the content
@@ -18,19 +19,22 @@
 // Layer 2, position: d = box - source box ([dx, dy, dw, dh], CSS px, relative to the root). A node is within
 //   tolerance when |d| <= tol (tolText for text, i.e. kind 'text' and pseudo text that infer turns into a text node;
 //   tolFrame for everything else). Invariant: every node outside tolerance is attributed to a root in itself, an
-//   ancestor or an earlier sibling, and a reference counts only if it really moved (its own edge delta is beyond tol);
-//   otherwise the node is a root. Per axis:
+//   ancestor or an earlier sibling, and a reference counts only if that reference node is itself outside tolerance
+//   (R16; an edge delta of a node within tolerance is never a reference); otherwise the node is a root. Per axis:
 //    - size is inherited when |dw| <= tol, or the node is FILL (spec sizing) and its nearest source ancestor's size
 //      moved the same way by at least as much, or the node is FILL and non-FILL siblings' size changes it absorbs
 //      account for it, or the node is HUG and its size change equals the extent change of its grounded children
-//      (non-FILL, not positioned from this node's far/middle edge). So a wrongly sized parent whose FILL children
+//      (non-FILL, not positioned only from this node's far/middle edge). So a wrongly sized parent whose FILL children
 //      absorb the change is the root, not its children; and a hugging frame around a wrong child is not a second root.
 //    - position is inherited when one of its edges (near, far, middle) is within tol of 0, or matches a moved edge of
-//      the nearest source ancestor (near, far, middle) or of the previous source sibling (near, far).
+//      the nearest source ancestor (near, far, middle) or of the previous source sibling (near, far), that reference
+//      node being outside tolerance.
 //   Small offsets cannot add up unseen: the first node whose offset exceeds tol while its references stayed within
 //   tol is a root. root.why lists the axes: x/y position, w/h size.
-//   Flags (R12): a node's own flag explains its root; an ancestor's flag explains a descendant root only if that
-//   ancestor is itself outside tolerance at that width and the flag is not text-only (mixedRunHeight).
+//   Flags (R12, R17): a node's own flag explains its root; an ancestor's flag explains a descendant root only if that
+//   ancestor deviates for its own reason at that width (no edge of it within tol on an axis, or its size off on a
+//   non-HUG axis, or off on a HUG axis by more than its grounded children's extent change) and the flag is not
+//   text-only (mixedRunHeight). A HUG ancestor that only grows with the descendant is no excuse.
 //   fontSubstitution explains nothing (R10: capture measures the source in the Figma font). On a screen flagged
 //   unsafeWiden, roots at width B are `unchecked` (reason unsafeWiden), never explained.
 // Layer 3, content (modelled proxy):
@@ -140,15 +144,30 @@ export function verifyScreen(input, opts = {}) {
     const prevOf = (e) => { let p = e.prev; while (p && !D.has(p.n.id)) p = p.prev; return p; };
     const sz = (id, ax) => { const s = specById.get(id); return s && s.sz ? s.sz[ax] : null; };
     const edges = (d, ax) => [d[ax], d[ax] + d[ax + 2], d[ax] + d[ax + 2] / 2]; // near, far, middle
+    const outside = (id) => !within(byId.get(id).n, D.get(id));
+    const anchored = (e, ax) => edges(D.get(e.n.id), ax).some((v) => Math.abs(v) <= tolOf(e.n) + EPS);
+    // R16: a reference (parent edge, previous sibling edge) counts only if that reference node is outside tolerance;
+    // an edge delta of a node within tolerance is never a reference, so sub-tolerance offsets cannot add up unseen
     const posOK = (e, ax, withParentFar) => {
       const t = tolOf(e.n), mine = edges(D.get(e.n.id), ax);
       if (mine.some((v) => Math.abs(v) <= t + EPS)) return true;
       const refs = [];
       const a = ancestor(e);
-      if (a) { const pe = edges(D.get(a.n.id), ax); refs.push(pe[0]); if (withParentFar) refs.push(pe[1], pe[2]); }
+      if (a && outside(a.n.id)) { const pe = edges(D.get(a.n.id), ax); refs.push(pe[0]); if (withParentFar) refs.push(pe[1], pe[2]); }
       const p = prevOf(e);
-      if (p) { const se = edges(D.get(p.n.id), ax); refs.push(se[0], se[1]); }
+      if (p && outside(p.n.id)) { const se = edges(D.get(p.n.id), ax); refs.push(se[0], se[1]); }
       return refs.filter((r) => Math.abs(r) > t + EPS).some((r) => mine.some((v) => Math.abs(v - r) <= t + EPS));
+    };
+    // HUG on axis ax: does the size change equal the extent change of the grounded children? Grounded = non-FILL and
+    // not positioned from this node's far/middle edge (a child that only follows those edges would be circular).
+    const hugAccounts = (e, ax) => {
+      const d = D.get(e.n.id), t = tolOf(e.n);
+      const ks = (e.n.kids || []).filter((k) => D.has(k.id) && sz(k.id, ax) !== 'FILL' &&
+        (posOK(byId.get(k.id), ax, false) || !posOK(byId.get(k.id), ax, true)));
+      if (!ks.length) return false;
+      const ext = (boxes) => Math.max(...boxes.map((b) => b[ax] + b[ax + 2])) - Math.min(...boxes.map((b) => b[ax]));
+      const dU = ext(ks.map((k) => layout[M].boxes[k.id])) - ext(ks.map((k) => src(k, M)));
+      return Math.abs(d[ax + 2] - dU) <= t + EPS;
     };
     const sizeOK = (e, ax) => {
       const d = D.get(e.n.id), t = tolOf(e.n), dz = d[ax + 2];
@@ -164,20 +183,19 @@ export function verifyScreen(input, opts = {}) {
         const sum = moved.reduce((x, y) => x + y, 0);
         if (moved.length && Math.sign(sum) === -Math.sign(dz) && Math.abs(dz) <= Math.abs(sum) + t + EPS) return true;
       }
-      if (me === 'HUG' && (e.n.kids || []).length) {
-        const ks = e.n.kids.filter((k) => D.has(k.id) && sz(k.id, ax) !== 'FILL' && posOK(byId.get(k.id), ax, false));
-        if (ks.length) {
-          const ext = (boxes) => Math.max(...boxes.map((b) => b[ax] + b[ax + 2])) - Math.min(...boxes.map((b) => b[ax]));
-          const dU = ext(ks.map((k) => layout[M].boxes[k.id])) - ext(ks.map((k) => src(k, M)));
-          if (Math.abs(dz - dU) <= t + EPS) return true;
-        }
-      }
+      if (me === 'HUG' && hugAccounts(e, ax)) return true;
       return false;
     };
-    const outside = (id) => !within(byId.get(id).n, D.get(id));
+    // R17: an ancestor deviates for its own reason when, on some axis, no edge of it stays within tolerance (its
+    // position is off), or its size is off on a non-HUG axis, or on a HUG axis by more than its children account for
+    const ownDeviation = (a) => [0, 1].some((ax) => {
+      if (!anchored(a, ax)) return true;
+      if (Math.abs(D.get(a.n.id)[ax + 2]) <= tolOf(a.n) + EPS) return false;
+      return sz(a.n.id, ax) !== 'HUG' || !hugAccounts(a, ax);
+    });
     const explain = (e) => {
       for (let a = e, self = true; a; a = a.parent, self = false) {
-        if (!self && (!D.has(a.n.id) || !outside(a.n.id))) continue;
+        if (!self && (!D.has(a.n.id) || !outside(a.n.id) || !ownDeviation(a))) continue;
         for (const k of flagsById.get(a.n.id) || []) {
           if (NEVER_EXPLAINS.has(k) || (!self && SELF_ONLY.has(k))) continue;
           return k;
@@ -201,13 +219,14 @@ export function verifyScreen(input, opts = {}) {
     }
   }
 
-  // ---- Figma-model deltas: outside tolerance in the modelled proxy only ----
+  // ---- Figma-model deltas (R18): modelled-proxy delta minus layout-proxy delta, whatever the layout state ----
   const modelDeltas = [], needsApproval = [];
   for (const M of layout ? W : []) {
     for (const { n } of list) {
       const md = MD[M].get(n.id), ld = LD[M].get(n.id);
-      if (md && ld && !within(n, md) && within(n, ld)) {
-        const e = { id: n.id, width: M, delta: md, magnitude: r2(Math.max(...md.map(Math.abs))), explainedBy: 'figmaModel' };
+      const dd = md && ld ? sub(md, ld) : null;
+      if (dd && !within(n, dd)) {
+        const e = { id: n.id, width: M, delta: dd, magnitude: r2(Math.max(...dd.map(Math.abs))), explainedBy: 'figmaModel' };
         (e.magnitude > tolModel + EPS ? needsApproval : modelDeltas).push(e);
       }
     }

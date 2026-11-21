@@ -218,7 +218,12 @@ test('verifyScreen (R12): an ancestor flag explains a descendant root when that 
   shift(inp, 'n.0', [0, 0, 3, 0]);
   shift(inp, 'n.0.1', [0, 0, 3, 0]);
   inp.flags = [{ id: 'n.0', kind: 'weightedFill', detail: 'x' }];
-  const r = verifyScreen(inp);
+  // R17: the card hugs its width, so its +3px comes from the icon: no excuse for the icon
+  let r = verifyScreen(inp);
+  assert.deepEqual(unexplained(r).map((x) => x.id), ['n.0.1', 'n.0.1'], JSON.stringify(r.roots));
+  // a FIXED-width card off by 3px deviates for its own reason: its flag explains it and the icon
+  inp.spec.kids[0].sz = ['FIXED', 'HUG'];
+  r = verifyScreen(inp);
   assert.ok(r.roots.length && r.roots.every((x) => x.explainedBy === 'weightedFill'), JSON.stringify(r.roots));
 });
 
@@ -230,6 +235,52 @@ test('probe (R12): on an unsafeWiden screen a B-only deviation is unchecked, nev
   assert.deepEqual(r.roots, []);
   assert.deepEqual(r.unchecked, ['n.0']);
   assert.match(r.uncheckedReasons['n.0'], /unsafeWiden/);
+  assert.equal(r.pass, false);
+});
+
+// ---- reviewer probes (fix round 2) ----
+const chipRow = () => Array.from({ length: 10 }, (_, i) => ({ id: `n.${i}`, kind: 'frame', rA: [i * 30, 10, 20, 20], rB: [i * 30, 10, 20, 20] }));
+const widen = (b, pre = 'n') => { for (let i = 0; i < 10; i++) { b[`${pre}.${i}`][0] += 0.5 * i; b[`${pre}.${i}`][2] += 0.5; } };
+
+test('probe (R16): ten chips each 0.5px wider, pushed by the earlier ones (last 4.5px off), is not a silent pass', () => {
+  const r = probe(flat(chipRow()), both((b) => widen(b)));
+  assert.ok(unexplained(r).length > 0, JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+});
+
+test('probe (R16): the same widening chips inside a HUG row are not a silent pass', () => {
+  const chips = chipRow().map((c) => ({ ...c, id: `n.r.${c.id.slice(2)}` }));
+  const row = { id: 'n.r', kind: 'frame', rA: [0, 10, 290, 20], rB: [0, 10, 290, 20], kids: chips };
+  const spec = { id: 'n', t: 'F', sz: ['FIXED', 'FIXED'], kids: [{ id: 'n.r', t: 'F', sz: ['HUG', 'HUG'],
+    kids: chips.map((k) => ({ id: k.id, t: 'F', sz: ['FIXED', 'FIXED'] })) }] };
+  const r = probe(flat([row]), both((b) => { b['n.r'][2] += 5; widen(b, 'n.r'); }), [], spec);
+  assert.ok(unexplained(r).length > 0, JSON.stringify(r.roots));
+  assert.ok(!rootIds(r).includes('n.r'), 'the hugging row is not a second root');
+  assert.equal(r.pass, false);
+});
+
+test('probe (R16): ten rows each 0.5px taller (last 4.5px off) is not a silent pass', () => {
+  const rows = Array.from({ length: 10 }, (_, i) => ({ id: `n.${i}`, kind: 'frame', rA: [0, i * 30, 200, 20], rB: [0, i * 30, 200, 20] }));
+  const r = probe({ ...flat(rows), rA: [0, 0, 400, 400], rB: [0, 0, 400, 400] },
+    both((b) => { for (let i = 0; i < 10; i++) { b[`n.${i}`][1] += 0.5 * i; b[`n.${i}`][3] += 0.5; } }));
+  assert.ok(unexplained(r).length > 0, JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+});
+
+test('probe (R17): a HUG nav that grows only because its icon grew does not excuse the icon with its flag', () => {
+  const nav = { id: 'n.0', kind: 'frame', rA: [0, 0, 400, 40], rB: [0, 0, 400, 40], kids: [{ id: 'n.0.0', kind: 'icon', icon: { svg: 1 }, rA: [10, 10, 20, 20], rB: [10, 10, 20, 20] }] };
+  const spec = { id: 'n', t: 'F', sz: ['FIXED', 'FIXED'], kids: [{ id: 'n.0', t: 'F', sz: ['FIXED', 'HUG'], kids: [{ id: 'n.0.0', t: 'V', sz: ['FIXED', 'FIXED'] }] }] };
+  const r = probe(flat([nav]), both((b) => { b['n.0.0'][2] += 6; b['n.0.0'][3] += 6; b['n.0'][3] += 6; }), [{ id: 'n.0', kind: 'spaceAround' }], spec);
+  assert.ok(unexplained(r).some((x) => x.id === 'n.0.0'), JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+});
+
+test('probe (R18): a model delta on a node outside tolerance in the layout proxy still needs approval', () => {
+  const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 100, 40], rB: [0, 0, 100, 40] }, { id: 'n.1', kind: 'frame', rA: [0, 40, 100, 40], rB: [0, 40, 100, 40] }]);
+  const r = probe(tree, (P, L) => { for (const M of ['A', 'B']) { L[M].boxes['n.0'][3] += 3; L[M].boxes['n.1'][1] += 3; P[M].boxes['n.0'][3] += 3; P[M].boxes['n.1'][1] += 43; } },
+    [{ id: 'n.0', kind: 'shrink' }]);
+  assert.deepEqual(unexplained(r), [], JSON.stringify(r.roots));
+  assert.deepEqual(r.needsApproval.map((m) => [m.id, m.width, m.magnitude]).sort(), [['n.1', 'A', 40], ['n.1', 'B', 40]]);
   assert.equal(r.pass, false);
 });
 
@@ -530,8 +581,9 @@ test('pipeline: a system-ui fixture (font override) verifies end to end with bot
     const flags = [...inf.flags, ...mod.flags];
     assert.ok(!flags.some((f) => f.kind === 'fontSubstitution'), JSON.stringify(flags));
     const html = (sp) => buildProxyHtml(sp, s.svgDefs, fm, { webFonts: false });
-    const proxy = { A: await renderProxy(browser, html(mod.spec), s.W[0]), B: await renderProxy(browser, html(mod.spec), s.W[1]) };
-    const layout = { A: await renderProxy(browser, html(inf.spec), s.W[0]), B: await renderProxy(browser, html(inf.spec), s.W[1]) };
+    const at = (sp, i) => renderProxy(browser, html(sp), s.W[i], { origin: s.origin[i] });
+    const proxy = { A: await at(mod.spec, 0), B: await at(mod.spec, 1) };
+    const layout = { A: await at(inf.spec, 0), B: await at(inf.spec, 1) };
     const r = await verifyScreenWithImages(browser, { screen: s, spec: mod.spec, proxy, layout, flags });
     assert.deepEqual(r.unchecked, []);
     assert.deepEqual(r.skipped, []);

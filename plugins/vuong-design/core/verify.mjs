@@ -30,7 +30,8 @@
 //      absorb the change is the root, not its children; and a hugging frame around a wrong child is not a second root.
 //    - position is inherited when one of its edges (near, far, middle) is within tol of 0, or matches a moved edge of
 //      the nearest source ancestor (near, far, middle) or of the previous source sibling (near, far), that reference
-//      node being outside tolerance.
+//      node being outside tolerance. R29: on an axis where that ancestor HUGs, only its near edge is a reference (its
+//      far and middle edges move because of its children, so following them would be a cycle with hugAccounts).
 //   Small offsets cannot add up unseen: the first node whose offset exceeds tol while its references stayed within
 //   tol is a root. root.why lists the axes: x/y position, w/h size.
 //   Flags (R12, R17, R20, R22-R24): a flag explains only deviations it can cause, axis by axis (every axis in root.why
@@ -58,7 +59,11 @@
 //   font (expected = the Figma family of the modelled spec, actual = the family the proxy DOM computed; a family in
 //   fontsMissing did not render; a screen.fontSubs entry 'override-failed' is a mismatch on the root), color (text:
 //   source computed colour vs proxy computed colour; other nodes: source computed background colour, transparent if
-//   none, vs proxy computed background colour).
+//   none, vs proxy computed background colour), visibility (R31: source effective opacity, the product of paint.opacity
+//   over source ancestors, vs proxy DOM `op`, the same product over the rendered page; and the proxy node must be
+//   visibility visible, display not none), stroke (R30a: per side top/right/bottom/left and outline, width, style and
+//   colour of the source computed border / outline vs the proxy DOM `stroke` / `outline` as rendered). A proxy DOM
+//   without these observations puts 'visibility' / 'stroke' in `skipped`.
 //   crops: input.crops = [{id, width, ratio, diff, peak}] from measureCrops at A and B on source nodes whose box has
 //   area <= 4000px². Fails when ratio (differing / ink pixels) > 0.05 or peak (differing pixels in the densest
 //   8x8 CSS px square) >= 40. A failure on a node that is (inside) a raster node is in `cropExplained`.
@@ -83,6 +88,17 @@ const isTextSrc = (n) => !n.icon && (n.kind === 'text' || (n.kind === 'pseudo' &
 const runsText = (runs) => (runs || []).map((r) => (r.br ? '\n' : r.t ?? '')).join('');
 const normWs = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 const iconKey = (ic) => (!ic ? null : ic.ref ? ic.ref : ic.glyph != null ? `glyph:${ic.glyph}` : ic.svg ? 'svg' : null);
+const OP_EPS = 0.01;
+const SIDE_NAMES = ['top', 'right', 'bottom', 'left'];
+// 'Wpx style colour' (computed CSS) -> canonical 'W.WWpx style rgb(...)', or 'none' (no width, style none / hidden)
+const strokeKey = (s) => {
+  if (s == null || s === 'none') return 'none';
+  const m = /^\s*([\d.]+)px\s+(\w+)\s+(.+?)\s*$/.exec(String(s));
+  if (!m) return String(s);
+  const w = Math.round(parseFloat(m[1]) * 100) / 100;
+  if (!(w > 0) || m[2] === 'none' || m[2] === 'hidden') return 'none';
+  return `${w}px ${m[2]} ${normColor(m[3])}`;
+};
 const domIcon = (d) => (!d ? null : d.icon ? d.icon : d.text != null ? `glyph:${d.text.trim()}` : null);
 // computed CSS colour -> canonical 'rgb(r, g, b)' / 'rgba(r, g, b, a)' / 'transparent'
 export function normColor(c) {
@@ -180,13 +196,18 @@ export function verifyScreen(input, opts = {}) {
     const edges = (d, ax) => [d[ax], d[ax] + d[ax + 2], d[ax] + d[ax + 2] / 2]; // near, far, middle
     const outside = (id) => !within(byId.get(id).n, D.get(id));
     // R16: a reference (parent edge, previous sibling edge) counts only if that reference node is outside tolerance;
-    // an edge delta of a node within tolerance is never a reference, so sub-tolerance offsets cannot add up unseen
+    // an edge delta of a node within tolerance is never a reference, so sub-tolerance offsets cannot add up unseen.
+    // R29: on an axis where the ancestor HUGs, its far and middle edges are no reference: its size derives from its
+    // children, so a child following them would explain the ancestor's growth and be explained by it (a cycle)
     const posOK = (e, ax, withParentFar) => {
       const t = tolOf(e.n), mine = edges(D.get(e.n.id), ax);
       if (mine.some((v) => Math.abs(v) <= t + EPS)) return true;
       const refs = [];
       const a = ancestor(e);
-      if (a && outside(a.n.id)) { const pe = edges(D.get(a.n.id), ax); refs.push(pe[0]); if (withParentFar) refs.push(pe[1], pe[2]); }
+      if (a && outside(a.n.id)) {
+        const pe = edges(D.get(a.n.id), ax); refs.push(pe[0]);
+        if (withParentFar && sz(a.n.id, ax) !== 'HUG') refs.push(pe[1], pe[2]);
+      }
       const p = prevOf(e);
       if (p && outside(p.n.id)) { const se = edges(D.get(p.n.id), ax); refs.push(se[0], se[1]); }
       return refs.filter((r) => Math.abs(r) > t + EPS).some((r) => mine.some((v) => Math.abs(v - r) <= t + EPS));
@@ -380,6 +401,9 @@ export function verifyScreen(input, opts = {}) {
   const dom = proxy.A && proxy.A.dom;
   if (!dom) skipped.push('data');
   const missing = new Set([...(proxy.A?.fontsMissing || []), ...(proxy.B?.fontsMissing || [])]);
+  const eop = new Map(); // source effective opacity: own opacity times the parent's
+  for (const e of list) eop.set(e.n.id, (e.parent ? eop.get(e.parent.n.id) : 1) * (e.n.paint && e.n.paint.opacity != null ? e.n.paint.opacity : 1));
+  let noVis = false, noStroke = false;
   for (const { n } of dom ? list : []) {
     const d = dom[n.id];
     if (!d) continue; // no proxy node: already unchecked
@@ -404,7 +428,28 @@ export function verifyScreen(input, opts = {}) {
       if (expected !== actual) data.push({ id: n.id, kind: 'font', expected, actual });
       else if (missing.has(actual)) data.push({ id: n.id, kind: 'font', expected, actual: `${actual} (did not render)` });
     }
+    // R31 visibility: effective opacity (product over ancestors) and the node itself shown
+    if (d.op == null || d.vis == null) noVis = true;
+    else {
+      const expected = eop.get(n.id), shown = d.vis === 'visible' && d.disp !== 'none';
+      if (Math.abs(expected - d.op) > OP_EPS || !shown) {
+        data.push({ id: n.id, kind: 'visibility', expected: `opacity ${r3(expected)}, visible`, actual: `opacity ${r3(d.op)}, visibility ${d.vis}, display ${d.disp}` });
+      }
+    }
+    // R30a stroke: per side (and outline) width, style and colour, source computed vs proxy rendered
+    if (!Array.isArray(d.stroke)) noStroke = true;
+    else {
+      const b = n.paint && Array.isArray(n.paint.border) ? n.paint.border : [];
+      SIDE_NAMES.forEach((side, i) => {
+        const x = b[i], expected = x && x.w > 0 ? strokeKey(`${x.w}px ${x.style} ${x.color}`) : 'none', actual = strokeKey(d.stroke[i]);
+        if (expected !== actual) data.push({ id: n.id, kind: 'stroke', side, expected, actual });
+      });
+      const expected = strokeKey(n.paint && n.paint.outline), actual = strokeKey(d.outline);
+      if (expected !== actual) data.push({ id: n.id, kind: 'stroke', side: 'outline', expected, actual });
+    }
   }
+  if (noVis) skipped.push('visibility');
+  if (noStroke) skipped.push('stroke');
 
   // ---- layer 3: crops (A and B) ----
   const crop = [], cropExplained = [];

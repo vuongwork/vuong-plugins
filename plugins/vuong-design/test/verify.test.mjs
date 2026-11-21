@@ -15,6 +15,8 @@ const skip = process.env.VD_PLAYWRIGHT_FROM
 // ---- hand-built data (no browser) ----
 // Source tree: n (frame) > n.0 (HUG frame "card") > n.0.0 (text "Inbox"), n.0.1 (icon #ic); n.1 (frame below the card)
 // `layout` = the unmodelled proxy, `proxy` = the modelled one; both start exact. DOM observations mirror the source.
+// what the proxy DOM reports for a shown node without strokes (R30/R31 observations)
+const SHOWN = () => ({ op: 1, vis: 'visible', disp: 'block', stroke: ['none', 'none', 'none', 'none'] });
 const FONT = { ff: 'Inter', fs: '14px', fw: '400', lh: 20, c: 'rgb(34, 34, 34)' };
 function fixture() {
   const screen = {
@@ -45,7 +47,7 @@ function fixture() {
   };
   const dom = {};
   const v = (n) => {
-    const o = { color: n.font ? n.font.c : 'rgb(0, 0, 0)', bg: (n.paint && n.paint.bg) || 'rgba(0, 0, 0, 0)', ff: n.font ? `"${n.font.ff}"` : 'serif' };
+    const o = { color: n.font ? n.font.c : 'rgb(0, 0, 0)', bg: (n.paint && n.paint.bg) || 'rgba(0, 0, 0, 0)', ff: n.font ? `"${n.font.ff}"` : 'serif', ...SHOWN() };
     if (n.runs) o.text = n.runs.map((r) => r.t).join('');
     if (n.icon) o.icon = n.icon.ref;
     dom[n.id] = o; (n.kids || []).forEach(v);
@@ -153,16 +155,24 @@ test('verifyScreen: an end-anchored frame growing leftwards with its content is 
 
 test('verifyScreen: a parent that grows and drags an end-aligned child is the root (no circular excuse)', () => {
   const inp = fixture();
+  inp.spec.kids[0].sz = ['FIXED', 'HUG']; // a FIXED-width card: its far edge can drag an end-aligned child
   shift(inp, 'n.0', [0, 0, 3, 0]);
   shift(inp, 'n.0.1', [3, 0, 0, 0]); // end-aligned icon follows the parent's far edge
   assert.deepEqual(rootIds(verifyScreen(inp)), ['n.0']);
+});
+
+test('R29: in a HUG row the icon moving 3px is the root; the row only hugs it (no cycle through the far edge)', () => {
+  const inp = fixture(); // n.0 HUG x HUG
+  shift(inp, 'n.0', [0, 0, 3, 0]);
+  shift(inp, 'n.0.1', [3, 0, 0, 0]);
+  assert.deepEqual(rootIds(verifyScreen(inp)), ['n.0.1']);
 });
 
 // ---- reviewer probes (fix round 1) ----
 const flat = (kids) => ({ id: 'n', kind: 'frame', rA: [0, 0, 400, 100], rB: [0, 0, 400, 100], kids });
 function probe(tree, mut, flags = [], spec = { id: 'n', t: 'F', kids: [] }) {
   const boxes = () => { const o = {}; const v = (n) => { o[n.id] = [...n.rA]; (n.kids || []).forEach(v); }; v(tree); return o; };
-  const dom = {}; const v = (n) => { dom[n.id] = { color: 'rgb(0, 0, 0)', bg: 'rgba(0, 0, 0, 0)', ...(n.kind === 'icon' ? { icon: 'svg' } : {}) }; (n.kids || []).forEach(v); }; v(tree);
+  const dom = {}; const v = (n) => { dom[n.id] = { color: 'rgb(0, 0, 0)', bg: 'rgba(0, 0, 0, 0)', ...SHOWN(), ...(n.kind === 'icon' ? { icon: 'svg' } : {}) }; (n.kids || []).forEach(v); }; v(tree);
   const proxy = { A: { boxes: boxes(), fontsMissing: [], dom, model: 'figma' }, B: { boxes: boxes(), fontsMissing: [], dom, model: 'figma' } };
   const layout = { A: { boxes: boxes(), model: 'none' }, B: { boxes: boxes(), model: 'none' } };
   mut(proxy, layout);
@@ -401,7 +411,7 @@ test('R20: shrink on an item drives width to height (wrap) but never height to w
 // boxes from rA at A and rB at B (probe() uses rA at both widths)
 function probeAB(tree, mut, flags = [], spec = { id: 'n', t: 'F', kids: [] }) {
   const boxes = (M) => { const o = {}; const v = (n) => { o[n.id] = [...(M === 'A' ? n.rA : n.rB)]; (n.kids || []).forEach(v); }; v(tree); return o; };
-  const dom = {}; const v = (n) => { dom[n.id] = { color: 'rgb(0, 0, 0)', bg: 'rgba(0, 0, 0, 0)' }; (n.kids || []).forEach(v); }; v(tree);
+  const dom = {}; const v = (n) => { dom[n.id] = { color: 'rgb(0, 0, 0)', bg: 'rgba(0, 0, 0, 0)', ...SHOWN() }; (n.kids || []).forEach(v); }; v(tree);
   const proxy = { A: { boxes: boxes('A'), fontsMissing: [], dom, model: 'figma' }, B: { boxes: boxes('B'), fontsMissing: [], dom, model: 'figma' } };
   const layout = { A: { boxes: boxes('A'), model: 'none' }, B: { boxes: boxes('B'), model: 'none' } };
   mut(proxy, layout);
@@ -889,3 +899,85 @@ test('pipeline: a system-ui fixture (font override) verifies end to end with bot
     assert.deepEqual(r.cropWidths, ['A', 'B']);
     assert.ok(r.modelDeltas.every((m) => m.explainedBy === 'figmaModel'));
   });
+
+// ---- Task 7 fix round (R29-R31) ----
+// a HUG column n.c (spec FIXED x, HUG y) of `n` FIXED items of height h, gap g, in a FIXED root
+function hugColumn(n, h = 16, g = 4) {
+  const kids = Array.from({ length: n }, (_, i) => ({ id: `n.c.${i}`, kind: 'frame', rA: [0, i * (h + g), 200, h], rB: [0, i * (h + g), 200, h] }));
+  const tree = flat([{ id: 'n.c', kind: 'frame', rA: [0, 0, 200, n * h + (n - 1) * g], rB: [0, 0, 200, n * h + (n - 1) * g], kids }]);
+  const spec = { id: 'n', t: 'F', sz: ['FIXED', 'FIXED'], lay: { d: 'V' }, kids: [
+    { id: 'n.c', t: 'F', sz: ['FIXED', 'HUG'], lay: { d: 'V', g }, kids: kids.map((k) => ({ id: k.id, t: 'F', sz: ['FIXED', 'FIXED'] })) }] };
+  return { tree, spec };
+}
+
+test('R29: gap 4 -> 7 in a HUG column of three is a root (the column\'s middle / far edge is no reference for its items)', () => {
+  const { tree, spec } = hugColumn(3);
+  const r = probe(tree, both((b) => { b['n.c'][3] += 6; b['n.c.1'][1] += 3; b['n.c.2'][1] += 6; }), [], spec);
+  assert.equal(r.pass, false);
+  assert.ok(unexplained(r).some((x) => x.id === 'n.c.1' && x.why.includes('y')), JSON.stringify(r.roots));
+});
+
+test('R29: five HUG rows each 0.4px taller in a HUG card (card 2px taller) is a root', () => {
+  const { tree, spec } = hugColumn(5, 36, 0);
+  spec.kids[0].kids.forEach((k) => { k.sz = ['FIXED', 'HUG']; k.lay = { d: 'H' }; });
+  const r = probe(tree, both((b) => { b['n.c'][3] += 2; for (let i = 0; i < 5; i++) { b[`n.c.${i}`][1] += 0.4 * i; b[`n.c.${i}`][3] += 0.4; } }), [], spec);
+  assert.equal(r.pass, false);
+  assert.ok(unexplained(r).length > 0, JSON.stringify(r.roots));
+});
+
+test('R29: an end-aligned item of a FIXED column still follows the column\'s far edge', () => {
+  const { tree, spec } = hugColumn(2);
+  spec.kids[0].sz = ['FIXED', 'FIXED'];
+  const r = probe(tree, both((b) => { b['n.c'][3] += 6; b['n.c.1'][1] += 6; }), [], spec);
+  assert.deepEqual(rootIds(r), ['n.c'], JSON.stringify(r.roots));
+});
+
+test('R30: a source stroke the proxy did not draw, or drew differently, is a stroke mismatch (per side and outline)', () => {
+  const inp = fixture();
+  const solid = { w: 1, style: 'solid', color: 'rgb(0, 0, 0)' }, none = { w: 0, style: 'none', color: 'rgb(0, 0, 0)' };
+  inp.screen.tree.kids[1].paint = { border: [none, none, solid, none] };
+  const d = (s) => { for (const P of [inp.proxy.A, inp.proxy.B]) P.dom['n.1'] = { ...P.dom['n.1'], stroke: s }; };
+  d(['none', 'none', '1px solid rgb(0, 0, 0)', 'none']);
+  assert.deepEqual(verifyScreen(inp).data, []);
+  d(['none', 'none', 'none', 'none']);
+  assert.deepEqual(verifyScreen(inp).data.map((x) => [x.id, x.kind, x.side]), [['n.1', 'stroke', 'bottom']]);
+  d(['none', 'none', '1px solid rgb(255, 0, 0)', 'none']);
+  assert.deepEqual(verifyScreen(inp).data.map((x) => [x.id, x.kind, x.side]), [['n.1', 'stroke', 'bottom']]);
+  // a stroke the source does not have
+  d(['none', 'none', '1px solid rgb(0, 0, 0)', '1px solid rgb(0, 0, 0)']);
+  assert.deepEqual(verifyScreen(inp).data.map((x) => [x.id, x.kind, x.side]), [['n.1', 'stroke', 'left']]);
+  d(['none', 'none', '1px solid rgb(0, 0, 0)', 'none']);
+  inp.screen.tree.kids[1].paint.outline = '2px solid rgb(0, 0, 255)';
+  assert.deepEqual(verifyScreen(inp).data.map((x) => [x.id, x.kind, x.side]), [['n.1', 'stroke', 'outline']]);
+});
+
+test('R31: effective opacity, visibility and display of the proxy DOM are compared with the source (visibility)', () => {
+  const inp = fixture();
+  assert.deepEqual(verifyScreen(inp).data, []);
+  inp.proxy.A.dom['n.0.1'] = { ...inp.proxy.A.dom['n.0.1'], op: 0 };
+  assert.deepEqual(verifyScreen(inp).data.map((x) => [x.id, x.kind]), [['n.0.1', 'visibility']]);
+  inp.proxy.A.dom['n.0.1'] = { ...inp.proxy.A.dom['n.0.1'], op: 1, vis: 'hidden' };
+  assert.deepEqual(verifyScreen(inp).data.map((x) => [x.id, x.kind]), [['n.0.1', 'visibility']]);
+  // effective opacity is the product over ancestors: a source card at 0.5 makes its children 0.5
+  inp.proxy.A.dom['n.0.1'] = { ...inp.proxy.A.dom['n.0.1'], vis: 'visible', op: 0.5 };
+  inp.proxy.A.dom['n.0'] = { ...inp.proxy.A.dom['n.0'], op: 0.5 }; inp.proxy.A.dom['n.0.0'] = { ...inp.proxy.A.dom['n.0.0'], op: 0.5 };
+  inp.screen.tree.kids[0].paint = { ...inp.screen.tree.kids[0].paint, opacity: 0.5 };
+  assert.deepEqual(verifyScreen(inp).data, []);
+  // a proxy DOM without these observations is never a silent pass
+  delete inp.proxy.A.dom['n.1'].op;
+  assert.ok(verifyScreen(inp).skipped.includes('visibility'));
+});
+
+test('R30b/R31: a 1px line on the edge of a text box and a removed solid box fail their own crop', { skip }, async () => {
+  const txt = '<div style="position:absolute;left:20px;top:40px;width:42px;height:18px;font:12px/18px sans-serif">Th 2</div>';
+  const line = '<div style="position:absolute;left:20px;top:57px;width:42px;height:1px;background:#000"></div>';
+  const R = [20, 40, 42, 18];
+  const d = await cropDiffDetail(browser, await shot(txt), R, await shot(txt + line), R);
+  assert.ok(fails(d), `bottom edge line: ${JSON.stringify(d)}`);
+  const bar = (extra = '') => `<div style="position:absolute;left:20px;top:20px;width:51px;height:4px;background:#3d7a60${extra}"></div>`;
+  const e = await cropDiffDetail(browser, await shot(bar()), [20, 20, 51, 4], await shot(bar(';box-shadow:inset 0 -1px 0 0 #fff')), [20, 20, 51, 4]);
+  assert.ok(fails(e), `white bottom stroke on a 4px bar: ${JSON.stringify(e)}`);
+  const box = '<div style="position:absolute;left:20px;top:20px;width:40px;height:20px;background:#333"></div>';
+  const g = await cropDiffDetail(browser, await shot(box), [20, 20, 40, 20], await shot(''), [20, 20, 40, 20]);
+  assert.ok(fails(g), `removed solid box: ${JSON.stringify(g)}`);
+});

@@ -29,10 +29,7 @@ const run = async (file, opts = {}) => {
   return runMutations(browser, screen, inferred, fm, { proxy: { webFonts: false }, ...opts });
 };
 
-// Known verifier hole found by this check (Task 7 report, pending a controller ruling): a leaf hidden with opacity 0
-// keeps its box, its computed background colour is unchanged and a uniformly filled crop window has no ink, so
-// nothing fails. capture-basic's first visible leaf is such a box. It is excluded below and asserted in a todo test.
-const KNOWN_HOLES = new Set(['hideLeaf']);
+const KNOWN_HOLES = new Set();
 let basic;
 const basicRun = async () => (basic ??= await run('capture-basic.html'));
 
@@ -58,10 +55,29 @@ test('runMutations on capture-basic: every kind is reported, each caught or skip
   assert.equal(r.results.find((x) => x.kind === 'swapIcon').skipped, 'no candidate', 'one icon only: nothing to swap with');
 });
 
-test('runMutations on capture-basic: hideLeaf (opacity 0 on a filled box) is caught', { skip, todo: 'verifier hole, see the Task 7 report' }, async () => {
+test('R31: runMutations on capture-basic: hideLeaf (opacity 0 on a pale filled box) is caught by the visibility check', { skip }, async () => {
   const r = await basicRun();
-  assert.equal(r.results.find((x) => x.kind === 'hideLeaf').caught, true);
+  const h = r.results.find((x) => x.kind === 'hideLeaf');
+  assert.equal(h.caught, true, JSON.stringify(h));
+  assert.ok(h.by.includes('data'), JSON.stringify(h));
   assert.equal(r.allCaught, true);
+});
+
+// Task 7 holes on purpose-built targets (mutate-holes.html): n.1 HUG column of three texts (gap 4), n.3 card of five
+// HUG rows, n.5 4px bar, n.7 42x18 frame around a text, n.9 244x15 row around a text, n.11 pale 80x40 box
+test('R29-R31: the Task 7 holes are caught (HUG column gap, HUG-row card drift, edge strokes, hidden pale box)', { skip }, async () => {
+  const targets = { gap: 'n.1', drift: 'n.3', thinStrokeSmall: 'n.5', thinStroke4000: 'n.9', hideLeaf: 'n.11' };
+  const r = await run('mutate-holes.html', { kinds: Object.keys(targets), targets });
+  assert.equal(r.baseline.pass, true, JSON.stringify(r.baseline));
+  assert.deepEqual(r.results.map((x) => x.target), Object.values(targets));
+  for (const x of r.results) assert.equal(x.caught, true, JSON.stringify(x));
+  const by = Object.fromEntries(r.results.map((x) => [x.kind, x.by]));
+  assert.ok(by.gap.includes('root') && by.drift.includes('root'), JSON.stringify(by));
+  assert.ok(by.thinStrokeSmall.includes('data') && by.thinStroke4000.includes('data'), JSON.stringify(by));
+  assert.ok(by.thinStrokeSmall.includes('crop') && by.thinStroke4000.includes('crop'), JSON.stringify(by));
+  const t = await run('mutate-holes.html', { kinds: ['thinStrokeSmall'], targets: { thinStrokeSmall: 'n.7' } });
+  assert.equal(t.results[0].caught, true, JSON.stringify(t.results[0]));
+  assert.ok(t.results[0].by.includes('crop') && t.results[0].by.includes('data'), JSON.stringify(t.results[0]));
 });
 
 test('runMutations: a screen without icons skips swapIcon and does not throw', { skip }, async () => {

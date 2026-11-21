@@ -6,6 +6,8 @@
 //   inferred = inferScreen(screen) ({ spec, flags })
 //   fontMap  = the FontMap given to applyFigmaModel / buildProxyHtml
 //   opts.kinds  = subset of KINDS, in that order (default all)
+//   opts.targets = { kind: node id } overrides the generic choice (tests on purpose-built fixtures); an id that is not
+//                  in the spec, or a swapIcon target without another icon, is 'no candidate'
 //   opts.proxy  = extra buildProxyHtml options (e.g. { webFonts: false })
 //   opts.verify = verifyScreenWithImages options (tolerances; a loose verifier must come out allCaught false)
 // Pipeline per run (as Task 6/8): mutated inferred spec -> layout proxy (unmodelled, mark 'none') and
@@ -133,6 +135,14 @@ function choose(kind, spec, src) {
     default:
       throw new Error(`runMutations: unknown kind ${kind}`);
   }
+}
+
+function pickId(kind, spec, id) {
+  const e = find(spec, id);
+  if (!e || (!e.parent && /^(move|delete|hide|thin)/.test(kind))) return null;
+  if (kind !== 'swapIcon') return e;
+  const other = walk(spec).find((o) => o.n.t === 'V' && iconKey(o.n.icon) && iconKey(o.n.icon) !== iconKey(e.n.icon));
+  return other && iconKey(e.n.icon) ? { ...e, other: other.n } : null;
 }
 
 // ---------------- mutations (on a clone of the inferred spec) ----------------
@@ -264,7 +274,7 @@ export async function runMutations(browser, screen, inferred, fontMap, opts = {}
   const before = new Set(failures(base.report).map((f) => f.key));
   const results = [];
   for (const kind of kinds) {
-    const pick = choose(kind, inferred.spec, src);
+    const pick = opts.targets && opts.targets[kind] ? pickId(kind, inferred.spec, opts.targets[kind]) : choose(kind, inferred.spec, src);
     if (!pick) { results.push({ kind, target: null, caught: null, by: [], skipped: 'no candidate' }); continue; }
     const spec = clone(inferred.spec);
     mutate(kind, spec, pick, base.layout);

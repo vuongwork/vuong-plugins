@@ -180,3 +180,22 @@ test('renderProxy reports families that did not render (fontsMissing)', { skip }
   const { fontsMissing } = await renderProxy(browser, h, 300);
   assert.ok(fontsMissing.includes('NoSuchFontVD'), JSON.stringify(fontsMissing));
 });
+
+test('R30/R31: dom reports the rendered strokes per side (shadow or overlay), the outline and the effective opacity', { skip }, async () => {
+  const side = (w, style, color) => ({ w, style, color });
+  const off = side(0, 'none', 'rgb(0, 0, 0)');
+  const spec = { id: 'n', t: 'F', w: 200, h: 100, sz: ['FIXED', 'FIXED'], paint: { opacity: 0.5 }, lay: { d: 'V', p: [0, 0, 0, 0], g: 0, pa: 'S', ca: 'S' }, kids: [
+    { id: 'n.0', t: 'F', w: 50, h: 20, sz: ['FIXED', 'FIXED'], paint: { border: [off, off, side(1, 'solid', 'rgb(255, 0, 0)'), side(2, 'solid', 'rgb(0, 0, 255)')], shadow: 'rgba(0, 0, 0, 0.2) 0px 2px 4px 0px' } },
+    { id: 'n.1', t: 'F', w: 50, h: 20, sz: ['FIXED', 'FIXED'], paint: { border: [side(1, 'dashed', 'rgb(0, 128, 0)'), off, off, off], outline: '2px solid rgb(0, 0, 0)', opacity: 0.5 } },
+    { id: 'n.2', t: 'F', w: 50, h: 20, sz: ['FIXED', 'FIXED'] },
+  ] };
+  const r = await renderProxy(browser, html({ spec }), 200);
+  assert.deepEqual(r.dom['n.0'].stroke, ['none', 'none', '1px solid rgb(255, 0, 0)', '2px solid rgb(0, 0, 255)']);
+  assert.equal(r.dom['n.1'].stroke[0], '1px dashed rgb(0, 128, 0)'); // overlay: the ::before border, other sides 0px none
+  assert.ok(r.dom['n.1'].stroke.slice(1).every((x) => /^0px none /.test(x)), JSON.stringify(r.dom['n.1'].stroke));
+  assert.equal(r.dom['n.1'].outline, '2px solid rgb(0, 0, 0)');
+  assert.deepEqual(r.dom['n.2'].stroke, ['none', 'none', 'none', 'none']);
+  assert.equal(r.dom['n.2'].outline, 'none');
+  assert.equal(r.dom.n.op, 0.5); assert.equal(r.dom['n.0'].op, 0.5); assert.equal(r.dom['n.1'].op, 0.25);
+  assert.equal(r.dom['n.2'].vis, 'visible'); assert.notEqual(r.dom['n.2'].disp, 'none');
+});

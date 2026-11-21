@@ -6,9 +6,12 @@
 //    image B, and image B's window may move up to `shift` CSS px (default 1) on each axis, in whole device pixels and
 //    then quarter-pixel (bilinear) steps around the best one, never beyond `shift` in total: the best match counts. Both windows are box-blurred 3x3 first (opts.blur, default on) so glyph stems that fall
 //    differently on the pixel grid do not count. Pixels outside an image are white.
+//    Both windows are padded by the search radius on every side (R30b), so a line on the box edge cannot be slid out.
 //    Result { diff, ink, ratio }: diff = differing device pixels at the best offset; ink = pixels that differ from
-//    their window's background (its most common colour) in either window; ratio = diff / ink (0 when there is no
-//    ink). Normalising by ink, not by area, keeps a removed thin mark from being diluted by a large empty box.
+//    their window's background in either window, the background being the most common colour of the padding ring,
+//    i.e. the parent's background just outside the box (R31: a uniformly filled box is ink); ratio = diff / ink (0
+//    when there is no ink). Normalising by ink, not by area, keeps a removed thin mark from being diluted by a large
+//    empty box.
 //  - cropDiff: the ratio only.
 //  - pixelDiff: whole images, top-left aligned; area covered by only one of the two images counts as different.
 //    Reference only.
@@ -102,9 +105,11 @@ async function compareInPage({ imgs, jobs, dsf, shift, threshold, blurOn }) {
   };
   const maxDelta = 35215 * threshold * threshold;
   // most common colour of a window, as a 1-pixel RGBA array
-  const mode = (a) => {
+  // (inRing(i) for pixel index i: only those pixels count, e.g. the padding ring outside the box)
+  const mode = (a, inRing) => {
     const m = new Map(); let best = 0, key = 0xffffff;
     for (let k = 0; k < a.length; k += 4) {
+      if (inRing && !inRing(k / 4)) continue;
       const c = (a[k] << 16) | (a[k + 1] << 8) | a[k + 2]; const n = (m.get(c) || 0) + 1; m.set(c, n);
       if (n > best) { best = n; key = c; }
     }
@@ -140,13 +145,18 @@ async function compareInPage({ imgs, jobs, dsf, shift, threshold, blurOn }) {
       return (count(win(A, 0, 0, w, h), win(B, 0, 0, w, h), w, h) + extra) / area;
     }
     const A = dec[j.a], B = dec[j.b];
-    const ax = Math.round(j.ra[0] * dsf), ay = Math.round(j.ra[1] * dsf);
-    const w = Math.max(1, Math.round(j.ra[2] * dsf)), h = Math.max(1, Math.round(j.ra[3] * dsf));
-    const bx = Math.round(j.rb[0] * dsf), by = Math.round(j.rb[1] * dsf);
-    const s = Math.floor(shift * dsf + 1e-9);
+    // R30b: both windows are padded by the search radius p on every side, so sliding the proxy window cannot push
+    // a line on the box edge out of it. R31: ink is measured against the background of that padding ring (the
+    // parent's background just outside the box), so a uniformly filled box is ink, not background.
+    const s = Math.floor(shift * dsf + 1e-9), p = s;
+    const bw0 = Math.max(1, Math.round(j.ra[2] * dsf)), bh0 = Math.max(1, Math.round(j.ra[3] * dsf));
+    const ax = Math.round(j.ra[0] * dsf) - p, ay = Math.round(j.ra[1] * dsf) - p;
+    const w = bw0 + 2 * p, h = bh0 + 2 * p;
+    const bx = Math.round(j.rb[0] * dsf) - p, by = Math.round(j.rb[1] * dsf) - p;
+    const ring = p > 0 ? (i) => { const x = i % w, y = (i / w) | 0; return x < p || y < p || x >= p + bw0 || y >= p + bh0; } : null;
     const BL = blurOn ? (x) => blur(x, w, h) : (x) => x;
     const rawA = win(A, ax, ay, w, h);
-    const wa = BL(rawA), bgA = mode(rawA);
+    const wa = BL(rawA), bgA = mode(rawA, ring);
     let best = Infinity, bw = null, bdx = 0, bdy = 0;
     const tryAt = (dx, dy) => {
       const wb = Number.isInteger(dx) && Number.isInteger(dy) ? win(B, bx + dx, by + dy, w, h) : winF(B, bx + dx, by + dy, w, h);
@@ -160,7 +170,7 @@ async function compareInPage({ imgs, jobs, dsf, shift, threshold, blurOn }) {
       if ((!fx && !fy) || Math.abs(ix + fx) > s || Math.abs(iy + fy) > s) continue;
       tryAt(ix + fx, iy + fy);
     }
-    const wbB = BL(bw), bgB = mode(bw);
+    const wbB = BL(bw), bgB = mode(bw, ring);
     let ink = 0;
     for (let k = 0; k < w * h * 4; k += 4) if (delta(wa, bgA, k, 0, false) > maxDelta || delta(wbB, bgB, k, 0, false) > maxDelta) ink++;
     // peak: most differing pixels inside any P x P device-pixel square (P = 8 CSS px). A removed or changed mark is a

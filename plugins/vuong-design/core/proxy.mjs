@@ -23,7 +23,9 @@
 //  - fonts: every family goes through fontMap.substitute(firstFamily(ff)), i.e. the font Figma will really use.
 // Boxes are [x, y, w, h] relative to the root's top-left, rounded to 0.01, measured with transforms off — the same
 // convention as capture's rA/rB. The PNG keeps transforms. `dom` is what the page rendered per node id: { text? (leaf
-// text, <br> as a space), icon? (<use> ref or 'svg'), color, bg, ff } — computed values, for verify's content checks.
+// text, <br> as a space), icon? (<use> ref or 'svg'), color, bg, ff, op (effective opacity, product up to the page),
+// vis, disp, stroke ([t, r, b, l] 'Wpx style colour' | 'none', read back from how the page drew it), outline } —
+// computed values, for verify's content checks.
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -78,7 +80,9 @@ export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
   };
 
   // strokes: never in layout. Solid sides -> inset box-shadows, anything else -> ::before overlay with a real border.
-  const strokeCss = (p, st, cls) => {
+  // The page records how it drew them (data-ss: sides drawn as the last inset shadows, in t r b l order; data-sb: a
+  // ::before overlay) so renderProxy can read the rendered stroke back for verify (R30).
+  const strokeCss = (p, st, cls, data) => {
     const b = p.border;
     const shadows = p.shadow ? [p.shadow] : [];
     if (Array.isArray(b) && b.some((s) => s && s.w > 0)) {
@@ -89,8 +93,9 @@ export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
         if (r) shadows.push(`inset ${px(-r.w)} 0 0 0 ${r.color}`);
         if (bt) shadows.push(`inset 0 ${px(-bt.w)} 0 0 ${bt.color}`);
         if (l) shadows.push(`inset ${px(l.w)} 0 0 0 ${l.color}`);
+        data.push(`data-ss="${['t', 'r', 'b', 'l'].filter((x, i) => sides[i]).join('')}"`);
       } else {
-        const k = `s${rules.length}`; cls.push(k);
+        const k = `s${rules.length}`; cls.push(k); data.push('data-sb');
         st.push('isolation:isolate');
         rules.push(`.${k}::before{content:"";position:absolute;inset:0;pointer-events:none;box-sizing:border-box;border-radius:inherit;z-index:-1;` +
           `border-width:${sides.map((s) => (s ? px(s.w) : '0')).join(' ')};border-style:${sides.map((s) => (s ? s.style : 'none')).join(' ')};` +
@@ -154,7 +159,7 @@ export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
       if (p.bg) st.push(`background-color:${p.bg}`);
       if (p.bgImage) st.push(`background-image:${p.bgImage}`, 'background-size:cover', 'background-position:center');
       if (p.radius) st.push(`border-radius:${p.radius.join(' ')}`);
-      strokeCss(p, st, cls);
+      strokeCss(p, st, cls, data);
       if (p.clip) st.push('overflow:hidden');
       if (p.filter) st.push(`filter:${p.filter}`);
       if (p.clipPath) st.push(`clip-path:${p.clipPath}`);
@@ -296,6 +301,26 @@ export async function renderProxy(browser, html, width, opts = {}) {
           const rec = (x) => { for (const c of x.childNodes) { if (c.nodeType === 3) t += c.textContent; else if (c.tagName === 'BR') t += ' '; else if (c.nodeType === 1) rec(c); } };
           rec(el); if (t) o.text = t;
         }
+        // R31: effective opacity (product up to the page), visibility, display
+        let op = 1; for (let x = el; x && x !== document.body; x = x.parentElement) op *= Number(getComputedStyle(x).opacity);
+        o.op = Math.round(op * 1000) / 1000; o.vis = cs.visibility; o.disp = cs.display;
+        // R30: the stroke as rendered, per side t r b l: the last inset shadows (data-ss) or the ::before border
+        // (data-sb); 'Wpx style colour' or 'none'
+        const stroke = ['none', 'none', 'none', 'none'];
+        if (el.dataset.ss != null) {
+          const layers = cs.boxShadow === 'none' ? [] : cs.boxShadow.split(/,(?![^(]*\))/).map((x) => x.trim());
+          const sides = [...el.dataset.ss], mine = layers.slice(layers.length - sides.length);
+          sides.forEach((sd, k) => {
+            const L = mine[k] || '', color = (/rgba?\([^)]*\)/.exec(L) || ['transparent'])[0];
+            const nums = (L.replace(/rgba?\([^)]*\)/, '').match(/-?[\d.]+px/g) || []).map(parseFloat);
+            stroke['trbl'.indexOf(sd)] = `${Math.abs(sd === 't' || sd === 'b' ? nums[1] || 0 : nums[0] || 0)}px solid ${color}`;
+          });
+        } else if (el.dataset.sb != null) {
+          const b = getComputedStyle(el, '::before');
+          ['Top', 'Right', 'Bottom', 'Left'].forEach((S, i) => { stroke[i] = `${parseFloat(b[`border${S}Width`]) || 0}px ${b[`border${S}Style`]} ${b[`border${S}Color`]}`; });
+        }
+        o.stroke = stroke;
+        o.outline = cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0 ? `${cs.outlineWidth} ${cs.outlineStyle} ${cs.outlineColor}` : 'none';
         dom[el.dataset.id] = o;
       }
       document.getElementById('__vd_nt').remove();

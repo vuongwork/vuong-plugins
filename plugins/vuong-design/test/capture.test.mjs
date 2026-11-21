@@ -217,3 +217,16 @@ test('breakpoint: root inside a wider page is not viewport-bound -> full delta, 
     assert.match(s.widen.reason, /viewport/);
   });
 });
+
+test('basic: flex intent recorded on flex items and containers', { skip }, () => {
+  const nodes = walk(basic.screens[0].tree);
+  const row = nodes.find((n) => n.cls === 'row');
+  assert.deepEqual(row.flexBox, { jc: 'normal', fd: 'row', ov: false });
+  const item = row.kids[0];
+  assert.equal(item.flex.g, 1);
+  assert.equal(item.flex.s, 1);
+  assert.equal(item.flex.b, '0%');
+  assert.equal(item.flex.ax, 'x');
+  assert.equal(item.flex.n, item.rA[2]);
+  assert.equal(nodes.find((n) => n.cls === 'hello').flex, undefined);
+});

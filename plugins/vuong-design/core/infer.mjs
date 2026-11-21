@@ -1,6 +1,7 @@
 // Infer: turn a captured Screen (boxes measured at widths A and B) into a tree that uses only Figma auto-layout
 // concepts (spec §7). Layout is decided from geometry alone, never from display/flex/grid/margin. Computed style is
-// read only for paint, font and the raster fallback. Behaviours auto layout cannot express are reported as flags.
+// read only for paint, font, the raster fallback and flex intent (flags only). Behaviours auto layout cannot express
+// are reported as flags; overflowing or scrolling content is expressible in Figma and is never flagged.
 //
 // SNode = { id, t: 'F'|'T'|'V'|'I', w, h, sz: [x, y] of 'FILL'|'HUG'|'FIXED',
 //   lay?: { d: 'H'|'V', wrap?, cg?, p: [t, r, b, l], g? | sb?, pa: 'S'|'C'|'E', ca: 'S'|'C'|'E'|'B' },
@@ -43,9 +44,10 @@ const isText = (L) => isTextSrc(L.src);
 const RASTER_BG = /url\(|conic-gradient|repeating-|image-set\(|cross-fade\(|element\(/;
 
 // LNode: working node. A/B = box at width A/B. A node missing at B is treated as unchanged.
-function lnode(n) {
-  return { id: n.id, src: n, A: n.rA, B: n.rB || n.rA, kids: (n.kids || []).map(lnode) };
+function lnode(n, par = null) {
+  return { id: n.id, src: n, par, A: n.rA, B: n.rB || n.rA, kids: (n.kids || []).map((k) => lnode(k, n)) };
 }
+const SPACE_AROUND = /^(space-around|space-evenly)$/;
 
 export function inferScreen(screen) {
   const stats = { grouping: 0, pushSplit: 0, spaceBetween: 0, absOverlap: 0, absOverflow: 0, absTransform: 0, wrappers: 0, wrapRows: 0 };
@@ -176,10 +178,16 @@ export function inferScreen(screen) {
     if (p.clipPath) why.push(`clip-path: ${p.clipPath}`);
     if (p.bgImage && RASTER_BG.test(p.bgImage)) why.push(`background-image: ${p.bgImage}`);
     if (why.length) flag(n.id, 'raster', why.join('; '));
+    // shrink: a flex item squeezed below its unshrunk size while its container does not overflow
+    const fx = n.flex;
+    if (fx && fx.s > 0 && fx.n != null && !(L.par && L.par.flexBox && L.par.flexBox.ov)) {
+      const size = fx.ax === 'y' ? L.A[3] : L.A[2];
+      if (fx.n - size > 1) flag(n.id, 'shrink', `flex-shrink ${fx.s}: ${r2(size)}px instead of ${r2(fx.n)}px`);
+    }
+    const fb = n.flexBox;
+    if (fb && SPACE_AROUND.test(fb.jc) && (n.kids || []).length >= 2) flag(n.id, 'spaceAround', `justify-content: ${fb.jc}`);
     if (isTextSrc(n)) {
       sp.t = 'T'; sp.font = n.font; sp.runs = n.runs;
-      const tw = n.tw && n.tw[0];
-      if (tw != null && tw > L.A[2] + 1) flag(n.id, 'shrink', `text squeezed: content ${r2(tw)}px in a ${r2(L.A[2])}px box`);
     } else if (n.kind === 'icon') {
       sp.t = 'V'; sp.icon = n.icon; if (n.font) sp.font = n.font;
     } else if (n.kind === 'image') {
@@ -288,12 +296,6 @@ export function inferScreen(screen) {
         items = plan.items;
         const first = items[0], last = items[items.length - 1];
         const padS = first.A[P] - L.A[P], padE = L.A[P] + L.A[Z] - (last.A[P] + last.A[Z]);
-        if (plan.mode === 'sb') {
-          const padSB = first.B[P] - L.B[P], padEB = L.B[P] + L.B[Z] - (last.B[P] + last.B[Z]);
-          if (padSB - padS > GROW || padEB - padE > GROW) {
-            flag(L.id, 'spaceAround', `free space also grows at the edges (start ${r2(padS)}→${r2(padSB)}, end ${r2(padE)}→${r2(padEB)})`);
-          }
-        }
         // counter axis
         const cinfo = items.map((it) => {
           const lA = it.A[C] - L.A[C], rA = L.A[C] + L.A[CZ] - (it.A[C] + it.A[CZ]);
@@ -402,16 +404,13 @@ export function inferScreen(screen) {
           // unequal at A, equal at B: the larger ones hit a content floor → Figma minWidth
           const mn = Math.min(...fills.map(([f]) => f.A[Z]));
           for (const [f, cs] of fills) if (f.A[Z] > mn + 1) cs.min = r2(f.A[Z]);
-        } else if (!(eqA && eqB)) {
-          const detail = `FILL siblings sized ${fills.map(([f]) => r2(f.A[Z])).join('/')} at A, ${fills.map(([f]) => r2(f.B[Z])).join('/')} at B`;
-          for (const [f] of fills) flag(f.id, 'weightedFill', detail);
         }
       }
-      // content spills past the frame's primary end → frame squeezed below its content (clipped or not)
-      if (L.src && !lay.wrap) {
-        const over = Math.max(...items.map((it) => it.A[P] + it.A[Z])) - (L.A[P] + L.A[Z]);
-        const clipped = L.src.paint && L.src.paint.clip ? ', clipped' : '';
-        if (over > 1) flag(L.id, 'shrink', `content overflows the frame by ${r2(over)}px${clipped}`);
+      // weightedFill: FILL siblings whose flex-grow differs (Figma FILL shares free space equally)
+      const grows = fills.filter(([f]) => f.src && f.src.flex);
+      if (grows.length > 1 && new Set(grows.map(([f]) => f.src.flex.g)).size > 1) {
+        const detail = `flex-grow ${grows.map(([f]) => f.src.flex.g).join('/')}`;
+        for (const [f] of grows) flag(f.id, 'weightedFill', detail);
       }
       // HUG is valid on an axis when frame size == content bbox + padding at BOTH widths
       const cb = union(items.map((i) => i.A)), cbB = union(items.map((i) => i.B));

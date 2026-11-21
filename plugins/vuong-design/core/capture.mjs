@@ -287,8 +287,41 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
       return c;
     };
 
+    // Flex intent (read for flags only, never for layout). Items: {g, s, b, ax, n?}; n = main size with shrinking
+    // disabled, measured only when some item may shrink. Containers: {jc, fd, ov}; ov = items overflow the main axis.
+    const flexItem = new WeakMap();
+    const flexItemsOf = (el) => [...el.children].flatMap((c) => {
+      const s = getComputedStyle(c);
+      if (s.display === 'contents') return flexItemsOf(c);
+      return s.display === 'none' || s.position === 'absolute' || s.position === 'fixed' ? [] : [c];
+    });
+    const flexContainer = (el, cs) => {
+      const ax = /column/.test(cs.flexDirection) ? 'y' : 'x';
+      const dim = ax === 'x' ? 'width' : 'height';
+      const items = flexItemsOf(el).map((c) => {
+        const s = getComputedStyle(c);
+        return { c, g: Number(s.flexGrow), s: Number(s.flexShrink), b: s.flexBasis, ax };
+      });
+      const B = el.getBoundingClientRect(); const pd = pad(cs);
+      const end = ax === 'x' ? B.right - bw(cs, 'Right') - pd[1] : B.bottom - bw(cs, 'Bottom') - pd[2];
+      const ov = items.some((i) => { const r = i.c.getBoundingClientRect(); return (ax === 'x' ? r.right : r.bottom) > end + 1; });
+      if (items.some((i) => i.s > 0)) {
+        const prev = items.map((i) => [i.c.style.getPropertyValue('flex-shrink'), i.c.style.getPropertyPriority('flex-shrink')]);
+        items.forEach((i) => i.c.style.setProperty('flex-shrink', '0', 'important'));
+        items.forEach((i) => { i.n = rnd(i.c.getBoundingClientRect()[dim]); });
+        items.forEach((i, k) => { if (prev[k][0]) i.c.style.setProperty('flex-shrink', prev[k][0], prev[k][1]); else i.c.style.removeProperty('flex-shrink'); });
+      }
+      for (const { c, ...f } of items) flexItem.set(c, f);
+      return { jc: cs.justifyContent, fd: cs.flexDirection, ov };
+    };
+
     // Returns a node, null, or (for a visibility:hidden element) an array of its visible descendants' nodes.
     const walk = (el, id, clip, inHidden = false) => {
+      const res = walkEl(el, id, clip, inHidden);
+      if (res && !Array.isArray(res) && flexItem.has(el)) res.flex = flexItem.get(el);
+      return res;
+    };
+    const walkEl = (el, id, clip, inHidden) => {
       const cs = getComputedStyle(el);
       if (cs.display === 'none') { excl(id, 'display:none'); return null; }
       const b = el.getBoundingClientRect();
@@ -346,6 +379,7 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
         return { ...base(id, kind, tag, cls, r, p), kids: [textNode(id + '.t', 'text', '#text', '', el, cs, tb, {}, lines, rb ? rb.tw : tb[2], id)] };
       }
       const n = base(id, kind, tag, cls, r, p);
+      if (/flex/.test(cs.display)) n.flexBox = flexContainer(el, cs);
       n.kids = [];
       kidsInto(n.kids, el, cs, id, clipFor(el, cs, b, clip));
       if (!n.kids.length) {
@@ -435,6 +469,8 @@ function mergeNode(a, mapB) {
   if (a.icon) n.icon = a.icon;
   if (a.src !== undefined) { n.src = a.src; n.fit = a.fit; }
   if (a.approx) n.approx = true;
+  if (a.flex) n.flex = a.flex;
+  if (a.flexBox) n.flexBox = a.flexBox;
   if (a.kids) n.kids = a.kids.map((k) => mergeNode(k, mapB));
   return n;
 }

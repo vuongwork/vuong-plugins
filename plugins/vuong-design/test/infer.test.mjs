@@ -40,7 +40,7 @@ function ctx(screen) {
   return { ...res, inodes, snodes, byId, node, box };
 }
 
-const FIXTURES = ['row-gap', 'push', 'proximity', 'overlap', 'overflow', 'sizing', 'text', 'flags', 'baseline', 'raster'];
+const FIXTURES = ['row-gap', 'push', 'proximity', 'overlap', 'overflow', 'sizing', 'text', 'flags', 'baseline', 'raster', 'noflags'];
 const C = {};
 before(async () => {
   if (skip) return;
@@ -123,6 +123,16 @@ test('flags: shrink, weightedFill and spaceAround on the right nodes', { skip },
   assert.ok(has('weightedFill', 'w1'), JSON.stringify(c.flags));
   assert.ok(has('spaceAround', 'r3'), JSON.stringify(c.flags));
   for (const f of c.flags) assert.equal(typeof f.detail, 'string');
+  const got = c.flags.map((f) => `${f.id} ${f.kind}`).sort();
+  const want = [['sq', 'shrink'], ['w2', 'weightedFill'], ['w1', 'weightedFill'], ['r3', 'spaceAround']]
+    .map(([cls, kind]) => `${c.node(cls).id} ${kind}`).sort();
+  assert.deepEqual(got, want);
+});
+
+test('no flags on fixtures without unsupported behaviour (scroll row, fixed nowrap text, fitting items)', { skip }, () => {
+  for (const f of FIXTURES.filter((x) => x !== 'flags' && x !== 'raster')) {
+    assert.deepEqual(C[f].flags, [], `${f}: ${JSON.stringify(C[f].flags)}`);
+  }
 });
 
 test('baseline: 22px title + 12.5px subtitle on one baseline → ca B, no wrapper', { skip }, () => {
@@ -140,6 +150,7 @@ test('raster: filter blur and conic-gradient are flagged, linear-gradient is not
   assert.ok(raster('blur'));
   assert.ok(raster('cone'));
   assert.ok(!raster('lin'));
+  assert.deepEqual(c.flags.map((f) => f.kind), ['raster', 'raster']);
 });
 
 // ---- invariants over every fixture ----

@@ -60,16 +60,28 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
 
   // 0. media query texts from every readable stylesheet; unreadable ones are reported by href
   const mediaTexts = []; const unreadable = [];
-  const scanRules = (rules) => {
+  // web fonts for the proxy (Task 5): font-host stylesheets by href, @font-face rules with absolute urls
+  const FONT_HOST = /^https?:\/\/(fonts\.googleapis\.com|fonts\.bunny\.net|use\.typekit\.net|fonts\.cdnfonts\.com|api\.fontshare\.com)\//;
+  const fontCss = { links: [], faces: [] };
+  const fontLink = (href) => { if (href && FONT_HOST.test(href) && !fontCss.links.includes(href)) fontCss.links.push(href); };
+  const scanRules = (rules, base) => {
     for (const r of rules) {
       if (r instanceof CSSMediaRule) mediaTexts.push(r.media.mediaText);
-      if (r instanceof CSSImportRule) { if (r.media) mediaTexts.push(r.media.mediaText); if (r.styleSheet) readSheet(r.styleSheet); }
-      if (r.cssRules) scanRules(r.cssRules);
+      if (r instanceof CSSImportRule) {
+        if (r.media) mediaTexts.push(r.media.mediaText);
+        fontLink(new URL(r.href, base).href);
+        if (r.styleSheet) readSheet(r.styleSheet);
+      }
+      if (r instanceof CSSFontFaceRule) {
+        fontCss.faces.push(r.cssText.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/g, (m, q, u) => `url("${new URL(u, base).href}")`));
+      }
+      if (r.cssRules) scanRules(r.cssRules, base);
     }
   };
   const readSheet = (s) => {
     if (s.media && s.media.mediaText) mediaTexts.push(s.media.mediaText);
-    try { scanRules(s.cssRules); } catch { unreadable.push(s.href || '(inline)'); }
+    fontLink(s.href);
+    try { scanRules(s.cssRules, s.href || document.baseURI); } catch { unreadable.push(s.href || '(inline)'); }
   };
   for (const s of document.styleSheets) readSheet(s);
 
@@ -225,7 +237,7 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
   const screens = roots.map((root) => {
     const R = root.getBoundingClientRect();
     const rel = (b) => [rnd(b.left - R.left), rnd(b.top - R.top), rnd(b.width), rnd(b.height)];
-    const excluded = []; const fonts = new Set(); const fontLists = new Set();
+    const excluded = []; const fonts = new Set(); const fontLists = new Set(); const iconRefs = new Set();
     const excl = (path, reason) => excluded.push({ path, reason });
     const useFont = (f) => { fonts.add(primary(f.ff)); fontLists.add(f.ff); return f; };
 
@@ -344,7 +356,7 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
         const u = el.querySelector('use');
         const href = u ? (u.getAttribute('href') || u.getAttribute('xlink:href') || '') : '';
         const icon = { ref: href ? href.replace(/^.*#/, '') : null, color: cs.color, fill: cs.fill, stroke: cs.stroke, sw: cs.strokeWidth };
-        if (!u) icon.svg = el.outerHTML;
+        if (!u) icon.svg = el.outerHTML; else if (icon.ref) iconRefs.add(icon.ref);
         return { ...base(id, 'icon', tag, cls, r, p), icon };
       }
       if (tag === 'img' || tag === 'video' || tag === 'canvas' || tag === 'iframe' || tag === 'picture') {
@@ -434,9 +446,12 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
       const fams = list.split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
       fontsRendered[list] = fams.find((f) => GENERIC.test(f) || renders(f)) || fams[fams.length - 1] || '';
     }
-    return { W: rnd(R.width), H: rnd(R.height), tree, excluded, fonts: [...fonts], fontsRendered, name };
+    // markup of every <symbol> (or other element) an icon of this screen references, for the proxy's sprite
+    const svgDefs = {};
+    for (const ref of iconRefs) { const d = document.getElementById(ref); if (d) svgDefs[ref] = d.outerHTML; }
+    return { W: rnd(R.width), H: rnd(R.height), tree, excluded, fonts: [...fonts], fontsRendered, name, svgDefs };
   });
-  return { count: roots.length, screens, mediaTexts, unreadable };
+  return { count: roots.length, screens, mediaTexts, unreadable, fontCss };
 }
 
 // ---------------- node side ----------------
@@ -559,6 +574,7 @@ export async function captureScreens(htmlPath, opts = {}) {
       return {
         id, name: sA.name || id, W: [r2(sA.W), r2(sB.W)], H: [r2(sA.H), r2(sB.H)], widen: widens[i],
         tree: mergeNode(sA.tree, mapB), excluded, fonts: [...new Set([...sA.fonts, ...sB.fonts])], fontsRendered: { ...sA.fontsRendered, ...sB.fontsRendered },
+        svgDefs: { ...sA.svgDefs, ...sB.svgDefs }, fontCss: A.fontCss,
       };
     });
     return { screens };

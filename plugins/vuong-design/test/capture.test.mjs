@@ -246,3 +246,17 @@ test('failed @font-face load: fontsRendered maps the list to serif and the model
   assert.ok(substitutions.some((s) => s.from === 'Ghost' && s.to === 'Inter' && s.reason === 'not-loaded'), JSON.stringify(substitutions));
   assert.ok(flags.some((f) => f.kind === 'fontSubstitution'));
 });
+
+test('basic: the screen carries the <symbol> markup its icons reference (svgDefs)', { skip }, () => {
+  const s = basic.screens[0];
+  assert.deepEqual(Object.keys(s.svgDefs), ['i']);
+  assert.match(s.svgDefs.i, /^<symbol id="i" viewBox="0 0 24 24">/);
+  assert.deepEqual(s.fontCss, { links: [], faces: [] });
+});
+
+test('@font-face rules are carried with absolute urls (fontCss.faces)', { skip }, async () => {
+  const screen = (await captureScreens(join(FIX, 'capture-ghost-font.html'), { root: '.scr' })).screens[0];
+  assert.equal(screen.fontCss.faces.length, 1);
+  assert.match(screen.fontCss.faces[0], /font-family: "?Ghost"?/);
+  assert.match(screen.fontCss.faces[0], /url\("file:\/\/\/.*\/fixtures\/missing\.woff2"\)/);
+});

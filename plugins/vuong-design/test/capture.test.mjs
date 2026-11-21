@@ -314,3 +314,20 @@ test('lineHeightOverride (R14): text with line-height normal is measured with an
   // boxes do not move: the explicit value equals the normal line height
   assert.deepEqual(textNodes(on).map((n) => n.rA), textNodes(off).map((n) => n.rA));
 });
+
+test('R40: a root is shot alone, neighbours that overlap it at B are hidden', { skip }, async () => {
+  const { launchBrowser } = await import('../core/browser.mjs');
+  const s = (await captureScreens(join(FIX, 'capture-isolate.html'), { root: '.scr', png: true })).screens[0];
+  assert.equal(s.W[1], 320);
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const rgb = await page.evaluate(async (b64) => {
+      const img = new Image(); img.src = `data:image/png;base64,${b64}`; await img.decode();
+      const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+      const x = c.getContext('2d'); x.drawImage(img, 0, 0);
+      return [...x.getImageData(520, 100, 1, 1).data].slice(0, 3); // CSS (260, 50) at device scale 2
+    }, s.png[1].toString('base64'));
+    assert.deepEqual(rgb, [255, 255, 255]);
+  } finally { await browser.close(); }
+});

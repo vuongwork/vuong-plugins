@@ -596,7 +596,8 @@ async function overrideFonts(page, rootSel, fo) {
   });
 }
 
-// Screenshot of every root. Ancestors of the roots paint nothing and the page is white (as in the proxy), so what
+// Screenshot of every root, shot alone (R40: siblings of the root path hidden). Ancestors of the roots paint nothing
+// and the page is white (as in the proxy), so what
 // shows through a root's rounded corners or transparent areas is not the surrounding mockup chrome. Transforms on.
 async function shootRoots(page, rootSel) {
   const n = await page.evaluate((sel) => {
@@ -610,7 +611,27 @@ async function shootRoots(page, rootSel) {
     return document.querySelectorAll(sel).length;
   }, rootSel);
   const loc = page.locator(rootSel); const out = [];
-  for (let i = 0; i < n; i++) out.push(await loc.nth(i).screenshot({ animations: 'disabled' }));
+  for (let i = 0; i < n; i++) {
+    // R40: shoot the root alone. Every sibling of the root and of each ancestor gets opacity 0 (layout unchanged;
+    // opacity hides a whole subtree, unlike visibility), so a neighbour screen that overlaps the widened root, or
+    // any other content painted over it, does not end up in its image. Restored right after.
+    await page.evaluate(([sel, i]) => {
+      const r = document.querySelectorAll(sel)[i]; const hid = [];
+      for (let a = r; a && a.parentElement; a = a.parentElement) {
+        for (const s of a.parentElement.children) {
+          if (s === a) continue;
+          hid.push([s, s.style.getPropertyValue('opacity'), s.style.getPropertyPriority('opacity')]);
+          s.style.setProperty('opacity', '0', 'important');
+        }
+      }
+      window.__vdHid = hid;
+    }, [rootSel, i]);
+    out.push(await loc.nth(i).screenshot({ animations: 'disabled' }));
+    await page.evaluate(() => {
+      for (const [s, v, p] of window.__vdHid || []) { if (v) s.style.setProperty('opacity', v, p); else s.style.removeProperty('opacity'); }
+      window.__vdHid = null;
+    });
+  }
   // fractional part of each root's page position: Chrome snaps glyphs to the pixel grid in page coordinates, so the
   // proxy must put its root at the same fraction to rasterise text the same way (renderProxy opts.origin)
   out.origin = await page.evaluate((sel) => [...document.querySelectorAll(sel)].map((r) => {

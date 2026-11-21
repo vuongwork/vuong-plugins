@@ -10,7 +10,7 @@
 //                  in the spec, or a swapIcon target without another icon, is 'no candidate'
 //   opts.proxy  = extra buildProxyHtml options (e.g. { webFonts: false })
 //   opts.verify = verifyScreenWithImages options (tolerances; a loose verifier must come out allCaught false)
-// Pipeline per run (as Task 6/8): mutated inferred spec -> layout proxy (unmodelled, mark 'none') and
+// Pipeline per run (pipeline.mjs runScreen, as Task 6/8): mutated inferred spec -> layout proxy (unmodelled, mark 'none') and
 // applyFigmaModel -> modelled proxy (mark 'figma'), both rendered at A and B with { origin: screen.origin[i] }, then
 // verifyScreenWithImages. The mutation is applied to the inferred spec BEFORE both proxies.
 //
@@ -42,9 +42,8 @@
 // id+width), 'data' (id+kind), 'approval' (needsApproval, id+width), 'coverage' (unchecked node, id). A mutation that
 // only shows up as an explained root is NOT caught (listed in `explainedOnly`). allCaught = null when no kind ran (R34), else every result that was run
 // is caught (skipped ones do not count).
-import { applyFigmaModel } from './figma-model.mjs';
-import { buildProxyHtml, renderProxy } from './proxy.mjs';
-import { verifyScreenWithImages, normColor } from './verify.mjs';
+import { normColor } from './verify.mjs';
+import { runScreen } from './pipeline.mjs';
 
 export const KINDS = ['moveShape', 'moveText', 'swapIcon', 'deleteLeaf', 'hideLeaf', 'thinStrokeSmall', 'thinStroke4000', 'drift', 'gap'];
 const MOVE = 3, DRIFT = 0.4, GAP = 3, SMALL = 4000;
@@ -223,16 +222,8 @@ function mutate(kind, spec, pick, base) {
 
 // ---------------- pipeline and comparison ----------------
 
-async function pipeline(browser, screen, spec, flags, fontMap, opts) {
-  const mod = applyFigmaModel(spec, fontMap, { rendered: screen.fontsRendered });
-  const fc = screen.fontCss || {};
-  const po = { fontLinks: fc.links || [], fontFaces: fc.faces || [], ...(opts.proxy || {}) };
-  const at = (sp, i) => renderProxy(browser, buildProxyHtml(sp, screen.svgDefs || {}, fontMap, po), screen.W[i], { origin: screen.origin[i] });
-  const proxy = { A: await at(mod.spec, 0), B: await at(mod.spec, 1) };
-  const layout = { A: await at(spec, 0), B: await at(spec, 1) };
-  const report = await verifyScreenWithImages(browser, { screen, spec: mod.spec, proxy, layout, flags: [...flags, ...mod.flags] }, opts.verify || {});
-  return { report, proxy, layout };
-}
+// the shared pipeline (pipeline.mjs runScreen); flags = the inferred flags (runScreen adds the model's)
+const pipeline = (browser, screen, spec, flags, fontMap, opts) => runScreen(browser, screen, { spec, flags }, fontMap, opts);
 
 function failures(r) {
   return [

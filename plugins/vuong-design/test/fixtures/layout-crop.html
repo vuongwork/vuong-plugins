@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>layout-crop</title>
+<!-- text-shadow is not captured, so the proxy draws the text without it: a crop fail on n.0 at A and B (CLI exit 1). -->
+<style>
+body{margin:0;font-family:Georgia,serif}
+.scr{width:300px;height:200px;background:#fff;display:flex;flex-direction:column;gap:8px;padding:8px}
+.sh{margin:0;font-size:14px;line-height:18px;text-shadow:3px 3px 0 #e53935;align-self:flex-start}
+.row{display:flex;gap:8px}.a{width:40px;height:20px;background:#ccc}
+.tx{width:40px;height:20px;background:#09f;transform:translateX(4px)}
+</style></head><body><div class="scr"><p class="sh">Shadowed</p><div class="row"><div class="a"></div><div class="tx"></div></div></div></body></html>

@@ -232,3 +232,17 @@ test('basic: flex intent recorded on flex items and containers', { skip }, () =>
   assert.equal(item.flex.n, item.rA[2]);
   assert.equal(nodes.find((n) => n.cls === 'hello').flex, undefined);
 });
+
+test('failed @font-face load: fontsRendered maps the list to serif and the model records a substitution', { skip }, async () => {
+  const { defaultFontMap } = await import('../core/font-map.mjs');
+  const { applyFigmaModel } = await import('../core/figma-model.mjs');
+  const { inferScreen } = await import('../core/infer.mjs');
+  const screen = (await captureScreens(join(FIX, 'capture-ghost-font.html'), { root: '.scr' })).screens[0];
+  const list = Object.keys(screen.fontsRendered).find((l) => l.includes('Ghost'));
+  assert.ok(list, JSON.stringify(screen.fontsRendered));
+  assert.equal(screen.fontsRendered[list], 'serif');
+  const fm = defaultFontMap(['Ghost']); // pretend Figma has Ghost: the failure is Chrome's, so it must be not-loaded
+  const { substitutions, flags } = applyFigmaModel(inferScreen(screen).spec, fm, { rendered: screen.fontsRendered });
+  assert.ok(substitutions.some((s) => s.from === 'Ghost' && s.to === 'Inter' && s.reason === 'not-loaded'), JSON.stringify(substitutions));
+  assert.ok(flags.some((f) => f.kind === 'fontSubstitution'));
+});

@@ -16,7 +16,8 @@
 // gate(report, allowlist, { file, screen }) -> { pass, open: { roots, approvals, crops }, allowed: { roots, approvals,
 //   crops } }: the screen gate after the allowlist (spec §14 layer 5). Allowlist entries are
 //   { file, screen, node, width, kind: 'root'|'approval'|'crop', reason, approved }; ONLY approved === true entries
-//   are honoured, and only for unexplained roots, needsApproval entries and crop fails. Unchecked nodes, skipped layers
+//   are honoured, and only for unexplained roots, needsApproval entries and crop fails. R44: report.cropLinked (crops on
+//   an unexplained size root) are allowed only with that root's entry (open.cropsLinked / allowed.cropsLinked). Unchecked nodes, skipped layers
 //   and data findings can never be allowlisted. `file` is the HTML file's base name.
 // summarize(file, entry, g) -> one summary row (report.json, report.html, acceptance table).
 // loadCorpus(corpusPath, dir) -> { files: [{ file, path, root, widen?, nameOf?, viewport? }], allowlist }
@@ -88,12 +89,15 @@ export function gate(report, allowlist = [], where = {}) {
   const roots = split('root', report.roots.filter((r) => !r.explainedBy));
   const approvals = split('approval', report.needsApproval);
   const crops = split('crop', report.crop);
+  // R44: a crop attached to an unexplained root passes or fails with that root's allowlist entry, never its own
+  const rootAllowed = (x) => roots.allowed.some((r) => r.id === x.root && r.width === x.width);
+  const linked = { open: (report.cropLinked || []).filter((x) => !rootAllowed(x)), allowed: (report.cropLinked || []).filter(rootAllowed) };
   const pass = report.unchecked.length === 0 && report.skipped.length === 0 && report.data.length === 0 &&
-    roots.open.length === 0 && approvals.open.length === 0 && crops.open.length === 0;
+    roots.open.length === 0 && approvals.open.length === 0 && crops.open.length === 0 && linked.open.length === 0;
   return {
     pass,
-    open: { roots: roots.open, approvals: approvals.open, crops: crops.open },
-    allowed: { roots: roots.allowed, approvals: approvals.allowed, crops: crops.allowed },
+    open: { roots: roots.open, approvals: approvals.open, crops: crops.open, cropsLinked: linked.open },
+    allowed: { roots: roots.allowed, approvals: approvals.allowed, crops: crops.allowed, cropsLinked: linked.allowed },
   };
 }
 
@@ -108,9 +112,9 @@ export function summarize(file, entry, g) {
     file, screen: r.id, checked: r.checked, total: r.total, unchecked: r.unchecked.length,
     unexplainedRoots: g.open.roots.length, explainedRoots: r.roots.filter((x) => x.explainedBy).length,
     needsApproval: g.open.approvals.length, approvalMax: Math.max(0, ...r.needsApproval.map((x) => x.magnitude)),
-    crop: g.open.crops.length, cropA: g.open.crops.filter((c) => c.width === 'A').length, cropB: g.open.crops.filter((c) => c.width === 'B').length,
+    crop: g.open.crops.length, cropLinked: g.open.cropsLinked.length, cropA: g.open.crops.filter((c) => c.width === 'A').length, cropB: g.open.crops.filter((c) => c.width === 'B').length,
     data: countBy(r.data, 'kind'), flags: countBy(r.flags, 'kind'), skipped: r.skipped,
-    allowed: g.allowed.roots.length + g.allowed.approvals.length + g.allowed.crops.length,
+    allowed: g.allowed.roots.length + g.allowed.approvals.length + g.allowed.crops.length + g.allowed.cropsLinked.length,
     specBytes, payloadOver50k: specBytes > PAYLOAD_LIMIT, pixel: r.pixel, pass: g.pass,
     ...(m ? { mutation: { allCaught: m.allCaught, caught: m.results.filter((x) => x.caught === true).length, missed: m.results.filter((x) => x.caught === false).map((x) => x.kind), skipped: m.results.filter((x) => x.caught === null).length } } : {}),
   };

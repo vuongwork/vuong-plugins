@@ -659,7 +659,9 @@ test('verifyScreen (R10): fontSubstitution explains nothing; it is kept in the r
   inp.crops = [{ id: 'n.0.0', width: 'A', ratio: 0.3, diff: 50, peak: 30 }];
   const r = verifyScreen(inp);
   assert.ok(r.roots.length && r.roots.every((x) => x.explainedBy === undefined));
-  assert.equal(r.crop.length, 1);
+  // R44: the crop on that size root is attached to the unexplained root, not explained
+  assert.deepEqual(r.cropLinked.map((c) => c.root), ['n.0.0']);
+  assert.equal(r.cropExplained.length, 0);
   assert.deepEqual(r.flags, inp.flags);
   assert.equal(r.pass, false);
 });
@@ -1223,4 +1225,30 @@ test('R45: measureCrops masks the cropped descendants of a container (each is co
   const bad = crops.filter(fails).map((c) => [c.id, c.width]);
   assert.deepEqual(bad, []);
   assert.equal(crops.filter((c) => c.id === 'n.0').length, 2);
+});
+
+// ---- R44: crop fails attached to size roots ----
+test('R44: a crop fail on a size root is attached to that root (and its status); one inside its subtree stands alone', () => {
+  const bad = (id, width) => ({ id, width, ratio: 0.3, diff: 90, peak: 50 });
+  const run = (flags = []) => {
+    const inp = fixture();
+    shift(inp, 'n.0', [0, 0, 5, 0]); // the HUG card 5px wider while its children did not move: a size root
+    inp.flags = flags;
+    inp.crops = [bad('n.0', 'A'), bad('n.0.0', 'A'), bad('n.1', 'B')];
+    return verifyScreen(inp);
+  };
+  const r = run();
+  assert.deepEqual(unexplained(r).map((x) => [x.id, x.width, x.why.join()]), [['n.0', 'A', 'w'], ['n.0', 'B', 'w']]);
+  assert.deepEqual(r.cropLinked.map((c) => [c.id, c.width, c.root]), [['n.0', 'A', 'n.0']]);
+  assert.deepEqual(r.crop.map((c) => [c.id, c.width]), [['n.0.0', 'A'], ['n.1', 'B']]);
+  assert.equal(r.pass, false);
+  // explained root: its crop is explained by the same flag; the child's crop still stands alone
+  const e = run([{ id: 'n.0', kind: 'testFlag', detail: 't' }]);
+  assert.deepEqual(e.cropExplained.map((c) => [c.id, c.width, c.explainedBy]), [['n.0', 'A', 'testFlag']]);
+  assert.deepEqual(e.crop.map((c) => [c.id, c.width]), [['n.0.0', 'A'], ['n.1', 'B']]);
+  // a size change within the crop search (1px) does not explain a crop
+  const inp = fixture(); shift(inp, 'n.0', [0, 0, 0.8, 0]); inp.crops = [bad('n.0', 'A')];
+  const s = verifyScreen(inp);
+  assert.ok(s.roots.some((x) => x.id === 'n.0'));
+  assert.deepEqual(s.crop.map((c) => c.id), ['n.0']);
 });

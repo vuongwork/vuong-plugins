@@ -90,7 +90,10 @@
 //   crops: input.crops = [{id, width, ratio, diff, peak}] from measureCrops at A and B on source nodes whose box has
 //   area <= 4000px², each window with the boxes of its own cropped descendants masked (R45: a container compares its
 //   own paint; children are compared in their own crops). Fails when ratio (differing / ink pixels) > 0.05 or peak (differing pixels in the densest
-//   8x8 CSS px square) >= 40. A failure on a node that is (inside) a raster node is in `cropExplained`.
+//   8x8 CSS px square) >= 40. A failure on a node that is (inside) a raster node is in `cropExplained`. R44: a failure on a
+//   node that is itself a size root at that width (size delta > the 1px crop search) shares the root's status: in
+//   `cropExplained` with the root's flag, or in `cropLinked` ({..., root}) for an unexplained root; any other failure,
+//   inside a root's subtree included, is in `crop`.
 // pixel (whole screen, modelled proxy) and strict (share of checked nodes within tolerance, modelled) are reference.
 import { firstFamily } from './font-map.mjs';
 import { cropDiffMany, pixelDiff } from './imgdiff.mjs';
@@ -630,15 +633,28 @@ export function verifyScreen(input, opts = {}) {
   if (dom && noEffect) skipped.push('effect');
 
   // ---- layer 3: crops (A and B) ----
-  const crop = [], cropExplained = [];
+  const crop = [], cropExplained = [], cropLinked = [];
   const hasFlag = (id, kind) => (flagsById.get(id) || []).includes(kind);
   const rasterIn = (e) => { for (let a = e; a; a = a.parent) if (hasFlag(a.n.id, 'raster')) return true; return false; };
+  // R44: a crop fail on a node that is itself a size root at that width (size delta beyond the crop search, so the
+  // box change alone makes the windows differ) is attached to that root and shares its status: explained by the
+  // same flag (cropExplained), or linked to the unexplained root (cropLinked: it passes only if that root is
+  // approved). A crop fail anywhere else, a descendant of a root included, stands alone.
+  const cropShift = opts.shift ?? 1;
+  const sizeRoot = new Map();
+  for (const r of roots) {
+    if (!r.why.some((w) => w === 'w' || w === 'h')) continue;
+    if (!r.why.some((w) => (w === 'w' && Math.abs(r.delta[2]) > cropShift + EPS) || (w === 'h' && Math.abs(r.delta[3]) > cropShift + EPS))) continue;
+    sizeRoot.set(`${r.id}|${r.width}`, r);
+  }
   if (!Array.isArray(crops)) skipped.push('crop');
   else {
     for (const c of crops) {
       if (!(c.ratio > cropRatio || (c.peak ?? 0) >= cropPeak)) continue;
-      const e = byId.get(c.id);
+      const e = byId.get(c.id), r = sizeRoot.get(`${c.id}|${c.width}`);
       if (e && rasterIn(e)) cropExplained.push({ ...c, explainedBy: 'raster' });
+      else if (r && r.explainedBy) cropExplained.push({ ...c, explainedBy: r.explainedBy, root: r.id });
+      else if (r) cropLinked.push({ ...c, root: r.id });
       else crop.push(c);
     }
   }
@@ -653,10 +669,10 @@ export function verifyScreen(input, opts = {}) {
     return ids.length ? r3(ids.filter(({ n }) => within(n, MD[M].get(n.id))).length / ids.length) : 0;
   });
   const pass = unchecked.length === 0 && roots.every((r) => r.explainedBy) && skipped.length === 0 &&
-    crop.length === 0 && data.length === 0 && needsApproval.length === 0;
+    crop.length === 0 && cropLinked.length === 0 && data.length === 0 && needsApproval.length === 0;
   return {
     id: screen.id, checked, total: list.length, unchecked, uncheckedReasons, nodes, roots, modelDeltas, needsApproval,
-    crop, cropExplained, cropChecked: Array.isArray(crops) ? crops.length : 0, cropWidths: Array.isArray(crops) ? [...new Set(crops.map((c) => c.width))] : [],
+    crop, cropExplained, cropLinked, cropChecked: Array.isArray(crops) ? crops.length : 0, cropWidths: Array.isArray(crops) ? [...new Set(crops.map((c) => c.width))] : [],
     data, pixel, strict, skipped, pass, flags, tol: { frame: tolFrame, text: tolText, model: tolModel },
   };
 }

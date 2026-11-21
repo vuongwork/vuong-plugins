@@ -116,6 +116,16 @@ test('R46: an unsupported-paint finding cannot be allowlisted', () => {
   for (const list of tries) assert.equal(gate(r, list, where).pass, false, JSON.stringify(list));
 });
 
+test('R44: a crop linked to a root passes or fails with that root, never with its own entry', () => {
+  const where = { file: 'f.html', screen: 's0' };
+  const r = fakeReport({ needsApproval: [], crop: [], cropLinked: [{ id: 'n.1', width: 'A', ratio: 0.2, diff: 10, peak: 5, root: 'n.1' }] });
+  assert.equal(gate(r, [], where).pass, false);
+  assert.equal(gate(r, [entry(where, 'crop', 'n.1', 'A', true)], where).pass, false);
+  const g = gate(r, [entry(where, 'root', 'n.1', 'A', true)], where);
+  assert.equal(g.pass, true);
+  assert.deepEqual(g.allowed.cropsLinked.map((c) => c.id), ['n.1']);
+});
+
 test('summarize: counts after the gate, specBytes and payloadOver50k', () => {
   const where = { file: 'f.html', screen: 's0' };
   const r = fakeReport();

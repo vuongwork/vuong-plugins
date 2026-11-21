@@ -228,7 +228,7 @@ const pipeline = (browser, screen, spec, flags, fontMap, opts) => runScreen(brow
 function failures(r) {
   return [
     ...r.roots.filter((x) => !x.explainedBy).map((x) => ({ check: 'root', key: `root|${x.id}|${x.width}`, id: x.id, why: x.why })),
-    ...r.crop.map((c) => ({ check: 'crop', key: `crop|${c.id}|${c.width}`, id: c.id })),
+    ...[...r.crop, ...(r.cropLinked || [])].map((c) => ({ check: 'crop', key: `crop|${c.id}|${c.width}`, id: c.id })),
     ...r.data.map((d) => ({ check: 'data', key: `data|${d.id}|${d.kind}`, id: d.id })),
     ...r.needsApproval.map((m) => ({ check: 'approval', key: `approval|${m.id}|${m.width}`, id: m.id })),
     ...r.unchecked.map((id) => ({ check: 'coverage', key: `coverage|${id}`, id })),

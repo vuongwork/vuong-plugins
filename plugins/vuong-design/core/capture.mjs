@@ -1,12 +1,17 @@
 // Capture: render an HTML file in headless Chromium and measure every visible thing inside each screen root at two
 // widths (native W and W + delta). Reads computed style only. Writes nothing to disk, never touches the source file.
-// opts.png: also return screen.png = [PNG Buffer at A, at B], each clipped to the screen root (device scale 2).
+// opts.png: also return screen.png = [PNG Buffer at A, at B], each clipped to the screen root (device scale 2), and
+//   screen.origin = [[fx, fy] at A, at B]: the fractional part of the root's page position when it was shot (pass it
+//   to renderProxy opts.origin so text snaps to the pixel grid the same way).
 // opts.fontOverride (default true): families Figma would substitute (figma-model's resolveFamily on the family Chrome
 //   renders, with opts.fontMap, default defaultFontMap()) are replaced by the Figma family before measuring, so the
 //   source is measured in the font Figma will use. The family is loaded from Google Fonts unless it already renders
 //   (opts.webFonts === false: never load). screen.fontSubs = [{from, to, reason}]; a target that does not render keeps
 //   the original font and is listed with reason 'override-failed' (cause = original reason). With png,
-//   screen.pngOriginal = the root at A in the original fonts (for the normalisation report).
+//   screen.pngOriginal = the root at A in the original fonts and line heights (for the normalisation report).
+// opts.lineHeightOverride (default true, R14): text-bearing elements with line-height 'normal' get an explicit px
+//   line-height equal to their measured single-line height before measuring (Figma has no 'normal', and glyphs sit
+//   differently under 'normal' than under the same explicit value). screen.norm = { lineHeight: elements changed }.
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -519,7 +524,18 @@ async function applyOverride({ rootSel, map, links, faces, timeoutMs, probeText 
   const ctx = document.createElement('canvas').getContext('2d');
   // every weight/style the page uses must render in the target, or the target counts as failed
   const probe = (st, fam, fb) => { ctx.font = `${st} 72px "${fam}", ${fb}`; const a = ctx.measureText(probeText).width; ctx.font = `${st} 72px ${fb}`; return a !== ctx.measureText(probeText).width; };
-  const faceOK = (fam, ital, w) => { const st = `${ital ? 'italic ' : ''}${w}`; return document.fonts.check(`${st} 16px "${fam}"`) && (probe(st, fam, 'monospace') || probe(st, fam, 'serif')); };
+  // a family with @font-face rules needs a loaded face whose weight range and style cover the use (Chrome would
+  // otherwise synthesise bold/italic from another face); an installed family needs check + width probe
+  const covers = (f, ital, w) => {
+    const [lo, hi = lo] = String(f.weight).split(/\s+/).map((x) => (x === 'normal' ? 400 : x === 'bold' ? 700 : Number(x)));
+    return w >= lo && w <= hi && (ital ? /italic|oblique/.test(f.style) : !/italic|oblique/.test(f.style));
+  };
+  const faceOK = (fam, ital, w) => {
+    const own = [...document.fonts].filter((f) => f.family.replace(/^["']|["']$/g, '') === fam);
+    if (own.length) return own.some((f) => f.status === 'loaded' && covers(f, ital, w));
+    const st = `${ital ? 'italic ' : ''}${w}`;
+    return document.fonts.check(`${st} 16px "${fam}"`) && (probe(st, fam, 'monospace') || probe(st, fam, 'serif'));
+  };
   const targets = [...new Set(Object.values(map))];
   const failed = targets.filter((f) => !faces.filter(([fam]) => fam === f).every(([fam, ital, w]) => faceOK(fam, ital, w)));
   const ok = Object.entries(map).filter(([, to]) => !failed.includes(to));
@@ -590,7 +606,57 @@ async function shootRoots(page, rootSel) {
   }, rootSel);
   const loc = page.locator(rootSel); const out = [];
   for (let i = 0; i < n; i++) out.push(await loc.nth(i).screenshot({ animations: 'disabled' }));
+  // fractional part of each root's page position: Chrome snaps glyphs to the pixel grid in page coordinates, so the
+  // proxy must put its root at the same fraction to rasterise text the same way (renderProxy opts.origin)
+  out.origin = await page.evaluate((sel) => [...document.querySelectorAll(sel)].map((r) => {
+    const b = r.getBoundingClientRect(); const x = b.left + scrollX, y = b.top + scrollY;
+    return [Math.round((x - Math.floor(x)) * 1e4) / 1e4, Math.round((y - Math.floor(y)) * 1e4) / 1e4];
+  }), rootSel);
   return out;
+}
+
+// In page (R14): every element (and ::before/::after with content) inside a root whose computed line-height is
+// 'normal' and that contains text gets an explicit px line-height equal to its measured single-line height (the
+// value capture uses for 'normal' anyway, as in spike 2). Figma has no 'normal': with an explicit value the source
+// places glyphs the way the proxy and Figma do. Returns the number of elements changed per root.
+function normalizeLineHeight({ rootSel }) {
+  const cache = {};
+  // single-line height under 'normal' for this font and this text (glyphs from fallback fonts, e.g. for
+  // diacritics, can make the line box taller than a plain 'Hg' probe)
+  const lineH = (cs, text) => {
+    const t = ('Hg' + (text || '').replace(/\s+/g, ' ').trim()).slice(0, 80);
+    const key = `${cs.fontFamily}|${cs.fontSize}|${cs.fontWeight}|${cs.fontStyle}|${t}`;
+    if (cache[key] == null) {
+      const p = document.createElement('div');
+      p.style.cssText = `position:absolute;visibility:hidden;font-family:${cs.fontFamily};font-size:${cs.fontSize};` +
+        `font-weight:${cs.fontWeight};font-style:${cs.fontStyle};line-height:normal;white-space:nowrap`;
+      p.textContent = t; document.body.appendChild(p); cache[key] = p.getBoundingClientRect().height; p.remove();
+    }
+    return cache[key];
+  };
+  const sets = []; const rules = []; const counts = [];
+  for (const r of document.querySelectorAll(rootSel)) {
+    let n = 0;
+    for (const el of [r, ...r.querySelectorAll('*')]) {
+      if (el.closest('svg')) continue;
+      const cs = getComputedStyle(el);
+      if (cs.lineHeight === 'normal' && el.textContent.trim()) { sets.push([el, lineH(cs, el.textContent)]); n++; }
+      for (const w of ['before', 'after']) {
+        const ps = getComputedStyle(el, '::' + w);
+        if (ps.content && ps.content !== 'none' && ps.content !== 'normal' && ps.lineHeight === 'normal') {
+          const k = `vdLh${w[0]}${rules.length}`;
+          const txt = (/^"(.*)"$/s.exec(ps.content) || [])[1] || '';
+          rules.push([el, k, `[data-${k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}]::${w}{line-height:${lineH(ps, txt)}px!important}`]); n++;
+        }
+      }
+    }
+    counts.push(n);
+  }
+  // write only after every computed style was read
+  for (const [el, h] of sets) el.style.setProperty('line-height', `${h}px`, 'important');
+  for (const [el, k] of rules) el.dataset[k] = '1';
+  if (rules.length) { const st = document.createElement('style'); st.id = '__vd_lh'; st.textContent = rules.map((x) => x[2]).join('\n'); document.head.appendChild(st); }
+  return counts;
 }
 
 const validSelector = (page, sel) => page.evaluate((s) => { try { document.querySelectorAll(s); return true; } catch { return false; } }, sel);
@@ -598,21 +664,24 @@ const validSelector = (page, sel) => page.evaluate((s) => { try { document.query
 // png: also screenshot every root (clipped to the root, device scale 2) after measuring, so the image shows the same
 // widened layout and fonts the boxes were measured on. Used by verify (Task 6) for crops and pixel %.
 // fo (font override): before measuring, families Figma would substitute are replaced by the Figma family. With
-// fo.original and png, the roots are also shot before the override (original fonts, for the normalisation report).
-async function measure(browser, url, args, width, png = false, fo = null) {
+// original and png: the roots are also shot before any override (original fonts and line heights).
+// lho (R14): line-height 'normal' made explicit after the font override (the normal height depends on the font).
+async function measure(browser, url, args, width, png = false, fo = null, lho = false, original = false) {
   const page = await browser.newPage({ viewport: { width: Math.round(width), height: VIEWPORT_HEIGHT }, deviceScaleFactor: 2 });
   try {
     await page.goto(url, { waitUntil: 'load' });
     await page.evaluate(() => document.fonts.ready.then(() => 0));
-    let pngOriginal = null, fontSubs = null;
-    if (fo && await validSelector(page, args.rootSel)) {
-      if (png && fo.original) pngOriginal = await shootRoots(page, args.rootSel);
-      fontSubs = await overrideFonts(page, args.rootSel, fo);
+    let pngOriginal = null, fontSubs = null, lhCounts = null;
+    if ((fo || lho) && await validSelector(page, args.rootSel)) {
+      if (png && original) pngOriginal = await shootRoots(page, args.rootSel);
+      if (fo) fontSubs = await overrideFonts(page, args.rootSel, fo);
+      if (lho) lhCounts = await page.evaluate(normalizeLineHeight, { rootSel: args.rootSel });
     }
     const res = await page.evaluate(measurePage, args);
     if (fontSubs) res.fontSubs = fontSubs;
+    if (lhCounts) res.lhCounts = lhCounts;
     if (pngOriginal) res.pngOriginal = pngOriginal;
-    if (png && res.count && res.screens) res.png = await shootRoots(page, args.rootSel);
+    if (png && res.count && res.screens) { res.png = await shootRoots(page, args.rootSel); res.origin = res.png.origin; }
     return res;
   } finally { await page.close(); }
 }
@@ -654,7 +723,8 @@ function mergeNode(a, mapB) {
 }
 
 export async function captureScreens(htmlPath, opts = {}) {
-  const { root, widen, widenBy = 120, nameOf, viewport = DEFAULT_VIEWPORT, png = false, fontOverride = true } = opts;
+  const { root, widen, widenBy = 120, nameOf, viewport = DEFAULT_VIEWPORT, png = false, fontOverride = true, lineHeightOverride = true } = opts;
+  const lho = !!lineHeightOverride;
   const fo = fontOverride ? { fontMap: opts.fontMap || defaultFontMap(), webFonts: opts.webFonts !== false, timeoutMs: opts.fontTimeoutMs } : null;
   if (!root) throw new Error('captureScreens: thiếu opts.root (selector của màn)');
   if (!(widenBy > 0)) throw new Error(`captureScreens: widenBy phải > 0 (nhận ${widenBy})`);
@@ -666,7 +736,7 @@ export async function captureScreens(htmlPath, opts = {}) {
 
   const browser = await launchBrowser();
   try {
-    const A = await measure(browser, url, args, viewport, png, fo && { ...fo, original: true });
+    const A = await measure(browser, url, args, viewport, png, fo, lho, true);
     if (A.badSelector) throw new Error(`không tìm thấy màn: selector "${root}" không hợp lệ (${A.badSelector})`);
     if (!A.count) throw new Error(`không tìm thấy màn: selector "${root}" không khớp phần tử nào trong ${abs}`);
     if (A.widenMissing != null) {
@@ -694,7 +764,7 @@ export async function captureScreens(htmlPath, opts = {}) {
     const anyBound = bound.some(Boolean), anyFree = bound.some((b) => !b);
     const passB = async (forBound) => {
       const res = await measure(browser, url, { ...args, extras: widens.map((w, i) => (bound[i] === forBound && !forBound ? w.by : 0)) },
-        forBound ? viewport + boundWiden.by : viewport, png, fo);
+        forBound ? viewport + boundWiden.by : viewport, png, fo, lho);
       if (res.count !== A.count) throw new Error(`số màn khác nhau giữa hai lần đo (${A.count} và ${res.count}) với selector "${root}"`);
       return res;
     };
@@ -737,9 +807,10 @@ export async function captureScreens(htmlPath, opts = {}) {
         id, name: sA.name || id, W: [r2(sA.W), r2(sB.W)], H: [r2(sA.H), r2(sB.H)], widen: widens[i],
         tree: mergeNode(sA.tree, mapB), excluded, fonts: [...new Set([...sA.fonts, ...sB.fonts])], fontsRendered: { ...sA.fontsRendered, ...sB.fontsRendered },
         svgDefs: { ...sA.svgDefs, ...sB.svgDefs }, fontCss: A.fontCss,
-        ...(png ? { png: [A.png[i], pngB(i)] } : {}),
+        ...(png ? { png: [A.png[i], pngB(i)], origin: [A.origin[i], (bound[i] ? Bbound : Bfree).origin[i]] } : {}),
         ...(fo ? { fontSubs: subsOf(i) } : {}),
-        ...(fo && png && A.pngOriginal ? { pngOriginal: A.pngOriginal[i] } : {}),
+        ...(png && A.pngOriginal ? { pngOriginal: A.pngOriginal[i] } : {}),
+        ...(lho ? { norm: { lineHeight: (A.lhCounts || [])[i] || 0 } } : {}),
       };
     });
     return { screens };

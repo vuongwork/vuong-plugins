@@ -116,6 +116,20 @@ test('verifyScreen (R11): a Figma-model-only deviation (text round-up drift) is 
   assert.deepEqual(r.strict, [0.6, 0.6], 'strict per-node share still shows the drift');
 });
 
+test('verifyScreen (R15): a model delta above tolModel (2px) needs approval and fails the screen', () => {
+  const inp = fixture();
+  modelOnly(inp, 'n.1', [0, 2.5, 0, 0]); // the model moves a frame 2.5px (e.g. a row wraps differently)
+  modelOnly(inp, 'n.0', [0, 0, 0, 1.5], ['A']); // 1.5px: within tolModel
+  let r = verifyScreen(inp);
+  assert.deepEqual(r.roots, []);
+  assert.deepEqual(r.needsApproval.map((m) => [m.id, m.width, m.magnitude]).sort(), [['n.1', 'A', 2.5], ['n.1', 'B', 2.5]]);
+  assert.deepEqual(r.modelDeltas.map((m) => [m.id, m.width, m.magnitude]), [['n.0', 'A', 1.5]]);
+  assert.equal(r.pass, false);
+  r = verifyScreen(inp, { tolModel: 3 });
+  assert.deepEqual(r.needsApproval, []);
+  assert.equal(r.pass, true);
+});
+
 test('verifyScreen: a frame growing 3px with children that did not grow is a root', () => {
   const inp = fixture();
   shift(inp, 'n.0', [0, 0, 3, 0]);
@@ -471,6 +485,17 @@ test('measureCrops (R13): crops run at A and B; a B-only defect is caught', { sk
   assert.ok(fails(icon('B')), JSON.stringify(icon('B')));
 });
 
+test('renderProxy origin: the root sits at the source fraction, boxes unchanged, text rasterised like the source', { skip }, async () => {
+  const { buildProxyHtml, renderProxy } = await import('../core/proxy.mjs');
+  const { defaultFontMap } = await import('../core/font-map.mjs');
+  const T = { id: 'n', t: 'F', w: 120, h: 40, sz: ['FIXED', 'FIXED'], kids: [
+    { id: 'n.0', t: 'T', w: 60, h: 20, sz: ['HUG', 'HUG'], abs: { x: 10, y: 10.3, c: 'L' }, font: { ff: 'serif', fs: '14px', fw: '400', lh: 20, c: 'rgb(0, 0, 0)' }, runs: [{ t: 'Inbox' }] }] };
+  const html = buildProxyHtml(T, {}, defaultFontMap(), { webFonts: false });
+  const a = await renderProxy(browser, html, 120), b = await renderProxy(browser, html, 120, { origin: [0, 0.6875] });
+  assert.deepEqual(a.boxes, b.boxes);
+  assert.notDeepEqual(a.png, b.png, 'glyphs snap differently at another page fraction');
+});
+
 test('captureScreens({ png: true }) returns clipped root PNGs at A and B', { skip }, async () => {
   const { captureScreens } = await import('../core/capture.mjs');
   const { screens } = await captureScreens(join(FIX, 'capture-basic.html'), { root: '.scr', png: true, fontOverride: false });
@@ -482,6 +507,8 @@ test('captureScreens({ png: true }) returns clipped root PNGs at A and B', { ski
     assert.ok(Math.abs(w - s.W[i] * 2) <= 2, `png ${i} width ${w} vs ${s.W[i]}`);
     assert.ok(Math.abs(h - s.H[i] * 2) <= 2, `png ${i} height ${h} vs ${s.H[i]}`);
   }
+  assert.equal(s.origin.length, 2);
+  for (const o of s.origin) assert.ok(o.every((v) => v >= 0 && v < 1), JSON.stringify(s.origin));
   const { screens: noPng } = await captureScreens(join(FIX, 'capture-basic.html'), { root: '.scr', fontOverride: false });
   assert.equal(noPng[0].png, undefined);
 });

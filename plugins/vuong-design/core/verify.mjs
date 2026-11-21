@@ -3,7 +3,9 @@
 //    are layout errors and give the roots.
 //  - proxy: renderProxy of the modelled spec (after applyFigmaModel), i.e. what Figma will produce. A node outside
 //    tolerance here but within tolerance in the layout comparison deviates because of the Figma model: it is listed in
-//    `modelDeltas` (explainedBy 'figmaModel', with magnitude) for the normalisation report, never as a root.
+//    `modelDeltas` (explainedBy 'figmaModel', with magnitude) for the normalisation report, never as a root. A model
+//    delta larger than opts.tolModel (default 2px, R15) goes to `needsApproval` instead, and fails the screen until
+//    approved (Task 8: allowlist).
 //    Colours, text, icons and fonts are read from this proxy's DOM. Crops are taken from the layout proxy: the content
 //    is the same (the model only resizes text boxes; fonts are already substituted in capture) and the model's
 //    glyph shifts inside a box, reported in modelDeltas, would otherwise exceed the 1px crop search.
@@ -47,6 +49,7 @@ import { cropDiffMany, pixelDiff } from './imgdiff.mjs';
 const TOL_FRAME = 0.5;
 const TOL_TEXT = 1;
 const CROP_RATIO = 0.05;
+const TOL_MODEL = 2;
 const CROP_PEAK = 40;
 const CROP_MAX_AREA = 4000;
 const EPS = 1e-6;
@@ -88,6 +91,7 @@ function flatten(tree) {
 export function verifyScreen(input, opts = {}) {
   const tolFrame = opts.tolFrame ?? TOL_FRAME, tolText = opts.tolText ?? TOL_TEXT;
   const cropRatio = opts.cropRatio ?? CROP_RATIO, cropPeak = opts.cropPeak ?? CROP_PEAK;
+  const tolModel = opts.tolModel ?? TOL_MODEL;
   const { screen, spec, proxy, layout, flags = [], crops, pixel = null } = input;
   const skipped = [];
   if (!layout) skipped.push('layout');
@@ -198,12 +202,13 @@ export function verifyScreen(input, opts = {}) {
   }
 
   // ---- Figma-model deltas: outside tolerance in the modelled proxy only ----
-  const modelDeltas = [];
+  const modelDeltas = [], needsApproval = [];
   for (const M of layout ? W : []) {
     for (const { n } of list) {
       const md = MD[M].get(n.id), ld = LD[M].get(n.id);
       if (md && ld && !within(n, md) && within(n, ld)) {
-        modelDeltas.push({ id: n.id, width: M, delta: md, magnitude: r2(Math.max(...md.map(Math.abs))), explainedBy: 'figmaModel' });
+        const e = { id: n.id, width: M, delta: md, magnitude: r2(Math.max(...md.map(Math.abs))), explainedBy: 'figmaModel' };
+        (e.magnitude > tolModel + EPS ? needsApproval : modelDeltas).push(e);
       }
     }
   }
@@ -266,11 +271,11 @@ export function verifyScreen(input, opts = {}) {
     return ids.length ? r3(ids.filter(({ n }) => within(n, MD[M].get(n.id))).length / ids.length) : 0;
   });
   const pass = unchecked.length === 0 && roots.every((r) => r.explainedBy) && skipped.length === 0 &&
-    crop.length === 0 && data.length === 0;
+    crop.length === 0 && data.length === 0 && needsApproval.length === 0;
   return {
-    id: screen.id, checked, total: list.length, unchecked, uncheckedReasons, nodes, roots, modelDeltas,
+    id: screen.id, checked, total: list.length, unchecked, uncheckedReasons, nodes, roots, modelDeltas, needsApproval,
     crop, cropExplained, cropChecked: Array.isArray(crops) ? crops.length : 0, cropWidths: Array.isArray(crops) ? [...new Set(crops.map((c) => c.width))] : [],
-    data, pixel, strict, skipped, pass, flags, tol: { frame: tolFrame, text: tolText },
+    data, pixel, strict, skipped, pass, flags, tol: { frame: tolFrame, text: tolText, model: tolModel },
   };
 }
 

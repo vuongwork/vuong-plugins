@@ -290,3 +290,27 @@ test('fontOverride: a target that cannot load keeps the original font and is lis
   assert.deepEqual(s.fontSubs, [{ from: 'system-ui', to: 'Nope Sans Zz', reason: 'override-failed', cause: 'system' }]);
   assert.ok(textNodes(s).every((t) => /system-ui/.test(t.font.ff)));
 });
+
+test('fontOverride: every used weight must exist in the target (a 400-only @font-face cannot take 700 text)', { skip: winSkip }, async () => {
+  const s = (await captureScreens(join(FIX, 'capture-half-font.html'), { root: '.scr', fontMap: localMap('HalfFace'), webFonts: false })).screens[0];
+  assert.deepEqual(s.fontSubs, [{ from: 'system-ui', to: 'HalfFace', reason: 'override-failed', cause: 'system' }]);
+  assert.ok(textNodes(s).every((t) => /system-ui/.test(t.font.ff)), 'not overridden');
+  // the same target is fine when only regular text uses it
+  const ok = (await captureScreens(join(FIX, 'capture-system-font.html'), { root: '.scr', fontMap: localMap('Georgia'), webFonts: false })).screens[0];
+  assert.deepEqual(ok.fontSubs.map((f) => f.reason), ['system']);
+});
+
+test('lineHeightOverride (R14): text with line-height normal is measured with an explicit px line-height', { skip }, async () => {
+  const file = join(FIX, 'capture-normal-lh.html');
+  const on = (await captureScreens(file, { root: '.scr', fontOverride: false })).screens[0];
+  const off = (await captureScreens(file, { root: '.scr', fontOverride: false, lineHeightOverride: false })).screens[0];
+  assert.equal(off.norm, undefined);
+  // .scr, .t, .chip and .chip::before use 'normal' and contain text; .px has its own px value
+  assert.equal(on.norm.lineHeight, 4, JSON.stringify(on.norm));
+  const byText = (s, t) => textNodes(s).find((n) => n.runs.map((r) => r.t).join('').includes(t));
+  for (const t of ['Hôm nay', 'tag', 'explicit']) {
+    assert.equal(byText(on, t).font.lh, byText(off, t).font.lh, `${t}: the explicit value is the measured normal height`);
+  }
+  // boxes do not move: the explicit value equals the normal line height
+  assert.deepEqual(textNodes(on).map((n) => n.rA), textNodes(off).map((n) => n.rA));
+});

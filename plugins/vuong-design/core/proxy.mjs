@@ -226,18 +226,23 @@ export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
 
 const NO_TRANSFORM = '[data-id]{transform:none!important;translate:none!important;rotate:none!important;scale:none!important}';
 
-export async function renderProxy(browser, html, width) {
+// opts.origin = [fx, fy] (screen.origin[i] from capture): the root is placed at that fractional page offset, as in
+// the source screenshot. Glyphs snap to the pixel grid in page coordinates, so without it text lands up to ~1.5px
+// off in the PNG. Boxes stay relative to the root and are unaffected.
+export async function renderProxy(browser, html, width, opts = {}) {
+  const origin = opts.origin || [0, 0];
   const dir = mkdtempSync(join(tmpdir(), 'vd-proxy-'));
   const file = join(dir, 'proxy.html');
   writeFileSync(file, html);
   const page = await browser.newPage({ viewport: { width: Math.ceil(width) + 40, height: 1000 }, deviceScaleFactor: DSF });
   try {
     await page.goto(pathToFileURL(file).href, { waitUntil: 'load' });
-    await page.evaluate(async ([w, css]) => {
+    await page.evaluate(async ([w, css, o]) => {
       document.querySelector('[data-root]').style.setProperty('--W', `${w}px`);
+      document.body.style.setProperty('padding', `${o[1]}px 0 0 ${o[0]}px`, 'important');
       const s = document.createElement('style'); s.id = '__vd_nt'; s.textContent = css; document.head.appendChild(s);
       await document.fonts.ready;
-    }, [width, NO_TRANSFORM]);
+    }, [width, NO_TRANSFORM, origin]);
     // re-measure-then-pin: HUG widths first (they feed FILL siblings), then HUG heights of wrapping/substituted text
     const natural = (sel) => page.evaluate((s) => [...document.querySelectorAll(s)].map((el) => {
       const b = el.getBoundingClientRect(); return [el.dataset.id, b.width, b.height, Number(el.dataset.ls || 0)];

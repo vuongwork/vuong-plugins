@@ -60,6 +60,7 @@ AI làm: đặt tên component/token theo vai trò, hỏi người dùng, viết
 
 - Render bằng trình duyệt chạy ngầm (Playwright). Đọc **style đã tính** (computed style), không đọc mã CSS: mọi cách viết (Tailwind, inline, viết tắt, `var()`) đều quy về một dạng.
 - Đo mỗi màn ở **hai độ rộng** để biết ý định co giãn: rộng ra theo khung → fill; giữ nguyên → fixed hoặc hug; khoảng cách thay đổi → khoảng cách tự động.
+- **Độ rộng thứ hai = gốc + Δ, mặc định Δ = 120px, chỉnh được.** Căn cứ: đủ lớn để vượt nhiễu làm tròn kể cả khi chia cho nhiều phần tử fill (120/4 = 30px mỗi phần tử), đủ nhỏ để thường chưa đổi bố cục. Đây là số chọn qua bản thử, không phải chuẩn. Rủi ro: nới khung có thể vượt một mốc media query làm HTML đổi sang bố cục khác, khi đó so hai lần đo sẽ sai. Vì vậy trước khi đo, đọc các mốc `min-width`/`max-width` trong CSS và hạ Δ xuống dưới mốc gần nhất. Không còn Δ an toàn (≥ 24px) thì đánh cờ màn đó (`unsafeWiden`) trong báo cáo, không đoán.
 - Thu đủ mọi thứ hiển thị: phần tử, **đoạn chữ** (đo bằng Range), icon (`<use>` → `<symbol>`), **phần tử giả `::before`/`::after`**, ảnh. Không có gì bị bỏ qua mà không ghi lại.
 - Nguồn đóng gói (iframe `srcdoc`, bundle) được tháo trước khi đo. Chỉ ghi file đã xử lý vào thư mục tạm, không sửa HTML gốc.
 - AI không đọc HTML gốc, chỉ đọc bản tóm tắt (đo được: 1,7 KB thay cho 64 KB).
@@ -199,7 +200,10 @@ Plugin tài liệu ghi ngược vào tài liệu (gồm chèn hình màn)
 Bài học từ bản thử: % lệch pixel cả màn đã che mất lỗi đè chữ, và bộ kiểm tra đầu tiên lặng lẽ bỏ qua chữ nằm trực tiếp trong thẻ cha. Một bộ kiểm tra bỏ qua mà không báo còn nguy hiểm hơn không có.
 
 1. **Đủ phạm vi:** mọi thứ hiển thị trong HTML phải ứng với một node Figma. Báo cáo luôn ghi "đã kiểm tra X/Y"; node chưa kiểm tra được tính là chưa đạt.
-2. **Vị trí từng node:** so hộp HTML và hộp Figma theo ID. Tìm nguyên nhân gốc (node lệch đầu tiên trong cây, bỏ các node chỉ lệch theo). Ngưỡng theo loại: khung ≤ 0,5px, chữ ≤ 1px. Phần đã chuẩn hoá so với giá trị đích.
+2. **Vị trí từng node:** so hộp HTML và hộp Figma theo ID. Tìm nguyên nhân gốc (node lệch đầu tiên trong cây, bỏ các node chỉ lệch theo). Ngưỡng theo loại: khung ≤ 0,5px, chữ ≤ 1px (mặc định, chỉnh được theo dự án). Phần đã chuẩn hoá so với giá trị đích.
+   - Căn cứ khung 0,5px: nửa điểm ảnh ở màn 1x, lệch dưới mức này bị làm tròn về cùng điểm ảnh khi hiển thị. Bản thử 3 dựng thật trong Figma cho thấy phần bố cục khớp tuyệt đối khi mô hình đúng, nên ngưỡng này không gây báo lỗi giả. Đây là quy ước; ở màn 2x/3x nó tương ứng 1–1,5 điểm ảnh thật.
+   - Căn cứ chữ 1px: đo được. Figma làm tròn lên kích thước khung chữ (33,2 → 34) và vẽ chữ hơi khác Chrome, nên lệch dưới 1px luôn có và không sửa được.
+   - Ngưỡng chỉ áp cho sai số vị trí. Chỗ vượt ngưỡng phải có nguyên nhân gốc được giải thích; lớp 4 chứng minh ngưỡng không quá lỏng.
 3. **Nội dung từng node:** so ảnh cắt theo vùng node, và so dữ liệu (đúng chữ, đúng icon theo ID, đúng token màu, đúng font).
 4. **Kiểm tra bộ kiểm tra:** cố tình cài lỗi (dịch node 3px, đổi icon, xoá dấu tích). Không bắt được lỗi cài thì bộ kiểm tra có điểm mù, sửa trước khi tin kết quả. (Bản thử: dấu tích mảnh lọt qua ngưỡng 12%.)
 5. **Cổng:** chỉ báo "xong" khi lớp 1–3 đạt hoặc chỗ lệch nằm trong báo cáo chuẩn hoá đã duyệt. Người dùng chỉ xem bằng mắt các node bị đánh dấu, có ảnh cắt HTML và Figma đặt cạnh nhau.

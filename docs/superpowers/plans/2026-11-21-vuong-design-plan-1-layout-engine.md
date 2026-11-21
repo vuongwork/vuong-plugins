@@ -17,8 +17,8 @@ Các kế hoạch tiếp theo: 2 design system + chuẩn hoá, 3 ghi Figma (bi�
 - Thư mục plugin: `plugins/vuong-design/` trong repo `vuong-plugins`. Mã lõi ở `plugins/vuong-design/core/`, test ở `plugins/vuong-design/test/`.
 - Không có `package.json` phụ thuộc trong plugin (theo `vuong-test`). Playwright tìm theo thứ tự: biến môi trường `VD_PLAYWRIGHT_FROM` (thư mục có `node_modules/playwright` hoặc `playwright-core`), rồi `node_modules` của dự án hiện tại. Không tìm thấy thì báo lỗi kèm cách cài, không tự cài.
 - Chromium: dùng bản Playwright đã cài (`%LOCALAPPDATA%\ms-playwright\chromium-*`), không tải mới.
-- Hai độ rộng: gốc và gốc + 120px.
-- Ngưỡng vị trí: khung ≤ 0,5px, chữ ≤ 1px.
+- Hai độ rộng: gốc và gốc + Δ. Δ mặc định 120px, chỉnh được; tự hạ để không vượt mốc media query (Task 2). Căn cứ ở spec mục 6.
+- Ngưỡng vị trí mặc định: khung ≤ 0,5px, chữ ≤ 1px, chỉnh được (Task 6, Task 8). Căn cứ ở spec mục 14.
 - Spec chỉ chứa khái niệm Figma: chiều xếp H/V, wrap, padding[4], gap hoặc spaceBetween, căn trục chính/phụ (S/C/E/stretch), FILL/HUG/FIXED cho từng trục, min/max width, absolute + ràng buộc (L, R, LR, C; không bao giờ SCALE), chữ, vector, ảnh, sơn. Không có margin.
 - Không ghi file ngoài thư mục `--out` người dùng chỉ định; không sửa HTML nguồn.
 - Không gửi dữ liệu dự án ra mạng (font Google vẫn được tải khi HTML tự tham chiếu).
@@ -57,10 +57,11 @@ Các kế hoạch tiếp theo: 2 design system + chuẩn hoá, 3 ghi Figma (bi�
 
 **Interfaces:**
 - Consumes: `launchBrowser()`.
-- Produces: `captureScreens(htmlPath: string, opts: { root: string, widen?: string, nameOf?: string }): Promise<IR>`.
-  - `IR = { screens: Screen[] }`; `Screen = { id, name, W: [a, b], H: [a, b], tree: INode, excluded: {path, reason}[], fonts: string[] }`.
+- Produces: `captureScreens(htmlPath: string, opts: { root: string, widen?: string, widenBy?: number, nameOf?: string }): Promise<IR>`.
+  - `IR = { screens: Screen[] }`; `Screen = { id, name, W: [a, b], H: [a, b], widen: { by, requested, breakpoints: number[], unsafe: boolean, reason? }, tree: INode, excluded: {path, reason}[], fonts: string[] }`.
   - `INode = { id, kind: 'frame'|'text'|'icon'|'image'|'pseudo', tag, cls, rA: [x,y,w,h], rB: [x,y,w,h], paint, font?, runs?, lines?, icon?, kids? }`. `id` là đường dẫn ổn định (`n.0.3.1`). `paint` gồm nền, viền từng cạnh, bo góc, bóng, độ mờ, gạch chữ, clip, transform. `runs` là các đoạn chữ có style riêng; `lines` là số dòng ở mỗi độ rộng. `rA`/`rB` tương đối với gốc màn.
-  - `widen`: selector phần tử cần nới rộng 120px (mặc định chính gốc màn).
+  - `widen`: selector phần tử cần nới rộng (mặc định chính gốc màn). `widenBy`: Δ yêu cầu, mặc định 120.
+  - Chọn Δ: đọc mọi `@media` có `min-width`/`max-width` trong stylesheet đọc được (stylesheet khác nguồn không đọc được thì ghi vào `widen.reason`, không ném lỗi). Mốc `b` coi là bị vượt khi `W < b ≤ W + Δ` (min-width) hoặc `W ≤ b < W + Δ` (max-width). Có mốc bị vượt thì Δ = (mốc gần nhất − W − 1) cho min-width, (mốc − W) cho max-width. Δ thực tế < 24 thì giữ Δ yêu cầu, `unsafe: true`, `reason` ghi mốc bị vượt.
 - Cách đo theo bản thử 2 `extract.js`: chữ đo bằng `Range.getBoundingClientRect`; `::before`/`::after` có nội dung, nền hoặc viền thì biến thành span chép style đã tính rồi đo; hình xoay đo hộp chưa xoay; `<svg><use>` là icon lá, kèm id symbol và màu; line-height `normal` ghi thành số px đo được.
 
 - [ ] **Step 1: Viết fixture** `capture-basic.html`: một gốc `.scr` 300×600 chứa hàng flex 3 item, đoạn chữ "Xin chào thế giới" xuống dòng ở 300 nhưng không xuống ở 420, phần tử `::after` 8×8, `<svg><use href="#i">`, một `div` `display:none`, một `span` `visibility:hidden`.
@@ -71,6 +72,7 @@ Các kế hoạch tiếp theo: 2 design system + chuẩn hoá, 3 ghi Figma (bi�
   - Node chữ có `lines` = `[2, 1]` và `runs[0].t` bắt đầu bằng `"Xin chào"`.
   - `excluded` có đúng 2 mục với lý do `display:none` và `visibility:hidden`.
   - Selector không khớp → reject với thông điệp chứa `"không tìm thấy màn"` và selector.
+  - Fixture thứ hai `capture-breakpoint.html` (gốc 300px, `@media (min-width: 380px)` đổi bố cục) → `widen.by === 79`, `W` = `[300, 379]`, `unsafe === false`. Cùng fixture với mốc `310px` → `unsafe === true`, `by === 120`.
 - [ ] **Step 3: Chạy** → FAIL.
 - [ ] **Step 4: Viết** `captureScreens` (chuyển từ spike2 `extract.js`, đổi sang ESM, trả IR như trên).
 - [ ] **Step 5: Chạy** → PASS. **Commit** `feat(vuong-design): capture rendered HTML at two widths`.
@@ -85,7 +87,7 @@ Các kế hoạch tiếp theo: 2 design system + chuẩn hoá, 3 ghi Figma (bi�
 - Consumes: `Screen` từ Task 2.
 - Produces: `inferScreen(screen: Screen): { spec: SNode, stats: Stats, flags: Flag[] }`.
   - `SNode = { id, t: 'F'|'T'|'V'|'I', w, h, lay?: { d: 'H'|'V', wrap?, p: [t,r,b,l], g?, sb?, pa: 'S'|'C'|'E', ca: 'S'|'C'|'E'|'X'|'B' }, sz: [ 'FILL'|'HUG'|'FIXED', 'FILL'|'HUG'|'FIXED' ], min?, max?, abs?: { x, y, c: 'L'|'R'|'LR'|'C' }, paint?, font?, runs?, icon?, syn?, kids? }`. `syn` đánh dấu khung nhóm sinh ra khi tách nhóm.
-  - `Flag = { id, kind: 'shrink'|'weightedFill'|'spaceAround'|'mixedRunHeight'|'raster', detail }`.
+  - `Flag = { id, kind: 'shrink'|'weightedFill'|'spaceAround'|'mixedRunHeight'|'raster'|'unsafeWiden', detail }`. `unsafeWiden` gắn vào gốc màn khi `screen.widen.unsafe`; khi đó FILL/HUG/FIXED suy ra cho màn đó coi là chưa tin được.
   - `Stats = { grouping, pushSplit, spaceBetween, absOverlap, absOverflow, absTransform, wrappers, wrapRows }`.
 - Thuật toán: mục 7 của spec. Không rẽ nhánh theo `display`/`flex`/`grid`/`margin` khi quyết định bố cục. Chỉ đọc CSS để biết sơn, font và ý định co giãn. Mã tham khảo: spike2 `infer.js`, gồm cả các sửa đã làm trong bản thử: HUG khi "kích thước = nội dung + padding ở cả hai độ rộng", khoảng trống thừa đưa vào căn lề, minWidth cho lưới `1fr` có sàn nội dung, FILL + maxWidth, con duy nhất rộng theo % thì đặt tuyệt đối. Ràng buộc SCALE thì thay bằng C hoặc LR, chọn cái khớp hơn ở độ rộng B.
 
@@ -163,7 +165,7 @@ Các kế hoạch tiếp theo: 2 design system + chuẩn hoá, 3 ghi Figma (bi�
 
 **Interfaces:**
 - Consumes: `Screen` (hộp nguồn ở A và B, ảnh nguồn), kết quả `renderProxy` ở A và B, `flags`.
-- Produces: `verifyScreen(input): Report`. `imgdiff.mjs` so ảnh bằng canvas trong trình duyệt, gồm `cropDiff(browser, pngA, rectA, pngB, rectB): Promise<number>` (cắt theo vùng, chịu lệch tối đa 1px) và `pixelDiff(...)`.
+- Produces: `verifyScreen(input, opts?: { tolFrame?: number, tolText?: number }): Report` (mặc định 0,5 và 1). `imgdiff.mjs` so ảnh bằng canvas trong trình duyệt, gồm `cropDiff(browser, pngA, rectA, pngB, rectB): Promise<number>` (cắt theo vùng, chịu lệch tối đa 1px) và `pixelDiff(...)`.
 - `Report = { id, checked, total, unchecked: string[], nodes: {id, dA:[dx,dy,dw,dh], dB, ok}[], roots: {id, width:'A'|'B', delta, explainedBy?: Flag['kind']}[], crop: {id, ratio}[], data: {id, kind:'text'|'icon'|'font', expected, actual}[], pixel: [a, b], pass: boolean }`.
 - Luật:
   - Nguyên nhân gốc là node lệch quá ngưỡng mà phần lệch khác với node cha và node anh liền trước. Node chỉ lệch theo thì bỏ qua.
@@ -176,6 +178,7 @@ Các kế hoạch tiếp theo: 2 design system + chuẩn hoá, 3 ghi Figma (bi�
   - Node thiếu hộp nguồn → nằm trong `unchecked` và `pass === false`.
   - Root trên node có flag `shrink` → `explainedBy === 'shrink'`, và `pass` vẫn có thể true.
   - Chữ khác nội dung ("Inbox" với "Inbx") → `data` có mục `text`.
+  - Khung lệch 0,4px → không là root; lệch 0,6px → là root. Gọi với `tolFrame: 1` thì 0,6px không là root.
   - `cropDiff` hai ảnh giống nhau lệch 1px → nhỏ hơn 0,05; đổi icon → lớn hơn 0,05.
 - [ ] **Step 2: Chạy** → FAIL. **Step 3: Viết.** **Step 4: Chạy** → PASS.
 - [ ] **Step 5: Commit** `feat(vuong-design): per-node verification with root causes and content checks`.
@@ -208,7 +211,7 @@ Các kế hoạch tiếp theo: 2 design system + chuẩn hoá, 3 ghi Figma (bi�
 **Interfaces:**
 - Consumes: mọi module trên.
 - Produces:
-  - CLI: `node core/layout.mjs --html <file> --root <selector> [--widen <selector>] [--name <selector>] --out <dir> [--mutate]`.
+  - CLI: `node core/layout.mjs --html <file> --root <selector> [--widen <selector>] [--name <selector>] [--widen-by <px>] [--tol-frame <px>] [--tol-text <px>] --out <dir> [--mutate]`.
   - File ghi ra: `<out>/ir.json`, `<out>/spec-<id>.json`, `<out>/report.json`, `<out>/report.html`. Trang HTML liệt kê từng màn với các cột: checked/total, root chưa giải thích, ảnh cắt nguồn và mô phỏng đặt cạnh nhau cho từng node lỗi, các flag, `specBytes`, `payloadOver50k`.
   - Mã thoát 0 khi mọi màn `pass`, 1 khi không đạt.
 - `corpus.json` liệt kê bộ nghiệm thu (đường dẫn lấy từ biến `VD_CORPUS_DIR`):

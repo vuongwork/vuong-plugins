@@ -13,8 +13,11 @@
 //    absolutely positioned ::before overlay. paint.strokeOverlay (bordered FILL cells) is drawn the same way.
 //  - text: width HUG = nowrap, FIXED/FILL = wraps. HUG sizes already pinned by applyFigmaModel are used as px, except
 //    (a) text with font.sub (its Chrome size was measured in another font) and (b) the HUG height of wrapping text (it
-//    depends on the width, so a pin taken at width A is wrong at B): those hug naturally in the proxy and are then
-//    pinned to figmaTextBox(natural size) before boxes are read (re-measure-then-pin).
+//    depends on the width, so a pin taken at width A is wrong at B): those hug naturally in the proxy. On a modelled
+//    page (spec root `model: 'figma'`, set by applyFigmaModel) they are then pinned to figmaTextBox(natural size)
+//    before boxes are read (re-measure-then-pin). R21: an unmodelled spec (inferScreen's, verify's layout proxy)
+//    applies no Figma model at all: no figmaTextBox, HUG text keeps Chrome's natural size. This is decided by the
+//    spec, not by a caller option, so the layout proxy cannot be rendered modelled by mistake.
 //  - fonts: every family goes through fontMap.substitute(firstFamily(ff)), i.e. the font Figma will really use.
 // Boxes are [x, y, w, h] relative to the root's top-left, rounded to 0.01, measured with transforms off — the same
 // convention as capture's rA/rB. The PNG keeps transforms. `dom` is what the page rendered per node id: { text? (leaf
@@ -118,6 +121,7 @@ export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
 
     if (!parent) {
       data.push('data-root');
+      if (n.model === 'figma') data.push('data-model="figma"');
       st.push('position:relative', `width:var(--W, ${px(n.w)})`, ...(sy === 'HUG' ? ownSize(1) : [`height:${px(n.h)}`]));
     } else if (n.abs || !(parent.lay && parent.lay.d)) {
       const a = n.abs || { x: 0, y: 0, c: 'L' };
@@ -250,8 +254,11 @@ export async function renderProxy(browser, html, width, opts = {}) {
     const pin = (dim, vals) => page.evaluate(([d, v]) => {
       for (const [id, x] of v) document.querySelector(`[data-id="${CSS.escape(id)}"]`).style.setProperty(d, `${x}px`);
     }, [dim, vals]);
-    await pin('width', (await natural('[data-pin-w]')).map(([id, w, h, ls]) => [id, figmaTextBox(w, h, ls).w]));
-    await pin('height', (await natural('[data-pin-h]')).map(([id, w, h]) => [id, figmaTextBox(w, h, 0).h]));
+    // R21: Figma's text rounding only on a modelled page; an unmodelled one keeps Chrome's natural sizes
+    if (await page.evaluate(() => document.querySelector('[data-root]').dataset.model === 'figma')) {
+      await pin('width', (await natural('[data-pin-w]')).map(([id, w, h, ls]) => [id, figmaTextBox(w, h, ls).w]));
+      await pin('height', (await natural('[data-pin-h]')).map(([id, w, h]) => [id, figmaTextBox(w, h, 0).h]));
+    }
     const res = await page.evaluate(() => {
       const root = document.querySelector('[data-root]'); const R = root.getBoundingClientRect();
       const r = (v) => Math.round(v * 100) / 100;

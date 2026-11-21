@@ -68,7 +68,7 @@
  "substitutedText": {
   "_doc": "font.sub text: its Chrome size (999) is ignored; the proxy hugs it in the substitute font, then pins figmaTextBox (integer px); the FILL sibling takes the rest",
   "W": [300],
-  "spec": { "id": "n", "t": "F", "w": 300, "h": 20, "sz": ["FIXED", "FIXED"], "lay": { "d": "H", "p": [0, 0, 0, 0], "g": 0, "pa": "S", "ca": "S" }, "kids": [
+  "spec": { "model": "figma", "id": "n", "t": "F", "w": 300, "h": 20, "sz": ["FIXED", "FIXED"], "lay": { "d": "H", "p": [0, 0, 0, 0], "g": 0, "pa": "S", "ca": "S" }, "kids": [
    { "id": "n.0", "t": "T", "w": 999, "h": 999, "sz": ["HUG", "HUG"], "runs": [{ "t": "Substituted" }],
     "font": { "ff": "Inter", "fs": "14px", "fw": "400", "fst": "normal", "lh": 20, "ls": "2px", "c": "rgb(0, 0, 0)", "td": "none", "tt": "none", "ta": "start", "ws": "normal", "sub": true } },
    { "id": "n.1", "t": "F", "w": 10, "h": 20, "sz": ["FILL", "FIXED"] }] }
@@ -76,7 +76,7 @@
  "wrapText": {
   "_doc": "FILL text with HUG height wraps; its height follows the line count at each width (a height pinned at A is not reused at B)",
   "W": [100, 400],
-  "spec": { "id": "n", "t": "F", "w": 100, "h": 200, "sz": ["FIXED", "FIXED"], "lay": { "d": "V", "p": [0, 0, 0, 0], "g": 0, "pa": "S", "ca": "S" }, "kids": [
+  "spec": { "model": "figma", "id": "n", "t": "F", "w": 100, "h": 200, "sz": ["FIXED", "FIXED"], "lay": { "d": "V", "p": [0, 0, 0, 0], "g": 0, "pa": "S", "ca": "S" }, "kids": [
    { "id": "n.0", "t": "T", "w": 100, "h": 64, "sz": ["FILL", "HUG"], "runs": [{ "t": "a fairly long sentence that wraps onto several lines when narrow" }],
     "font": { "ff": "Inter", "fs": "13px", "fw": "400", "fst": "normal", "lh": 16, "ls": "normal", "c": "rgb(0, 0, 0)", "td": "none", "tt": "none", "ta": "start", "ws": "normal" } }] }
  },

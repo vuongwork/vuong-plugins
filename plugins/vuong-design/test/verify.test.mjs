@@ -678,6 +678,8 @@ test('pipeline: a system-ui fixture (font override) verifies end to end with bot
     const inf = inferScreen(s);
     const mod = applyFigmaModel(inf.spec, fm, { rendered: s.fontsRendered });
     const flags = [...inf.flags, ...mod.flags];
+    // R21: the layout proxy renders the inferred spec unmodelled (no figmaTextBox), the proxy the modelled one
+    assert.equal(inf.spec.model, undefined); assert.equal(mod.spec.model, 'figma');
     assert.ok(!flags.some((f) => f.kind === 'fontSubstitution'), JSON.stringify(flags));
     const html = (sp) => buildProxyHtml(sp, s.svgDefs, fm, { webFonts: false });
     const at = (sp, i) => renderProxy(browser, html(sp), s.W[i], { origin: s.origin[i] });

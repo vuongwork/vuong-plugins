@@ -5,6 +5,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildProxyHtml, renderProxy } from '../core/proxy.mjs';
 import { defaultFontMap } from '../core/font-map.mjs';
+import { applyFigmaModel } from '../core/figma-model.mjs';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const CASES = JSON.parse(readFileSync(join(FIX, 'proxy-semantics.json'), 'utf8'));
@@ -139,6 +140,17 @@ test('FILL text with HUG height re-wraps per width; heights are whole pixels', {
   assert.ok(A[3] > B[3], `narrow ${A[3]} vs wide ${B[3]}`);
   assert.ok(Number.isInteger(A[3]) && Number.isInteger(B[3]));
   assert.equal(B[3], 16, 'one line at 400');
+});
+
+test('R21: an unmodelled spec keeps the natural HUG height of wrapping text; only a modelled one is rounded', { skip }, async () => {
+  const spec = structuredClone(CASES.wrapText.spec);
+  delete spec.model;
+  spec.kids[0].font.lh = 25.3;
+  const layout = (await renderProxy(browser, buildProxyHtml(spec, {}, fm, OFFLINE), 400)).boxes['n.0'];
+  assert.ok(Math.abs(layout[3] - 25.3) <= 0.02, `layout proxy height ${layout[3]} (Figma round-up leaked)`);
+  const { spec: modelled } = applyFigmaModel(spec, fm);
+  const proxy = (await renderProxy(browser, buildProxyHtml(modelled, {}, fm, OFFLINE), 400)).boxes['n.0'];
+  assert.equal(proxy[3], 26, 'the modelled proxy rounds up like Figma');
 });
 
 test('icon renders from the symbol table; png is a PNG of the root', { skip }, async () => {

@@ -7,6 +7,8 @@
 //    Each family list is first resolved to the family Chrome actually rendered (opts.rendered = screen.fontsRendered,
 //    falling back to the first family). A rendered family that Figma has is kept; otherwise it is substituted by
 //    Inter with reason 'system' | 'not-in-figma' | 'not-loaded' (a Figma font that Chrome failed to load).
+//  The returned spec root carries `model: 'figma'`; buildProxyHtml marks the page with it and renderProxy applies
+//  the Figma text rounding (figmaTextBox) only on such a page. An inferred spec without it renders unmodelled (R21).
 //  CONTRACT for the proxy (Task 5): a text node with `font.sub === true` was substituted, so its Chrome w/h are for
 //  another font. Its HUG axes are NOT corrected here (w/h are left as Chrome measured); the proxy must let those axes
 //  hug naturally in the substitute font, then round the result with figmaTextBox. Such nodes carry a
@@ -79,5 +81,5 @@ export function applyFigmaModel(spec, fontMap, opts = {}) {
     return o;
   };
 
-  return { spec: visit(spec), flags, substitutions };
+  return { spec: { ...visit(spec), model: 'figma' }, flags, substitutions };
 }

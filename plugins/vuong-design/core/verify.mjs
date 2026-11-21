@@ -1,6 +1,7 @@
 // Verify layers 1-3 (spec §14). Two proxies are compared with the source HTML, node by node, at widths A and B:
-//  - layout: renderProxy of the inferred spec WITHOUT applyFigmaModel (pure auto-layout semantics). Its deviations
-//    are layout errors and give the roots.
+//  - layout: renderProxy of the inferred spec WITHOUT applyFigmaModel (pure auto-layout semantics, R21: no Figma
+//    text rounding; the proxy derives this from the spec, which has no `model: 'figma'`). Its deviations are layout
+//    errors and give the roots.
 //  - proxy: renderProxy of the modelled spec (after applyFigmaModel), i.e. what Figma will produce. A node outside
 //    tolerance relative to the layout proxy (modelled delta minus layout delta, R18, whatever the node's layout state)
 //    deviates because of the Figma model: it is listed in `modelDeltas` (explainedBy 'figmaModel', delta = that

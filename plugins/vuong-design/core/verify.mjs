@@ -4,10 +4,13 @@
 //    errors and give the roots.
 //  - proxy: renderProxy of the modelled spec (after applyFigmaModel), i.e. what Figma will produce. A node outside
 //    tolerance relative to the layout proxy (modelled delta minus layout delta, R18, whatever the node's layout state)
-//    deviates because of the Figma model: it is listed in `modelDeltas` (explainedBy 'figmaModel', delta = that
-//    difference, with magnitude) for the normalisation report, never as a root. A model
-//    delta larger than opts.tolModel (default 2px, R15) goes to `needsApproval` instead, and fails the screen until
-//    approved (Task 8: allowlist).
+//    deviates because of the Figma model, never a root. R43: those model deltas go through the same root / follower
+//    attribution as the layout deltas (no flag explains them): each model root is listed in `modelDeltas`
+//    (explainedBy 'figmaModel', delta = that difference, why, magnitude) for the normalisation report; followers are
+//    counted in `modelFollowers` {A, B}. A model root larger than opts.tolModel (default 2px, R15) goes to
+//    `needsApproval` instead and fails the screen until approved (Task 8: allowlist). `modelDrift` = the largest
+//    accumulated model delta on any node (followers included); above tolModel it is a needsApproval entry
+//    ({..., drift: true}) unless a listed model root already has that magnitude.
 //    Colours, text, icons and fonts are read from this proxy's DOM. Crops are taken from the layout proxy: the content
 //    is the same (the model only resizes text boxes; fonts are already substituted in capture) and the model's
 //    glyph shifts inside a box, reported in modelDeltas, would otherwise exceed the 1px crop search.
@@ -215,8 +218,11 @@ export function verifyScreen(input, opts = {}) {
 
   // ---- layer 2: roots from the layout comparison ----
   const roots = [];
-  for (const M of layout ? W : []) {
-    const D = LD[M];
+  // R43: the same attribution runs on the layout deltas (model = false: roots, flags, adjacency) and on the Figma-model
+  // deltas (model = true: modelled minus layout delta per node; returns the model roots and counts the followers;
+  // no flag explains a model delta). box(k) = the node's box in the compared proxy.
+  const attribute = (M, D, model, box) => {
+    const mroots = []; let followers = 0;
     const ancestor = (e) => { let a = e.parent; while (a && !D.has(a.n.id)) a = a.parent; return a; };
     const prevOf = (e) => { let p = e.prev; while (p && !D.has(p.n.id)) p = p.prev; return p; };
     const sz = (id, ax) => { const s = specById.get(id); return s && s.sz ? s.sz[ax] : null; };
@@ -333,7 +339,7 @@ export function verifyScreen(input, opts = {}) {
     const extDelta = (ks, ax, n0, mode) => {
       const ext = (boxes) => Math.max(...boxes.map((b) => b[ax] + b[ax + 2])) - Math.min(...boxes.map((b) => b[ax]));
       const now = (k) => {
-        const m = mode(k), l = layout[M].boxes[k.id];
+        const m = mode(k), l = box(k);
         if (m === 'box') return l;
         const b = [...src(k, M)];
         if (m === 'src0') return b;
@@ -510,8 +516,9 @@ export function verifyScreen(input, opts = {}) {
         if (!sizeOK(e, ax)) why.push(ax ? 'h' : 'w');
         else if (!posOK(e, ax, true)) why.push(ax ? 'y' : 'x');
       }
-      if (!why.length) continue;
+      if (!why.length) { followers++; continue; }
       const root = { id: e.n.id, width: M, delta: D.get(e.n.id), why };
+      if (model) { mroots.push(root); continue; }
       if (M === 'B' && unsafeWiden) { uncheck(e.n.id, `unsafeWiden: deviates at B (${why.join(',')})`); continue; }
       const n0 = flexSized.length;
       const by = explain(e, why);
@@ -522,7 +529,7 @@ export function verifyScreen(input, opts = {}) {
     // flow sibling's near edge must follow i's far edge within tol (FIXED followers pushed along, a FILL neighbour
     // absorbing it). Otherwise that sibling is an unexplained root on that axis. Not checked in space-between or
     // wrapping containers, where the gap legitimately changes.
-    for (const [e, ax] of flexSized) {
+    for (const [e, ax] of model ? [] : flexSized) {
       const c = specParent.get(e.n.id);
       if (!c || !c.lay || c.lay.sb || c.lay.wrap) continue;
       const ks = flowKids(c), i = ks.findIndex((k) => k.id === e.n.id), k = ks[i + 1];
@@ -534,19 +541,38 @@ export function verifyScreen(input, opts = {}) {
       if (prev) { if (!prev.why.includes(w)) prev.why.push(w); delete prev.explainedBy; explained.delete(k.id); prev.adjacency = e.n.id; }
       else roots.push({ id: k.id, width: M, delta: dk, why: [w], adjacency: e.n.id });
     }
-  }
+    return { mroots, followers };
+  };
+  for (const M of layout ? W : []) attribute(M, LD[M], false, (k) => layout[M].boxes[k.id]);
 
   // ---- Figma-model deltas (R18): modelled-proxy delta minus layout-proxy delta, whatever the layout state ----
-  const modelDeltas = [], needsApproval = [];
+  // R43: the model deltas go through the same root / follower attribution as the layout deltas. Every model root is
+  // listed with its magnitude (modelDeltas, or needsApproval above tolModel); followers are counted (modelFollowers),
+  // not listed. modelDrift = the largest accumulated model delta on any node of the screen (followers included); above
+  // tolModel it is one needsApproval entry (drift: true) unless a listed model root already carries that magnitude,
+  // so many small steps adding up beyond tolModel can never pass unseen.
+  const modelDeltas = [], needsApproval = [], modelFollowers = { A: 0, B: 0 };
+  let modelDrift = null;
+  const mag = (d) => r2(Math.max(...d.map(Math.abs)));
   for (const M of layout ? W : []) {
+    const DD = new Map();
     for (const { n } of list) {
       const md = MD[M].get(n.id), ld = LD[M].get(n.id);
-      const dd = md && ld ? sub(md, ld) : null;
-      if (dd && !within(n, dd)) {
-        const e = { id: n.id, width: M, delta: dd, magnitude: r2(Math.max(...dd.map(Math.abs))), explainedBy: 'figmaModel' };
-        (e.magnitude > tolModel + EPS ? needsApproval : modelDeltas).push(e);
-      }
+      if (md && ld) DD.set(n.id, sub(md, ld));
     }
+    for (const { n } of list) {
+      const dd = DD.get(n.id);
+      if (dd && !within(n, dd) && (!modelDrift || mag(dd) > modelDrift.magnitude)) modelDrift = { id: n.id, width: M, delta: dd, magnitude: mag(dd) };
+    }
+    const { mroots, followers } = attribute(M, DD, true, (k) => { const b = src(k, M), d = DD.get(k.id); return [0, 1, 2, 3].map((i) => b[i] + d[i]); });
+    modelFollowers[M] = followers;
+    for (const r of mroots) {
+      const e = { id: r.id, width: M, delta: r.delta, why: r.why, magnitude: mag(r.delta), explainedBy: 'figmaModel' };
+      (e.magnitude > tolModel + EPS ? needsApproval : modelDeltas).push(e);
+    }
+  }
+  if (modelDrift && modelDrift.magnitude > tolModel + EPS && !needsApproval.some((e) => e.magnitude >= modelDrift.magnitude - EPS)) {
+    needsApproval.push({ ...modelDrift, drift: true, explainedBy: 'figmaModel' });
   }
 
   // ---- layer 3: data (observed in the modelled proxy DOM at A) ----
@@ -671,7 +697,7 @@ export function verifyScreen(input, opts = {}) {
   const pass = unchecked.length === 0 && roots.every((r) => r.explainedBy) && skipped.length === 0 &&
     crop.length === 0 && cropLinked.length === 0 && data.length === 0 && needsApproval.length === 0;
   return {
-    id: screen.id, checked, total: list.length, unchecked, uncheckedReasons, nodes, roots, modelDeltas, needsApproval,
+    id: screen.id, checked, total: list.length, unchecked, uncheckedReasons, nodes, roots, modelDeltas, modelFollowers, modelDrift, needsApproval,
     crop, cropExplained, cropLinked, cropChecked: Array.isArray(crops) ? crops.length : 0, cropWidths: Array.isArray(crops) ? [...new Set(crops.map((c) => c.width))] : [],
     data, pixel, strict, skipped, pass, flags, tol: { frame: tolFrame, text: tolText, model: tolModel },
   };

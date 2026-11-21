@@ -112,8 +112,11 @@ test('verifyScreen (R11): a Figma-model-only deviation (text round-up drift) is 
   modelOnly(inp, 'n.1', [0, 0.8, 0, 0]); // the next frame is pushed
   const r = verifyScreen(inp);
   assert.deepEqual(r.roots, []);
+  // R43: the card is the model root; the pushed frame n.1 follows it and is counted, not listed
   assert.deepEqual(r.modelDeltas.map((m) => [m.id, m.width, m.magnitude, m.explainedBy]).sort(),
-    [['n.0', 'A', 0.8, 'figmaModel'], ['n.0', 'B', 0.8, 'figmaModel'], ['n.1', 'A', 0.8, 'figmaModel'], ['n.1', 'B', 0.8, 'figmaModel']]);
+    [['n.0', 'A', 0.8, 'figmaModel'], ['n.0', 'B', 0.8, 'figmaModel']]);
+  assert.deepEqual(r.modelFollowers, { A: 1, B: 1 });
+  assert.equal(r.modelDrift.magnitude, 0.8);
   assert.equal(r.pass, true);
   assert.deepEqual(r.strict, [0.6, 0.6], 'strict per-node share still shows the drift');
 });
@@ -172,13 +175,13 @@ test('R29: in a HUG row the icon moving 3px is the root; the row only hugs it (n
 
 // ---- reviewer probes (fix round 1) ----
 const flat = (kids) => ({ id: 'n', kind: 'frame', rA: [0, 0, 400, 100], rB: [0, 0, 400, 100], kids });
-function probe(tree, mut, flags = [], spec = { id: 'n', t: 'F', kids: [] }) {
+function probe(tree, mut, flags = [], spec = { id: 'n', t: 'F', kids: [] }, opts = {}) {
   const boxes = () => { const o = {}; const v = (n) => { o[n.id] = [...n.rA]; (n.kids || []).forEach(v); }; v(tree); return o; };
   const dom = {}; const v = (n) => { dom[n.id] = { color: 'rgb(0, 0, 0)', bg: 'rgba(0, 0, 0, 0)', ...SHOWN(), ...(n.kind === 'icon' ? { icon: 'svg' } : {}) }; (n.kids || []).forEach(v); }; v(tree);
   const proxy = { A: { boxes: boxes(), fontsMissing: [], dom, model: 'figma' }, B: { boxes: boxes(), fontsMissing: [], dom, model: 'figma' } };
   const layout = { A: { boxes: boxes(), model: 'none' }, B: { boxes: boxes(), model: 'none' } };
   mut(proxy, layout);
-  return verifyScreen({ screen: { id: 's', tree }, spec, proxy, layout, flags, crops: [] });
+  return verifyScreen({ screen: { id: 's', tree }, spec, proxy, layout, flags, crops: [] }, opts);
 }
 const both = (fn) => (P, L) => { for (const X of [P, L]) for (const M of ['A', 'B']) fn(X[M].boxes, M); };
 
@@ -1251,4 +1254,21 @@ test('R44: a crop fail on a size root is attached to that root (and its status);
   const s = verifyScreen(inp);
   assert.ok(s.roots.some((x) => x.id === 'n.0'));
   assert.deepEqual(s.crop.map((c) => c.id), ['n.0']);
+});
+
+// ---- R43: model deltas attributed like layout roots, with a per-screen drift entry ----
+test('R43: many sub-tolModel model steps that add up beyond tolModel need approval (drift entry with the max)', () => {
+  // a column of ten 20px frames; the model makes each 0.4px taller (within tolerance), so frame i sits 0.4·i lower
+  const kids = Array.from({ length: 10 }, (_, i) => ({ id: `n.${i}`, kind: 'frame', rA: [0, i * 20, 100, 20], rB: [0, i * 20, 100, 20] }));
+  const tree = flat(kids);
+  tree.rA = [0, 0, 400, 200]; tree.rB = [0, 0, 400, 200];
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', kids.map((k) => F(k.id, ['FIXED', 'FIXED'])));
+  const r = probe(tree, (P) => { for (const M of ['A', 'B']) for (let i = 0; i < 10; i++) { P[M].boxes[`n.${i}`][1] += 0.4 * i; P[M].boxes[`n.${i}`][3] += 0.4; } }, [], spec);
+  assert.deepEqual(unexplained(r), []);
+  assert.ok(r.modelDeltas.every((m) => m.magnitude <= 2), JSON.stringify(r.modelDeltas));
+  assert.ok(r.modelFollowers.A > 0 && r.modelFollowers.B > 0);
+  assert.deepEqual(r.needsApproval.map((m) => [m.id, m.magnitude, m.drift]), [['n.9', 3.6, true]]);
+  assert.equal(r.pass, false);
+  // within tolModel 4 the same drift passes
+  assert.deepEqual(probe(tree, (P) => { for (const M of ['A', 'B']) for (let i = 0; i < 10; i++) { P[M].boxes[`n.${i}`][1] += 0.4 * i; P[M].boxes[`n.${i}`][3] += 0.4; } }, [], spec, { tolModel: 4 }).needsApproval, []);
 });

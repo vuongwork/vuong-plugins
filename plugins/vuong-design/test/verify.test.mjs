@@ -16,7 +16,7 @@ const skip = process.env.VD_PLAYWRIGHT_FROM
 // Source tree: n (frame) > n.0 (HUG frame "card") > n.0.0 (text "Inbox"), n.0.1 (icon #ic); n.1 (frame below the card)
 // `layout` = the unmodelled proxy, `proxy` = the modelled one; both start exact. DOM observations mirror the source.
 // what the proxy DOM reports for a shown node without strokes (R30/R31 observations)
-const SHOWN = () => ({ op: 1, vis: 'visible', disp: 'block', stroke: ['none', 'none', 'none', 'none'] });
+const SHOWN = () => ({ op: 1, vis: 'visible', disp: 'block', stroke: ['none', 'none', 'none', 'none'], shadow: 'none', bgImage: 'none' });
 const FONT = { ff: 'Inter', fs: '14px', fw: '400', lh: 20, c: 'rgb(34, 34, 34)' };
 function fixture() {
   const screen = {
@@ -1162,4 +1162,33 @@ test('R35: with no cross alignment in the spec, end-aligned kids shifted by a pa
     const r = rowSweep('E', hs, 2, grow, -10, 10, null);
     assert.equal(r.pass, false, `${JSON.stringify(hs)} grow ${grow}: ${JSON.stringify(r.roots)}`);
   }
+});
+
+// ---- R46: unsupported paint and effect data ----
+test('R46: unsupported paint is a data finding on a node of any size (text-shadow on 60000px²), unless rasterised', () => {
+  const inp = fixture();
+  inp.screen.tree.paint = { ...inp.screen.tree.paint, unsupported: [{ prop: 'text-shadow', value: 'rgb(229, 57, 53) 3px 3px 0px' }] };
+  const r = verifyScreen(inp);
+  assert.ok(300 * 200 > 4000);
+  assert.deepEqual(r.data.map((x) => [x.id, x.kind, x.prop]), [['n', 'unsupported', 'text-shadow']]);
+  assert.equal(r.pass, false);
+  inp.flags = [{ id: 'n', kind: 'raster', detail: 'test' }];
+  assert.deepEqual(verifyScreen(inp).data, []);
+});
+
+test('R46: paint on a text node (inline box background / shadow / border) is unsupported: the proxy draws none', () => {
+  const inp = fixture();
+  inp.screen.tree.kids[0].kids[0].paint = { bg: 'rgb(255, 235, 59)' };
+  assert.deepEqual(verifyScreen(inp).data.map((x) => [x.id, x.kind, x.prop]), [['n.0.0', 'unsupported', 'inline-box']]);
+});
+
+test('R46: box-shadow and background-image are compared with the proxy DOM at any size (effect)', () => {
+  const inp = fixture();
+  const sh = 'rgba(0, 0, 0, 0.2) 0px 2px 4px 0px', gr = 'linear-gradient(rgb(255, 255, 255), rgb(0, 0, 0))';
+  inp.screen.tree.paint = { ...inp.screen.tree.paint, shadow: sh, bgImage: gr };
+  assert.deepEqual(verifyScreen(inp).data.map((x) => [x.id, x.kind, x.prop]), [['n', 'effect', 'box-shadow'], ['n', 'effect', 'background-image']]);
+  inp.proxy.A.dom.n = { ...inp.proxy.A.dom.n, shadow: sh, bgImage: gr };
+  assert.deepEqual(verifyScreen(inp).data, []);
+  delete inp.proxy.A.dom['n.1'].shadow;
+  assert.ok(verifyScreen(inp).skipped.includes('effect'));
 });

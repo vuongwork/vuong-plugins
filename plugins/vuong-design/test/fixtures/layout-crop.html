@@ -1,10 +1,12 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>layout-crop</title>
-<!-- text-shadow is not captured, so the proxy draws the text without it: a crop fail on n.0 at A and B (CLI exit 1). -->
+<!-- Deliberate crop-only failure (CLI exit 1): the inline svg n.0 has its rect filled red by a page rule (.ic rect).
+     The proxy copies the svg markup but not the page's stylesheet, so it draws the rect black. Geometry, colour
+     (transparent background), icon ('svg') and every other data check match; only the crop at A and B differs. -->
 <style>
 body{margin:0;font-family:Georgia,serif}
 .scr{width:300px;height:200px;background:#fff;display:flex;flex-direction:column;gap:8px;padding:8px}
-.sh{margin:0;font-size:14px;line-height:18px;text-shadow:3px 3px 0 #e53935;align-self:flex-start}
+.ic{display:block;width:24px;height:24px}.ic rect{fill:#e53935}
 .row{display:flex;gap:8px}.a{width:40px;height:20px;background:#ccc}
 .tx{width:40px;height:20px;background:#09f;transform:translateX(4px)}
-</style></head><body><div class="scr"><p class="sh">Shadowed</p><div class="row"><div class="a"></div><div class="tx"></div></div></div></body></html>
+</style></head><body><div class="scr"><svg class="ic" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/></svg><div class="row"><div class="a"></div><div class="tx"></div></div></div></body></html>

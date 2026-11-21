@@ -341,3 +341,12 @@ test('R41: a Figma family rendered from a local install is measured in its Googl
   const off = (await captureScreens(join(FIX, 'capture-local-font.html'), { root: '.scr', webFonts: false })).screens[0];
   assert.deepEqual(off.fontSubs, [], 'R9 opt-out: no web face is fetched, nothing to report');
 });
+
+test('R46: paint capture does not translate is listed as paint.unsupported at its origin', { skip }, async () => {
+  const s = (await captureScreens(join(FIX, 'layout-unsupported.html'), { root: '.scr', fontOverride: false })).screens[0];
+  const all = walk(s.tree);
+  const un = all.filter((n) => n.paint && n.paint.unsupported).map((n) => [n.cls || n.tag, n.paint.unsupported.map((u) => u.prop).join(',')]);
+  assert.deepEqual(un, [['big', 'text-shadow'], ['blend', 'mix-blend-mode'], ['li', 'list-marker']]);
+  const big = all.find((n) => n.cls === 'big');
+  assert.ok(big.rA[2] * big.rA[3] > 4000, 'larger than the crop limit');
+});

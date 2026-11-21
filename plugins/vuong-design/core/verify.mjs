@@ -82,6 +82,11 @@
 //   visibility visible, display not none), stroke (R30a: per side top/right/bottom/left and outline, width, style and
 //   colour of the source computed border / outline vs the proxy DOM `stroke` / `outline` as rendered). A proxy DOM
 //   without these observations puts 'visibility' / 'stroke' in `skipped`.
+//   R46, any node size: unsupported (capture's paint.unsupported, i.e. paint it does not translate: text-shadow,
+//   blend modes, masks, list markers, ...; and any box paint on a text node, which the proxy draws as text only),
+//   unless the node is inside a raster node; effect (non-text nodes: source computed box-shadow and background-image
+//   vs the proxy DOM's `shadow` / `bgImage`; a DOM without them puts 'effect' in `skipped`). Data findings are never
+//   allowlistable (pipeline gate).
 //   crops: input.crops = [{id, width, ratio, diff, peak}] from measureCrops at A and B on source nodes whose box has
 //   area <= 4000px². Fails when ratio (differing / ink pixels) > 0.05 or peak (differing pixels in the densest
 //   8x8 CSS px square) >= 40. A failure on a node that is (inside) a raster node is in `cropExplained`.
@@ -597,6 +602,31 @@ export function verifyScreen(input, opts = {}) {
   }
   if (noVis) skipped.push('visibility');
   if (noStroke) skipped.push('stroke');
+
+  // ---- layer 3: R46 unsupported paint (any size) and effect data (box-shadow, background-image; any size) ----
+  const hasFlagD = (id, kind) => (flagsById.get(id) || []).includes(kind);
+  const rasterAt = (e) => { for (let a = e; a; a = a.parent) if (hasFlagD(a.n.id, 'raster')) return true; return false; };
+  let noEffect = false;
+  for (const e of list) {
+    const n = e.n, p = n.paint || {};
+    if (rasterAt(e)) continue; // drawn as an image (spec §7 raster fallback): the effect is in the pixels
+    const un = [...(p.unsupported || [])];
+    // a text node is drawn as text only: a box painted behind or around it (inline background, shadow, border) is lost
+    if (isTextSrc(n)) {
+      const box = [p.bg && `background-color ${p.bg}`, p.bgImage && `background-image ${p.bgImage}`, p.shadow && `box-shadow ${p.shadow}`,
+        Array.isArray(p.border) && p.border.some((b) => b && b.w > 0) && 'border'].filter(Boolean);
+      if (box.length) un.push({ prop: 'inline-box', value: box.join('; ') });
+    }
+    for (const u of un) data.push({ id: n.id, kind: 'unsupported', prop: u.prop, expected: u.value, actual: 'not drawn' });
+    const d = dom && dom[n.id];
+    if (!d || isTextSrc(n)) continue;
+    if (d.shadow == null || d.bgImage == null) { noEffect = true; continue; }
+    const norm = (v) => (v == null || v === '' || v === 'none' ? 'none' : String(v).replace(/\s+/g, ' ').trim());
+    for (const [prop, expected, actual] of [['box-shadow', norm(p.shadow), norm(d.shadow)], ['background-image', norm(p.bgImage), norm(d.bgImage)]]) {
+      if (expected !== actual) data.push({ id: n.id, kind: 'effect', prop, expected, actual });
+    }
+  }
+  if (dom && noEffect) skipped.push('effect');
 
   // ---- layer 3: crops (A and B) ----
   const crop = [], cropExplained = [];

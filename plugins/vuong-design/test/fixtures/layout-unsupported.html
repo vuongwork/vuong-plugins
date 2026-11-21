@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>layout-unsupported</title>
+<!-- paint capture does not translate: a text-shadow on a large text (> 4000px², no crop), inherited by a span, a
+     blend mode and a list marker. Each must be a data finding 'unsupported' at its origin only. -->
+<style>
+body{margin:0;font-family:Georgia,serif}
+.scr{width:300px;height:260px;background:#fff;display:flex;flex-direction:column;gap:8px;padding:8px}
+.big{margin:0;width:280px;font-size:40px;line-height:50px;text-shadow:3px 3px 0 #e53935}
+.blend{width:40px;height:20px;background:#09f;mix-blend-mode:multiply}
+ul{margin:0;padding-left:20px}li{font-size:14px;line-height:18px}
+</style></head><body><div class="scr"><p class="big">Big <span>title</span> text</p><div class="blend"></div><ul><li>Item</li></ul></div></body></html>

@@ -109,6 +109,13 @@ test('gate: only approved allowlist entries are honoured, and only for roots, ap
   }
 });
 
+test('R46: an unsupported-paint finding cannot be allowlisted', () => {
+  const where = { file: 'f.html', screen: 's0' };
+  const r = fakeReport({ roots: [], needsApproval: [], crop: [], data: [{ id: 'n', kind: 'unsupported', prop: 'text-shadow', value: 'rgb(229, 57, 53) 3px 3px 0px' }] });
+  const tries = [[], ['unsupported', 'data', 'root', 'crop', 'approval'].map((k) => entry(where, k, 'n', 'A', true)), ['A', 'B'].map((w) => entry(where, 'unsupported', 'n', w, true))];
+  for (const list of tries) assert.equal(gate(r, list, where).pass, false, JSON.stringify(list));
+});
+
 test('summarize: counts after the gate, specBytes and payloadOver50k', () => {
   const where = { file: 'f.html', screen: 's0' };
   const r = fakeReport();
@@ -197,6 +204,20 @@ test('CLI: a crop fail exits 1; an approved allowlist entry lets it pass, an una
   assert.equal(c.code, 0);
   assert.equal(c.rep.screens[0].summary.allowed, 2);
   assert.match(c.html, /allowlisted: test/);
+});
+
+test('R46: a text-shadow on a large text fails the screen end to end (unsupported, not allowlistable)', { skip }, async () => {
+  const { captureScreens } = await import('../core/capture.mjs');
+  const { inferScreen } = await import('../core/infer.mjs');
+  const { runScreen } = await import('../core/pipeline.mjs');
+  const screen = (await captureScreens(join(FIX, 'layout-unsupported.html'), { root: '.scr', fontMap: fm, webFonts: false, png: true })).screens[0];
+  const e = await runScreen(browser, screen, inferScreen(screen), fm, { proxy: { webFonts: false } });
+  const un = e.report.data.filter((d) => d.kind === 'unsupported').map((d) => d.prop).sort();
+  assert.deepEqual(un, ['list-marker', 'mix-blend-mode', 'text-shadow']);
+  assert.equal(e.report.pass, false);
+  const where = { file: 'layout-unsupported.html', screen: screen.id };
+  const every = e.report.data.flatMap((d) => ['A', 'B'].flatMap((w) => ['root', 'crop', 'approval', 'unsupported'].map((k) => entry(where, k, d.id, w, true))));
+  assert.equal(gate(e.report, every, where).pass, false);
 });
 
 test('CLI: a selector that matches nothing exits 2', { skip }, async () => {

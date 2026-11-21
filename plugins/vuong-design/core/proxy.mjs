@@ -24,7 +24,8 @@
 // Boxes are [x, y, w, h] relative to the root's top-left, rounded to 0.01, measured with transforms off — the same
 // convention as capture's rA/rB. The PNG keeps transforms. `dom` is what the page rendered per node id: { text? (leaf
 // text, <br> as a space), icon? (<use> ref or 'svg'), color, bg, ff, op (effective opacity, product up to the page),
-// vis, disp, stroke ([t, r, b, l] 'Wpx style colour' | 'none', read back from how the page drew it), outline } —
+// vis, disp, stroke ([t, r, b, l] 'Wpx style colour' | 'none', read back from how the page drew it), outline,
+// shadow (box-shadow layers other than the stroke's, or 'none'), bgImage (computed background-image) } —
 // computed values, for verify's content checks.
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -320,6 +321,14 @@ export async function renderProxy(browser, html, width, opts = {}) {
           ['Top', 'Right', 'Bottom', 'Left'].forEach((S, i) => { stroke[i] = `${parseFloat(b[`border${S}Width`]) || 0}px ${b[`border${S}Style`]} ${b[`border${S}Color`]}`; });
         }
         o.stroke = stroke;
+        // R46 effect data: the box-shadow layers that are not the stroke (data-ss inset layers come last) and the
+        // background image, as computed
+        {
+          const layers = cs.boxShadow === 'none' ? [] : cs.boxShadow.split(/,(?![^(]*\))/).map((x) => x.trim());
+          const own = el.dataset.ss != null ? layers.slice(0, layers.length - el.dataset.ss.length) : layers;
+          o.shadow = own.length ? own.join(', ') : 'none';
+          o.bgImage = cs.backgroundImage;
+        }
         o.outline = cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0 ? `${cs.outlineWidth} ${cs.outlineStyle} ${cs.outlineColor}` : 'none';
         dom[el.dataset.id] = o;
       }

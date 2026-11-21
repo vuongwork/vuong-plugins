@@ -217,7 +217,49 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
     if (cs.filter !== 'none') p.filter = cs.filter;
     if (cs.clipPath !== 'none') p.clipPath = cs.clipPath;
     if (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0) p.outline = `${cs.outlineWidth} ${cs.outlineStyle} ${cs.outlineColor}`;
+    const un = unsupported(cs, el, p);
+    if (un.length) p.unsupported = un;
     return p;
+  };
+  // R46: paint-affecting properties capture does not translate, with their initial values. A non-initial value is
+  // listed as {prop, value} (verify: data finding 'unsupported', unless the node is rasterised). Inherited text
+  // properties are listed only where they are set (value differs from the parent's), not on every descendant.
+  const topComma = (v) => { let d = 0; for (const ch of v) { if (ch === '(') d++; else if (ch === ')') d--; else if (ch === ',' && !d) return true; } return false; };
+  const unsupported = (cs, el, p) => {
+    const out = [];
+    const pcs = el && el.parentElement ? getComputedStyle(el.parentElement) : null;
+    const set = (k) => !pcs || pcs[k] !== cs[k];
+    const add = (prop, value) => out.push({ prop, value: String(value) });
+    // inherited text paint
+    if (cs.textShadow && cs.textShadow !== 'none' && set('textShadow')) add('text-shadow', cs.textShadow);
+    if (cs.webkitTextStrokeWidth && parseFloat(cs.webkitTextStrokeWidth) > 0 && set('webkitTextStrokeWidth')) add('-webkit-text-stroke', `${cs.webkitTextStrokeWidth} ${cs.webkitTextStrokeColor}`);
+    if (cs.webkitTextFillColor && cs.webkitTextFillColor !== cs.color && (!pcs || pcs.webkitTextFillColor === pcs.color || set('webkitTextFillColor'))) add('-webkit-text-fill-color', cs.webkitTextFillColor);
+    if (cs.fontFeatureSettings && cs.fontFeatureSettings !== 'normal' && set('fontFeatureSettings')) add('font-feature-settings', cs.fontFeatureSettings);
+    for (const [k, prop] of [['fontVariantCaps', 'font-variant-caps'], ['fontVariantNumeric', 'font-variant-numeric'], ['fontVariantLigatures', 'font-variant-ligatures'],
+      ['fontVariantEastAsian', 'font-variant-east-asian'], ['fontVariantAlternates', 'font-variant-alternates'], ['fontVariantPosition', 'font-variant-position']]) {
+      if (cs[k] && cs[k] !== 'normal' && set(k)) add(prop, cs[k]);
+    }
+    // own paint / effects
+    if (cs.backdropFilter && cs.backdropFilter !== 'none') add('backdrop-filter', cs.backdropFilter);
+    if (cs.mixBlendMode && cs.mixBlendMode !== 'normal') add('mix-blend-mode', cs.mixBlendMode);
+    if (cs.backgroundBlendMode && cs.backgroundBlendMode !== 'normal') add('background-blend-mode', cs.backgroundBlendMode);
+    const mask = (cs.maskImage && cs.maskImage !== 'none' && cs.maskImage) || (cs.webkitMaskImage && cs.webkitMaskImage !== 'none' && cs.webkitMaskImage);
+    if (mask) add('mask', mask);
+    if (cs.borderImageSource && cs.borderImageSource !== 'none') add('border-image', cs.borderImageSource);
+    if (p.outline && cs.outlineOffset && parseFloat(cs.outlineOffset) !== 0) add('outline-offset', cs.outlineOffset);
+    if (cs.textOverflow && cs.textOverflow !== 'clip') add('text-overflow', cs.textOverflow);
+    if (cs.webkitLineClamp && cs.webkitLineClamp !== 'none') add('-webkit-line-clamp', cs.webkitLineClamp);
+    if (cs.display === 'list-item' && (cs.listStyleType !== 'none' || cs.listStyleImage !== 'none')) add('list-marker', `${cs.listStyleType} ${cs.listStyleImage}`.replace(/ none$/, ''));
+    const clip = cs.backgroundClip || cs.webkitBackgroundClip;
+    if (clip === 'text') add('background-clip', clip);
+    else if ((p.bg || p.bgImage) && clip && clip !== 'border-box') add('background-clip', clip);
+    if (p.bgImage) {
+      if (topComma(p.bgImage)) add('background-image (layers)', p.bgImage);
+      if (!/^auto( auto)?$/.test(cs.backgroundSize)) add('background-size', cs.backgroundSize);
+      if (!/^0% 0%$/.test(cs.backgroundPosition)) add('background-position', cs.backgroundPosition);
+      if (cs.backgroundRepeat !== 'repeat') add('background-repeat', cs.backgroundRepeat);
+    }
+    return out;
   };
   const font = (cs) => ({ ff: cs.fontFamily, fs: cs.fontSize, fw: cs.fontWeight, fst: cs.fontStyle, lh: lhPx(cs), ls: cs.letterSpacing,
     c: cs.color, td: cs.textDecorationLine, tt: cs.textTransform, ta: cs.textAlign, ws: cs.whiteSpace });

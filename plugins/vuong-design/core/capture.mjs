@@ -9,6 +9,10 @@
 //   (opts.webFonts === false: never load). screen.fontSubs = [{from, to, reason}]; a target that does not render keeps
 //   the original font and is listed with reason 'override-failed' (cause = original reason). With png,
 //   screen.pngOriginal = the root at A in the original fonts and line heights (for the normalisation report).
+//   R41: a family Figma has (kept, or a substitution target) that the page renders from a local install, with no
+//   @font-face / font link of its own, first gets its Google Fonts face (it shadows the local copy), so source, proxy
+//   and Figma use the same binary. Kept families are listed as {from: f, to: f, reason: 'version'} ('version-failed'
+//   when the face did not load: rolled back to the local copy). Not with webFonts === false.
 // opts.lineHeightOverride (default true, R14): text-bearing elements with line-height 'normal' get an explicit px
 //   line-height equal to their measured single-line height before measuring (Figma has no 'normal', and glyphs sit
 //   differently under 'normal' than under the same explicit value). screen.norm = { lineHeight: elements changed }.
@@ -562,6 +566,38 @@ async function applyOverride({ rootSel, map, links, faces, timeoutMs, probeText 
   return failed;
 }
 
+const ICON_FAMILY = /Material (Symbols|Icons)/i;
+
+// In page: which families have a web face (@font-face rule or font link) in this document
+function webFacesIn({ fams }) {
+  const clean = (f) => f.replace(/^["']|["']$/g, '');
+  const have = new Set([...document.fonts].map((f) => clean(f.family).toLowerCase()));
+  return Object.fromEntries(fams.map((f) => [f, have.has(f.toLowerCase())]));
+}
+
+// In page (R41): add a Google Fonts link per family and load each used face. A family whose faces do not all load is
+// rolled back (link removed) so the local copy renders again. Returns the families rolled back.
+async function loadWebFaces({ jobs, timeoutMs }) {
+  const within = (p) => Promise.race([p, new Promise((r) => setTimeout(r, timeoutMs))]);
+  const els = {};
+  await within(Promise.all(jobs.map(([fam, href]) => new Promise((res) => {
+    const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; l.onload = l.onerror = () => res();
+    els[fam] = l; document.head.appendChild(l);
+  }))));
+  await within(Promise.all(jobs.flatMap(([fam, , faces]) => faces.map(([ital, w]) => document.fonts.load(`${ital ? 'italic ' : ''}${w} 16px "${fam}"`).catch(() => null)))));
+  const covers = (f, ital, w) => {
+    const [lo, hi = lo] = String(f.weight).split(/\s+/).map((x) => (x === 'normal' ? 400 : x === 'bold' ? 700 : Number(x)));
+    return w >= lo && w <= hi && (ital ? /italic|oblique/.test(f.style) : !/italic|oblique/.test(f.style));
+  };
+  const failed = [];
+  for (const [fam, , faces] of jobs) {
+    const own = [...document.fonts].filter((f) => f.family.replace(/^["']|["']$/g, '') === fam);
+    if (!faces.every(([ital, w]) => own.some((f) => f.status === 'loaded' && covers(f, ital, w)))) { failed.push(fam); els[fam].remove(); }
+  }
+  await document.fonts.ready;
+  return failed;
+}
+
 const fontsLink = (fam, tuples) => `https://fonts.googleapis.com/css2?family=${encodeURIComponent(fam).replace(/%20/g, '+')}:ital,wght@` +
   `${[...tuples].sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).join(';')}&display=swap`;
 
@@ -569,12 +605,31 @@ const fontsLink = (fam, tuples) => `https://fonts.googleapis.com/css2?family=${e
 // cause = the original reason, when the target did not render; those lists keep their original font).
 async function overrideFonts(page, rootSel, fo) {
   const { perRoot, rendered, styles } = await page.evaluate(collectFonts, { rootSel, probeText: PROBE_TEXT });
-  const map = {}; const subOf = {};
+  const map = {}; const subOf = {}; const keep = {};
   for (const list of Object.keys(rendered)) {
     const r = resolveFamily(fo.fontMap, list, rendered[list]);
-    if (r.sub) { map[list] = r.ff; subOf[list] = r.sub; }
+    if (r.sub) { map[list] = r.ff; subOf[list] = r.sub; } else if (r.ff && !ICON_FAMILY.test(r.ff)) keep[list] = r.ff;
   }
   const targets = [...new Set(Object.values(map))];
+  // R41: a family Figma has must render from its Google Fonts face (the face the proxy and Figma use), not from a
+  // local install of possibly another version. Families the page has no @font-face / font link for get the Google
+  // face first (same family name, so it shadows the local copy). Kept families are reported as 'version'
+  // ('version-failed' when the face did not load: the local copy stays, as in the proxy without network).
+  const versionOf = {};
+  if (fo.webFonts !== false) {
+    const fams = [...new Set([...Object.values(keep), ...targets])];
+    const web = await page.evaluate(webFacesIn, { fams });
+    const local = fams.filter((f) => !web[f]);
+    const already = local.length ? await page.evaluate(rendersInPage, { fams: local, probeText: PROBE_TEXT }) : {};
+    const todo = local.filter((f) => already[f]);
+    if (todo.length) {
+      const tuples = {};
+      for (const [list, f] of [...Object.entries(keep), ...Object.entries(map)]) if (todo.includes(f)) for (const t of styles[list] || ['0,400']) (tuples[f] ||= new Set()).add(t);
+      const jobs = todo.map((f) => [f, fontsLink(f, tuples[f]), [...tuples[f]].map((t) => [+t.split(',')[0], +t.split(',')[1]])]);
+      const vFailed = await page.evaluate(loadWebFaces, { jobs, timeoutMs: fo.timeoutMs ?? 15000 });
+      for (const f of todo) if (Object.values(keep).includes(f)) versionOf[f] = vFailed.includes(f) ? 'version-failed' : 'version';
+    }
+  }
   let failed = [];
   if (targets.length) {
     const already = await page.evaluate(rendersInPage, { fams: targets, probeText: PROBE_TEXT });
@@ -587,6 +642,10 @@ async function overrideFonts(page, rootSel, fo) {
   return perRoot.map((lists) => {
     const out = []; const seen = new Set();
     for (const l of lists) {
+      if (keep[l] && versionOf[keep[l]]) {
+        const e = { from: keep[l], to: keep[l], reason: versionOf[keep[l]] }, k = `${e.from}|${e.to}|${e.reason}`;
+        if (!seen.has(k)) { seen.add(k); out.push(e); }
+      }
       const sub = subOf[l]; if (!sub) continue;
       const e = failed.includes(sub.to) ? { ...sub, reason: 'override-failed', cause: sub.reason } : sub;
       const k = `${e.from}|${e.to}|${e.reason}`;

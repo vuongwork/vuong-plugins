@@ -331,3 +331,13 @@ test('R40: a root is shot alone, neighbours that overlap it at B are hidden', { 
     assert.deepEqual(rgb, [255, 255, 255]);
   } finally { await browser.close(); }
 });
+
+test('R41: a Figma family rendered from a local install is measured in its Google Fonts face', { skip }, async (t) => {
+  const plain = (await captureScreens(join(FIX, 'capture-local-font.html'), { root: '.scr', fontOverride: false })).screens[0];
+  const list = Object.keys(plain.fontsRendered).find((l) => /Roboto/.test(l));
+  if (plain.fontsRendered[list] !== 'Roboto') { t.skip('Roboto is not installed locally'); return; }
+  const s = (await captureScreens(join(FIX, 'capture-local-font.html'), { root: '.scr' })).screens[0];
+  assert.deepEqual(s.fontSubs, [{ from: 'Roboto', to: 'Roboto', reason: 'version' }]);
+  const off = (await captureScreens(join(FIX, 'capture-local-font.html'), { root: '.scr', webFonts: false })).screens[0];
+  assert.deepEqual(off.fontSubs, [], 'R9 opt-out: no web face is fetched, nothing to report');
+});

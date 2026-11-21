@@ -1,10 +1,18 @@
 // Capture: render an HTML file in headless Chromium and measure every visible thing inside each screen root at two
 // widths (native W and W + delta). Reads computed style only. Writes nothing to disk, never touches the source file.
 // opts.png: also return screen.png = [PNG Buffer at A, at B], each clipped to the screen root (device scale 2).
+// opts.fontOverride (default true): families Figma would substitute (figma-model's resolveFamily on the family Chrome
+//   renders, with opts.fontMap, default defaultFontMap()) are replaced by the Figma family before measuring, so the
+//   source is measured in the font Figma will use. The family is loaded from Google Fonts unless it already renders
+//   (opts.webFonts === false: never load). screen.fontSubs = [{from, to, reason}]; a target that does not render keeps
+//   the original font and is listed with reason 'override-failed' (cause = original reason). With png,
+//   screen.pngOriginal = the root at A in the original fonts (for the normalisation report).
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { launchBrowser } from './browser.mjs';
+import { defaultFontMap } from './font-map.mjs';
+import { resolveFamily } from './figma-model.mjs';
 
 const MIN_SAFE_DELTA = 24;
 const DEFAULT_VIEWPORT = 1400;
@@ -457,30 +465,152 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
 
 // ---------------- node side ----------------
 
-// png: also screenshot every root (clipped to the root, device scale 2, transforms back on) after measuring, so the
-// image shows the same widened layout the boxes were measured on. Used by verify (Task 6) for crops and pixel %.
-async function measure(browser, url, args, width, png = false) {
+// ---- font override (resolved before inference: the source is measured in the font Figma will use) ----
+
+const PROBE_TEXT = 'mmmmmmmmmmlli1WÀỆ';
+
+// In page: every family list used by elements (and their ::before/::after) of each root, the family Chrome renders
+// for each list, and the weights/styles used per list.
+function collectFonts({ rootSel, probeText }) {
+  const GENERIC = /^(serif|sans-serif|monospace|cursive|fantasy|system-ui|ui-[a-z-]+|-apple-system|BlinkMacSystemFont|emoji|math|fangsong)$/i;
+  const ctx = document.createElement('canvas').getContext('2d');
+  const probe = (fam, fb) => { ctx.font = `72px "${fam}", ${fb}`; const a = ctx.measureText(probeText).width; ctx.font = `72px ${fb}`; return a !== ctx.measureText(probeText).width; };
+  const renders = (fam) => document.fonts.check(`16px "${fam}"`) && (probe(fam, 'monospace') || probe(fam, 'serif'));
+  const perRoot = []; const styles = {};
+  const add = (set, cs) => {
+    set.add(cs.fontFamily);
+    const w = Math.min(900, Math.max(100, Math.round((parseFloat(cs.fontWeight) || 400) / 100) * 100));
+    (styles[cs.fontFamily] ||= new Set()).add(`${/italic|oblique/.test(cs.fontStyle) ? 1 : 0},${w}`);
+  };
+  for (const r of document.querySelectorAll(rootSel)) {
+    const set = new Set();
+    for (const el of [r, ...r.querySelectorAll('*')]) {
+      add(set, getComputedStyle(el));
+      for (const w of ['::before', '::after']) {
+        const cs = getComputedStyle(el, w);
+        if (cs.content && cs.content !== 'none' && cs.content !== 'normal') add(set, cs);
+      }
+    }
+    perRoot.push([...set]);
+  }
+  const rendered = {};
+  for (const list of new Set(perRoot.flat())) {
+    const fams = list.split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+    rendered[list] = fams.find((f) => GENERIC.test(f) || renders(f)) || fams[fams.length - 1] || '';
+  }
+  return { perRoot, rendered, styles: Object.fromEntries(Object.entries(styles).map(([k, v]) => [k, [...v]])) };
+}
+
+// In page: which of these families already render (installed, or loaded by the page)
+function rendersInPage({ fams, probeText }) {
+  const ctx = document.createElement('canvas').getContext('2d');
+  const probe = (fam, fb) => { ctx.font = `72px "${fam}", ${fb}`; const a = ctx.measureText(probeText).width; ctx.font = `72px ${fb}`; return a !== ctx.measureText(probeText).width; };
+  return Object.fromEntries(fams.map((f) => [f, document.fonts.check(`16px "${f}"`) && (probe(f, 'monospace') || probe(f, 'serif'))]));
+}
+
+// In page: load the target families (links, then each face), then point every element / pseudo whose list maps to a
+// target that renders at that target. Returns the targets that do not render (their lists keep the original font).
+async function applyOverride({ rootSel, map, links, faces, timeoutMs, probeText }) {
+  const within = (p) => Promise.race([p, new Promise((r) => setTimeout(r, timeoutMs))]);
+  await within(Promise.all(links.map((href) => new Promise((res) => {
+    const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; l.onload = l.onerror = () => res(); document.head.appendChild(l);
+  }))));
+  await within(Promise.all(faces.map(([fam, ital, w]) => document.fonts.load(`${ital ? 'italic ' : ''}${w} 16px "${fam}"`).catch(() => null))));
+  const ctx = document.createElement('canvas').getContext('2d');
+  const probe = (fam, fb) => { ctx.font = `72px "${fam}", ${fb}`; const a = ctx.measureText(probeText).width; ctx.font = `72px ${fb}`; return a !== ctx.measureText(probeText).width; };
+  const targets = [...new Set(Object.values(map))];
+  const failed = targets.filter((f) => !(document.fonts.check(`16px "${f}"`) && (probe(f, 'monospace') || probe(f, 'serif'))));
+  const ok = Object.entries(map).filter(([, to]) => !failed.includes(to));
+  const key = new Map(ok.map(([list], i) => [list, String(i)]));
+  const rules = [];
+  ok.forEach(([, to], i) => {
+    const ff = `font-family:"${to}"!important`;
+    rules.push(`[data-vd-ff="${i}"]{${ff}}`, `[data-vd-ffb="${i}"]::before{${ff}}`, `[data-vd-ffa="${i}"]::after{${ff}}`);
+  });
+  const tag = [];
+  for (const r of document.querySelectorAll(rootSel)) for (const el of [r, ...r.querySelectorAll('*')]) {
+    const k = key.get(getComputedStyle(el).fontFamily); if (k != null) tag.push([el, 'vdFf', k]);
+    const kb = key.get(getComputedStyle(el, '::before').fontFamily); if (kb != null) tag.push([el, 'vdFfb', kb]);
+    const ka = key.get(getComputedStyle(el, '::after').fontFamily); if (ka != null) tag.push([el, 'vdFfa', ka]);
+  }
+  for (const [el, d, k] of tag) el.dataset[d] = k; // only after every computed style was read
+  const st = document.createElement('style'); st.id = '__vd_ff'; st.textContent = rules.join('\n'); document.head.appendChild(st);
+  await document.fonts.ready;
+  return failed;
+}
+
+const fontsLink = (fam, tuples) => `https://fonts.googleapis.com/css2?family=${encodeURIComponent(fam).replace(/%20/g, '+')}:ital,wght@` +
+  `${[...tuples].sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).join(';')}&display=swap`;
+
+// Plan and apply the override on a loaded page -> per root [{from, to, reason}] (reason 'override-failed', with
+// cause = the original reason, when the target did not render; those lists keep their original font).
+async function overrideFonts(page, rootSel, fo) {
+  const { perRoot, rendered, styles } = await page.evaluate(collectFonts, { rootSel, probeText: PROBE_TEXT });
+  const map = {}; const subOf = {};
+  for (const list of Object.keys(rendered)) {
+    const r = resolveFamily(fo.fontMap, list, rendered[list]);
+    if (r.sub) { map[list] = r.ff; subOf[list] = r.sub; }
+  }
+  const targets = [...new Set(Object.values(map))];
+  let failed = [];
+  if (targets.length) {
+    const already = await page.evaluate(rendersInPage, { fams: targets, probeText: PROBE_TEXT });
+    const tuples = {};
+    for (const [list, to] of Object.entries(map)) for (const t of styles[list] || ['0,400']) (tuples[to] ||= new Set()).add(t);
+    const links = fo.webFonts === false ? [] : targets.filter((t) => !already[t]).map((t) => fontsLink(t, tuples[t]));
+    const faces = Object.entries(tuples).flatMap(([fam, set]) => [...set].map((t) => [fam, +t.split(',')[0], +t.split(',')[1]]));
+    failed = await page.evaluate(applyOverride, { rootSel, map, links, faces, timeoutMs: fo.timeoutMs ?? 15000, probeText: PROBE_TEXT });
+  }
+  return perRoot.map((lists) => {
+    const out = []; const seen = new Set();
+    for (const l of lists) {
+      const sub = subOf[l]; if (!sub) continue;
+      const e = failed.includes(sub.to) ? { ...sub, reason: 'override-failed', cause: sub.reason } : sub;
+      const k = `${e.from}|${e.to}|${e.reason}`;
+      if (!seen.has(k)) { seen.add(k); out.push(e); }
+    }
+    return out;
+  });
+}
+
+// Screenshot of every root. Ancestors of the roots paint nothing and the page is white (as in the proxy), so what
+// shows through a root's rounded corners or transparent areas is not the surrounding mockup chrome. Transforms on.
+async function shootRoots(page, rootSel) {
+  const n = await page.evaluate((sel) => {
+    const s = document.getElementById('__vd_notf'); if (s) s.remove();
+    const anc = new Set();
+    for (const r of document.querySelectorAll(sel)) for (let a = r.parentElement; a; a = a.parentElement) anc.add(a);
+    for (const a of anc) {
+      for (const [k, v] of [['background', 'transparent'], ['box-shadow', 'none'], ['border-color', 'transparent'], ['outline-color', 'transparent']]) a.style.setProperty(k, v, 'important');
+    }
+    document.documentElement.style.setProperty('background', '#fff', 'important');
+    return document.querySelectorAll(sel).length;
+  }, rootSel);
+  const loc = page.locator(rootSel); const out = [];
+  for (let i = 0; i < n; i++) out.push(await loc.nth(i).screenshot({ animations: 'disabled' }));
+  return out;
+}
+
+const validSelector = (page, sel) => page.evaluate((s) => { try { document.querySelectorAll(s); return true; } catch { return false; } }, sel);
+
+// png: also screenshot every root (clipped to the root, device scale 2) after measuring, so the image shows the same
+// widened layout and fonts the boxes were measured on. Used by verify (Task 6) for crops and pixel %.
+// fo (font override): before measuring, families Figma would substitute are replaced by the Figma family. With
+// fo.original and png, the roots are also shot before the override (original fonts, for the normalisation report).
+async function measure(browser, url, args, width, png = false, fo = null) {
   const page = await browser.newPage({ viewport: { width: Math.round(width), height: VIEWPORT_HEIGHT }, deviceScaleFactor: 2 });
   try {
     await page.goto(url, { waitUntil: 'load' });
     await page.evaluate(() => document.fonts.ready.then(() => 0));
-    const res = await page.evaluate(measurePage, args);
-    if (png && res.count && res.screens) {
-      // transforms back on; ancestors of the roots paint nothing and the page is white (as in the proxy), so what
-      // shows through a root's rounded corners or transparent areas is not the surrounding mockup chrome
-      await page.evaluate((sel) => {
-        const s = document.getElementById('__vd_notf'); if (s) s.remove();
-        const anc = new Set();
-        for (const r of document.querySelectorAll(sel)) for (let a = r.parentElement; a; a = a.parentElement) anc.add(a);
-        for (const a of anc) {
-          for (const [k, v] of [['background', 'transparent'], ['box-shadow', 'none'], ['border-color', 'transparent'], ['outline-color', 'transparent']]) a.style.setProperty(k, v, 'important');
-        }
-        document.documentElement.style.setProperty('background', '#fff', 'important');
-      }, args.rootSel);
-      const loc = page.locator(args.rootSel);
-      res.png = [];
-      for (let i = 0; i < res.count; i++) res.png.push(await loc.nth(i).screenshot({ animations: 'disabled' }));
+    let pngOriginal = null, fontSubs = null;
+    if (fo && await validSelector(page, args.rootSel)) {
+      if (png && fo.original) pngOriginal = await shootRoots(page, args.rootSel);
+      fontSubs = await overrideFonts(page, args.rootSel, fo);
     }
+    const res = await page.evaluate(measurePage, args);
+    if (fontSubs) res.fontSubs = fontSubs;
+    if (pngOriginal) res.pngOriginal = pngOriginal;
+    if (png && res.count && res.screens) res.png = await shootRoots(page, args.rootSel);
     return res;
   } finally { await page.close(); }
 }
@@ -522,7 +652,8 @@ function mergeNode(a, mapB) {
 }
 
 export async function captureScreens(htmlPath, opts = {}) {
-  const { root, widen, widenBy = 120, nameOf, viewport = DEFAULT_VIEWPORT, png = false } = opts;
+  const { root, widen, widenBy = 120, nameOf, viewport = DEFAULT_VIEWPORT, png = false, fontOverride = true } = opts;
+  const fo = fontOverride ? { fontMap: opts.fontMap || defaultFontMap(), webFonts: opts.webFonts !== false, timeoutMs: opts.fontTimeoutMs } : null;
   if (!root) throw new Error('captureScreens: thiếu opts.root (selector của màn)');
   if (!(widenBy > 0)) throw new Error(`captureScreens: widenBy phải > 0 (nhận ${widenBy})`);
   if (!(viewport > 0)) throw new Error(`captureScreens: viewport phải > 0 (nhận ${viewport})`);
@@ -533,7 +664,7 @@ export async function captureScreens(htmlPath, opts = {}) {
 
   const browser = await launchBrowser();
   try {
-    const A = await measure(browser, url, args, viewport, png);
+    const A = await measure(browser, url, args, viewport, png, fo && { ...fo, original: true });
     if (A.badSelector) throw new Error(`không tìm thấy màn: selector "${root}" không hợp lệ (${A.badSelector})`);
     if (!A.count) throw new Error(`không tìm thấy màn: selector "${root}" không khớp phần tử nào trong ${abs}`);
     if (A.widenMissing != null) {
@@ -561,7 +692,7 @@ export async function captureScreens(htmlPath, opts = {}) {
     const anyBound = bound.some(Boolean), anyFree = bound.some((b) => !b);
     const passB = async (forBound) => {
       const res = await measure(browser, url, { ...args, extras: widens.map((w, i) => (bound[i] === forBound && !forBound ? w.by : 0)) },
-        forBound ? viewport + boundWiden.by : viewport, png);
+        forBound ? viewport + boundWiden.by : viewport, png, fo);
       if (res.count !== A.count) throw new Error(`số màn khác nhau giữa hai lần đo (${A.count} và ${res.count}) với selector "${root}"`);
       return res;
     };
@@ -569,6 +700,14 @@ export async function captureScreens(htmlPath, opts = {}) {
     const Bfree = anyFree ? await passB(false) : null;
     const B = { screens: A.screens.map((_, i) => (bound[i] ? Bbound : Bfree).screens[i]) };
     const pngB = (i) => (bound[i] ? Bbound : Bfree).png[i];
+    // font substitutions per screen: A's, plus any target that failed only in the B pass
+    const subsOf = (i) => {
+      const out = [...((A.fontSubs || [])[i] || [])];
+      for (const e of (((bound[i] ? Bbound : Bfree).fontSubs || [])[i] || [])) {
+        if (!out.some((x) => x.from === e.from && x.to === e.to && x.reason === e.reason)) out.push(e);
+      }
+      return out;
+    };
 
     const usedIds = new Set();
     const screens = A.screens.map((sA, i) => {
@@ -597,6 +736,8 @@ export async function captureScreens(htmlPath, opts = {}) {
         tree: mergeNode(sA.tree, mapB), excluded, fonts: [...new Set([...sA.fonts, ...sB.fonts])], fontsRendered: { ...sA.fontsRendered, ...sB.fontsRendered },
         svgDefs: { ...sA.svgDefs, ...sB.svgDefs }, fontCss: A.fontCss,
         ...(png ? { png: [A.png[i], pngB(i)] } : {}),
+        ...(fo ? { fontSubs: subsOf(i) } : {}),
+        ...(fo && png && A.pngOriginal ? { pngOriginal: A.pngOriginal[i] } : {}),
       };
     });
     return { screens };

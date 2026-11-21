@@ -19,13 +19,14 @@
 //   earlier sibling's far edge. Sub-pixel text rounding (within tolText) that grows a frame and pushes later siblings
 //   is never a root, while a shift or resize beyond tolerance leaves at least one root (for a FILL child stretched by
 //   a wrongly sized parent the root is reported on the child). root.why lists the axes: x/y position, w/h size.
-//   A root is explained by a flag of that node or of a source ancestor, nearest first. fontSubstitution and
-//   mixedRunHeight explain the flagged text node only; unsafeWiden explains roots at width B only.
+//   A root is explained by a flag of that node or of a source ancestor, nearest first. mixedRunHeight explains the
+//   flagged text node only; unsafeWiden explains roots at width B only. fontSubstitution explains nothing (R10: capture
+//   measures the source in the Figma font already; a leftover flag is info, kept in report.flags).
 // Layer 3, content: data (text normalised for whitespace only, icon ref / glyph / inline svg, font family: expected =
 //   the Figma family of the modelled spec, actual = what the proxy declares for it; a family in fontsMissing does not
-//   render, which is a mismatch) and crops (input.crops: [{id, ratio}] measured by measureCrops on source nodes whose
-//   box at A has area <= 4000px²; ratio > 0.05 fails). A crop failure on a node that has (or contains) substituted text
-//   or that is (inside) a raster node is listed in `cropExplained`, not in `crop`.
+//   render, which is a mismatch; a screen.fontSubs entry with reason 'override-failed' is a mismatch on the root) and crops (input.crops: [{id, ratio}] measured by measureCrops on source nodes whose
+//   box at A has area <= 4000px²; ratio > 0.05 fails). A crop failure on a node that is (inside) a raster node is
+//   listed in `cropExplained`, not in `crop`.
 // pixel (whole screen at A and B) and strict (share of checked nodes within tolerance) are reference only.
 import { defaultFontMap, firstFamily } from './font-map.mjs';
 import { cropDiffMany, pixelDiff } from './imgdiff.mjs';
@@ -38,7 +39,9 @@ const EPS = 1e-6;
 const W = ['A', 'B'];
 const r2 = (v) => Math.round(v * 100) / 100;
 const r3 = (v) => Math.round(v * 1000) / 1000;
-const SELF_ONLY = new Set(['fontSubstitution', 'mixedRunHeight']);
+const SELF_ONLY = new Set(['mixedRunHeight']);
+// R10: fonts are substituted before inference (capture fontOverride), so a fontSubstitution flag excuses nothing
+const NEVER_EXPLAINS = new Set(['fontSubstitution']);
 
 const isTextSrc = (n) => !n.icon && (n.kind === 'text' || (n.kind === 'pseudo' && !!n.runs));
 const runsText = (runs) => (runs || []).map((r) => (r.br ? '\n' : r.t ?? '')).join('');
@@ -160,7 +163,7 @@ export function verifyScreen(input, opts = {}) {
   function explain(e, M) {
     for (let a = e, self = true; a; a = a.parent, self = false) {
       for (const k of flagsById.get(a.n.id) || []) {
-        if (!self && SELF_ONLY.has(k)) continue;
+        if (NEVER_EXPLAINS.has(k) || (!self && SELF_ONLY.has(k))) continue;
         if (k === 'unsafeWiden' && M !== 'B') continue;
         return k;
       }
@@ -170,6 +173,10 @@ export function verifyScreen(input, opts = {}) {
 
   // ---- layer 3: data ----
   const data = [];
+  // a substituted family capture could not load was measured in the original font: Figma will differ
+  for (const f of screen.fontSubs || []) {
+    if (f.reason === 'override-failed') data.push({ id: screen.tree.id, kind: 'font', expected: f.to, actual: `${f.from} (override-failed)` });
+  }
   const missing = new Set([...(proxy.A?.fontsMissing || []), ...(proxy.B?.fontsMissing || [])]);
   for (const { n } of list) {
     const s = specById.get(n.id);
@@ -196,8 +203,6 @@ export function verifyScreen(input, opts = {}) {
   const crop = [], cropExplained = [];
   const hasFlag = (id, kind) => (flagsById.get(id) || []).includes(kind);
   const cropReason = (e) => {
-    const sub = (x) => hasFlag(x.id, 'fontSubstitution') || (x.kids || []).some(sub);
-    if (sub(e.n)) return 'fontSubstitution';
     for (let a = e; a; a = a.parent) if (hasFlag(a.n.id, 'raster')) return 'raster';
     return null;
   };
@@ -221,7 +226,7 @@ export function verifyScreen(input, opts = {}) {
     crop.length === 0 && data.length === 0;
   return {
     id: screen.id, checked, total: list.length, unchecked, uncheckedReasons, nodes, roots,
-    crop, cropExplained, cropChecked: Array.isArray(crops) ? crops.length : 0, data, pixel, strict, skipped, pass,
+    crop, cropExplained, cropChecked: Array.isArray(crops) ? crops.length : 0, data, pixel, strict, skipped, pass, flags,
     tol: { frame: tolFrame, text: tolText },
   };
 }

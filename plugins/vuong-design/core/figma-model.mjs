@@ -19,24 +19,32 @@ export function figmaTextBox(wChrome, hChrome, letterSpacingPx) {
   return { w: Math.ceil(wChrome - (letterSpacingPx || 0) - EPS), h: Math.ceil(hChrome - EPS) };
 }
 
+// The family Figma will use for a CSS family list, given the family Chrome rendered for it (renderedList, default the
+// first family): { ff, sub?: { from, to, reason } }. Shared with capture's font override.
+export function resolveFamily(fontMap, list, renderedList) {
+  const first = firstFamily(list);
+  const r = renderedList != null ? firstFamily(renderedList) : first;
+  if (isAvailable(fontMap, r) && !isSystemFont(r)) return { ff: fontMap.substitute(r) };
+  const to = fontMap.substitute(r);
+  let from = r, reason = isSystemFont(r) ? 'system' : 'not-in-figma';
+  if (isAvailable(fontMap, first) && r !== first) { from = first; reason = 'not-loaded'; }
+  if (to === from) return { ff: to };
+  return { ff: to, sub: { from, to, reason } };
+}
+
 export function applyFigmaModel(spec, fontMap, opts = {}) {
   const rendered = opts.rendered || {};
   const flags = [];
   const substitutions = [];
   const seen = new Set();
-  // -> { ff, sub?: {from, to, reason} }
   const resolve = (list) => {
-    const first = firstFamily(list);
-    const r = rendered[list] != null ? firstFamily(rendered[list]) : first;
-    if (isAvailable(fontMap, r) && !isSystemFont(r)) return { ff: fontMap.substitute(r) };
-    const to = fontMap.substitute(r);
-    let from = r, reason = isSystemFont(r) ? 'system' : 'not-in-figma';
-    if (isAvailable(fontMap, first) && r !== first) { from = first; reason = 'not-loaded'; }
-    if (to === from) return { ff: to };
-    const sub = { from, to, reason };
+    const res = resolveFamily(fontMap, list, rendered[list]);
+    if (!res.sub) return res;
+    const sub = res.sub;
+    const { from, reason } = sub;
     const key = `${from}|${reason}`;
     if (!seen.has(key)) { seen.add(key); substitutions.push(sub); }
-    return { ff: to, sub };
+    return res;
   };
 
   const visit = (n) => {

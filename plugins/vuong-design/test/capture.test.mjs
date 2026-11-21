@@ -43,7 +43,7 @@ test('chooseWiden flags unsafe and keeps requested delta when the safe delta is 
 // ---- browser capture ----
 
 let basic;
-before(async () => { if (!skip) basic = await captureScreens(join(FIX, 'capture-basic.html'), { root: '.scr' }); });
+before(async () => { if (!skip) basic = await captureScreens(join(FIX, 'capture-basic.html'), { root: '.scr', fontOverride: false }); });
 
 test('basic: one screen measured at native and native + 120', { skip }, () => {
   assert.equal(basic.screens.length, 1);
@@ -237,7 +237,7 @@ test('failed @font-face load: fontsRendered maps the list to serif and the model
   const { defaultFontMap } = await import('../core/font-map.mjs');
   const { applyFigmaModel } = await import('../core/figma-model.mjs');
   const { inferScreen } = await import('../core/infer.mjs');
-  const screen = (await captureScreens(join(FIX, 'capture-ghost-font.html'), { root: '.scr' })).screens[0];
+  const screen = (await captureScreens(join(FIX, 'capture-ghost-font.html'), { root: '.scr', fontOverride: false })).screens[0];
   const list = Object.keys(screen.fontsRendered).find((l) => l.includes('Ghost'));
   assert.ok(list, JSON.stringify(screen.fontsRendered));
   assert.equal(screen.fontsRendered[list], 'serif');
@@ -255,8 +255,38 @@ test('basic: the screen carries the <symbol> markup its icons reference (svgDefs
 });
 
 test('@font-face rules are carried with absolute urls (fontCss.faces)', { skip }, async () => {
-  const screen = (await captureScreens(join(FIX, 'capture-ghost-font.html'), { root: '.scr' })).screens[0];
+  const screen = (await captureScreens(join(FIX, 'capture-ghost-font.html'), { root: '.scr', fontOverride: false })).screens[0];
   assert.equal(screen.fontCss.faces.length, 1);
   assert.match(screen.fontCss.faces[0], /font-family: "?Ghost"?/);
   assert.match(screen.fontCss.faces[0], /url\("file:\/\/\/.*\/fixtures\/missing\.woff2"\)/);
+});
+
+// ---- font override (R10): substituted families are resolved before inference ----
+// A local stand-in for the Figma family keeps these tests offline: Georgia is installed on Windows; elsewhere skip.
+const localMap = (to) => {
+  const available = ['Inter', to];
+  return { available, substitute: (f) => (available.some((a) => a.toLowerCase() === String(f).trim().replace(/^["']|["']$/g, '').toLowerCase()) ? f : to) };
+};
+const winSkip = skip || (process.platform === 'win32' ? false : 'needs a locally installed Georgia (Windows)');
+const textNodes = (s) => { const out = []; const v = (n) => { if (n.runs) out.push(n); (n.kids || []).forEach(v); }; v(s.tree); return out; };
+
+test('fontOverride: system-ui text is measured in the Figma family and fontSubs lists it', { skip: winSkip }, async () => {
+  const s = (await captureScreens(join(FIX, 'capture-system-font.html'), { root: '.scr', fontMap: localMap('Georgia'), webFonts: false, png: true })).screens[0];
+  assert.deepEqual(s.fontSubs, [{ from: 'system-ui', to: 'Georgia', reason: 'system' }]);
+  const texts = textNodes(s);
+  assert.ok(texts.length >= 3, `text nodes: ${texts.length}`);
+  for (const t of texts) assert.equal(t.font.ff, 'Georgia', `${t.id}: ${t.font.ff}`);
+  assert.deepEqual(s.fonts, ['Georgia']);
+  assert.ok(Buffer.isBuffer(s.pngOriginal), 'original-font PNG at A');
+  assert.notDeepEqual(s.pngOriginal, s.png[0], 'the original-font image differs from the overridden one');
+
+  const off = (await captureScreens(join(FIX, 'capture-system-font.html'), { root: '.scr', fontOverride: false })).screens[0];
+  assert.equal(off.fontSubs, undefined);
+  assert.ok(textNodes(off).every((t) => /system-ui/.test(t.font.ff)));
+});
+
+test('fontOverride: a target that cannot load keeps the original font and is listed as override-failed', { skip }, async () => {
+  const s = (await captureScreens(join(FIX, 'capture-system-font.html'), { root: '.scr', fontMap: localMap('Nope Sans Zz'), webFonts: false })).screens[0];
+  assert.deepEqual(s.fontSubs, [{ from: 'system-ui', to: 'Nope Sans Zz', reason: 'override-failed', cause: 'system' }]);
+  assert.ok(textNodes(s).every((t) => /system-ui/.test(t.font.ff)));
 });

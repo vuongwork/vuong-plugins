@@ -175,7 +175,7 @@ test('verifyScreen: an ancestor flag explains a descendant root; a text flag doe
 
   const inp2 = fixture();
   shift(inp2, 'n.0', [0, 0, 3, 0]);
-  inp2.flags = [{ id: 'n.0.0', kind: 'fontSubstitution', detail: 'Segoe UI → Inter' }];
+  inp2.flags = [{ id: 'n.0.0', kind: 'mixedRunHeight', detail: 'font sizes 14/20px in one line' }];
   r = verifyScreen(inp2);
   assert.deepEqual(rootIds(r), ['n.0']);
   assert.ok(r.roots.every((x) => x.explainedBy === undefined));
@@ -183,9 +183,31 @@ test('verifyScreen: an ancestor flag explains a descendant root; a text flag doe
 
   const inp3 = fixture();
   shift(inp3, 'n.0.0', [0, 0, 4, 0]);
-  inp3.flags = [{ id: 'n.0.0', kind: 'fontSubstitution', detail: 'Segoe UI → Inter' }];
+  inp3.flags = [{ id: 'n.0.0', kind: 'mixedRunHeight', detail: 'font sizes 14/20px in one line' }];
   r = verifyScreen(inp3);
-  assert.ok(r.roots.length && r.roots.every((x) => x.id === 'n.0.0' && x.explainedBy === 'fontSubstitution'));
+  assert.ok(r.roots.length && r.roots.every((x) => x.id === 'n.0.0' && x.explainedBy === 'mixedRunHeight'));
+});
+
+test('verifyScreen (R10): fontSubstitution explains nothing; it is kept in the report as info', () => {
+  const inp = fixture();
+  shift(inp, 'n.0.0', [0, 0, 4, 0]);
+  inp.flags = [{ id: 'n.0.0', kind: 'fontSubstitution', detail: 'Segoe UI → Inter' }];
+  inp.crops = [{ id: 'n.0.0', ratio: 0.3 }];
+  const r = verifyScreen(inp);
+  assert.ok(r.roots.length && r.roots.every((x) => x.explainedBy === undefined));
+  assert.deepEqual(r.crop, [{ id: 'n.0.0', ratio: 0.3 }]);
+  assert.deepEqual(r.cropExplained, []);
+  assert.deepEqual(r.flags, inp.flags);
+  assert.equal(r.pass, false);
+});
+
+test('verifyScreen (R10): a font override that failed in capture is a font data mismatch', () => {
+  const inp = fixture();
+  inp.screen.fontSubs = [{ from: 'Segoe UI', to: 'Inter', reason: 'override-failed', cause: 'system' },
+    { from: 'system-ui', to: 'Inter', reason: 'system' }];
+  const r = verifyScreen(inp);
+  assert.deepEqual(r.data, [{ id: 'n', kind: 'font', expected: 'Inter', actual: 'Segoe UI (override-failed)' }]);
+  assert.equal(r.pass, false);
 });
 
 test('verifyScreen: unsafeWiden explains roots at width B only', () => {
@@ -248,13 +270,13 @@ test('verifyScreen: crop failures fail the screen; crop not run is never a silen
   assert.ok(r.skipped.includes('crop'));
 });
 
-test('verifyScreen: a crop failure on substituted text is listed as explained, not as a failure', () => {
+test('verifyScreen: a crop failure inside a raster node is listed as explained, not as a failure', () => {
   const inp = fixture();
-  inp.flags = [{ id: 'n.0.0', kind: 'fontSubstitution', detail: 'Segoe UI → Inter' }];
-  inp.crops = [{ id: 'n.0.0', ratio: 0.3 }, { id: 'n.0', ratio: 0.1 }];
+  inp.flags = [{ id: 'n.0', kind: 'raster', detail: 'filter: blur(2px)' }];
+  inp.crops = [{ id: 'n.0.1', ratio: 0.3 }, { id: 'n.0', ratio: 0.1 }];
   const r = verifyScreen(inp);
   assert.deepEqual(r.crop, []);
-  assert.deepEqual(r.cropExplained.map((c) => [c.id, c.explainedBy]), [['n.0.0', 'fontSubstitution'], ['n.0', 'fontSubstitution']]);
+  assert.deepEqual(r.cropExplained.map((c) => [c.id, c.explainedBy]), [['n.0.1', 'raster'], ['n.0', 'raster']]);
   assert.equal(r.pass, true);
 });
 
@@ -315,4 +337,29 @@ test('captureScreens({ png: true }) returns clipped root PNGs at A and B', { ski
   }
   const { screens: noPng } = await captureScreens(join(FIX, 'capture-basic.html'), { root: '.scr' });
   assert.equal(noPng[0].png, undefined);
+});
+
+test('R10 pipeline: a system-ui fixture captured with font override verifies with no fontSubstitution excuse', { skip: skip || (process.platform === 'win32' ? false : 'needs a locally installed Georgia (Windows)') }, async () => {
+  const { captureScreens } = await import('../core/capture.mjs');
+  const { inferScreen } = await import('../core/infer.mjs');
+  const { applyFigmaModel } = await import('../core/figma-model.mjs');
+  const { buildProxyHtml, renderProxy } = await import('../core/proxy.mjs');
+  const { verifyScreenWithImages } = await import('../core/verify.mjs');
+  // offline stand-in for the Figma family: Georgia (installed on Windows)
+  const available = ['Inter', 'Georgia'];
+  const fm = { available, substitute: (f) => (available.includes(String(f).trim().replace(/^["']|["']$/g, '')) ? f : 'Georgia') };
+  const s = (await captureScreens(join(FIX, 'capture-system-font.html'), { root: '.scr', fontMap: fm, webFonts: false, png: true })).screens[0];
+  assert.deepEqual(s.fontSubs.map((f) => f.reason), ['system']);
+  const inf = inferScreen(s);
+  const mod = applyFigmaModel(inf.spec, fm, { rendered: s.fontsRendered });
+  const flags = [...inf.flags, ...mod.flags];
+  assert.ok(!flags.some((f) => f.kind === 'fontSubstitution'), JSON.stringify(flags));
+  const html = buildProxyHtml(mod.spec, s.svgDefs, fm, { webFonts: false });
+  const proxy = { A: await renderProxy(browser, html, s.W[0]), B: await renderProxy(browser, html, s.W[1]) };
+  const r = await verifyScreenWithImages(browser, { screen: s, spec: mod.spec, proxy, flags, fontMap: fm });
+  assert.deepEqual(r.unchecked, []);
+  assert.deepEqual(r.data, []);
+  assert.ok(!r.roots.some((x) => x.explainedBy === 'fontSubstitution'));
+  assert.deepEqual(r.roots.filter((x) => !x.explainedBy), [], JSON.stringify(r.roots));
+  assert.deepEqual(r.crop, [], JSON.stringify(r.crop));
 });

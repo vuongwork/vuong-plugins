@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>capture-basic</title>
+<style>
+  body { margin: 0; font-family: Arial, sans-serif; }
+  .scr { width: 300px; height: 600px; background: #ffffff; }
+  .row { display: flex; gap: 8px; padding: 8px; }
+  .item { flex: 1; height: 40px; background: #e5e5e5; border-radius: 4px; }
+  /* Monospace: 17 chars x 0.6em x 34px = ~347px, wraps at 300, fits at 420. */
+  .hello { margin: 0; font: 34px/40px "Courier New", monospace; }
+  .mixed { margin: 0; font-size: 14px; }
+  .badge { position: relative; width: 20px; height: 20px; }
+  .badge::after { content: ""; position: absolute; right: 0; top: 0; width: 8px; height: 8px; background: #e53935; border-radius: 50%; }
+  .ico { display: block; width: 24px; height: 24px; color: #333333; fill: currentColor; }
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+  <symbol id="i" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/></symbol>
+</svg>
+<div class="scr">
+  <div class="row"><div class="item"></div><div class="item"></div><div class="item"></div></div>
+  <p class="hello">Xin chào thế giới</p>
+  <p class="mixed">Chữ <b>đậm</b> và <i>nghiêng</i> lồng nhau</p>
+  <div class="badge"></div>
+  <svg class="ico"><use href="#i"/></svg>
+  <div style="display:none">Ẩn hẳn</div>
+  <span style="visibility:hidden">Ẩn nhưng giữ chỗ</span>
+</div>
+</body>
+</html>

@@ -281,7 +281,52 @@ test('probe (R18): a model delta on a node outside tolerance in the layout proxy
     [{ id: 'n.0', kind: 'shrink' }]);
   assert.deepEqual(unexplained(r), [], JSON.stringify(r.roots));
   assert.deepEqual(r.needsApproval.map((m) => [m.id, m.width, m.magnitude]).sort(), [['n.1', 'A', 40], ['n.1', 'B', 40]]);
+  assert.deepEqual(r.needsApproval[0].delta, [0, 40, 0, 0], 'delta = modelled delta minus layout delta');
   assert.equal(r.pass, false);
+});
+
+// ---- reviewer probes (fix round 3) ----
+const F = (id, sz, kids) => ({ id, t: 'F', sz, ...(kids ? { kids } : {}) });
+
+test('probe (R19): a HUG row 1.5px wider whose children moved only within tolerance is a root', () => {
+  const row = { id: 'n.r', kind: 'frame', rA: [0, 0, 100, 40], rB: [0, 0, 100, 40], kids: [
+    { id: 'n.r.0', kind: 'frame', rA: [10, 10, 30, 20], rB: [10, 10, 30, 20] }, { id: 'n.r.1', kind: 'frame', rA: [60, 10, 30, 20], rB: [60, 10, 30, 20] }] };
+  const spec = F('n', ['FIXED', 'FIXED'], [F('n.r', ['HUG', 'HUG'], [F('n.r.0', ['FIXED', 'FIXED']), F('n.r.1', ['FIXED', 'FIXED'])])]);
+  const r = probe(flat([row]), both((b) => { b['n.r.0'][0] -= 0.5; b['n.r.1'][0] += 0.5; b['n.r'][2] += 1.5; }), [], spec);
+  assert.deepEqual(unexplained(r).map((x) => x.id), ['n.r', 'n.r'], JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+});
+
+test('probe (R19): four nested HUG frames each 0.5px wider around an exact leaf (outer 2px) are not a silent pass', () => {
+  const ids = ['n.a', 'n.a.b', 'n.a.b.c', 'n.a.b.c.d'];
+  let node = { id: 'n.a.b.c.d.0', kind: 'frame', rA: [50, 10, 20, 20], rB: [50, 10, 20, 20] }, sp = F(node.id, ['FIXED', 'FIXED']);
+  for (const id of ids.slice().reverse()) { node = { id, kind: 'frame', rA: [0, 0, 120, 40], rB: [0, 0, 120, 40], kids: [node] }; sp = F(id, ['HUG', 'FIXED'], [sp]); }
+  const r = probe(flat([node]), both((b) => ids.slice().reverse().forEach((id, i) => { b[id][2] += 0.5 * (i + 1); })), [], F('n', ['FIXED', 'FIXED'], [sp]));
+  assert.ok(unexplained(r).some((x) => x.id === 'n.a.b.c'), JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+});
+
+test('probe (R17 amended): a card only pushed by an explained sibling does not excuse its child with its flag', () => {
+  const a = { id: 'n.0', kind: 'frame', rA: [0, 0, 100, 40], rB: [0, 0, 100, 40] };
+  const c = { id: 'n.1', kind: 'frame', rA: [0, 40, 100, 60], rB: [0, 40, 100, 60], kids: [{ id: 'n.1.0', kind: 'frame', rA: [10, 50, 40, 20], rB: [10, 50, 40, 20] }] };
+  const spec = F('n', ['FIXED', 'FIXED'], [F('n.0', ['FIXED', 'FIXED']), F('n.1', ['FIXED', 'FIXED'], [F('n.1.0', ['FIXED', 'FIXED'])])]);
+  const r = probe(flat([a, c]), both((b) => { b['n.0'][3] += 10; b['n.1'][1] += 10; b['n.1.0'][1] += 10; b['n.1.0'][2] += 8; }),
+    [{ id: 'n.0', kind: 'shrink' }, { id: 'n.1', kind: 'weightedFill' }], spec);
+  assert.deepEqual(unexplained(r).map((x) => x.id), ['n.1.0', 'n.1.0'], JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+});
+
+test('probe (R17 amended): a FILL child growing with its flagged parent does not excuse a grandchild with its flag', () => {
+  const g = { id: 'n.0', kind: 'frame', rA: [0, 0, 200, 60], rB: [0, 0, 200, 60], kids: [{ id: 'n.0.0', kind: 'frame', rA: [0, 0, 200, 60], rB: [0, 0, 200, 60], kids: [
+    { id: 'n.0.0.0', kind: 'frame', rA: [10, 10, 40, 20], rB: [10, 10, 40, 20] }] }] };
+  const spec = F('n', ['FIXED', 'FIXED'], [F('n.0', ['FIXED', 'FIXED'], [F('n.0.0', ['FILL', 'FIXED'], [F('n.0.0.0', ['FIXED', 'FIXED'])])])]);
+  const mut = both((b) => { b['n.0'][2] += 10; b['n.0.0'][2] += 10; b['n.0.0.0'][3] += 6; });
+  let r = probe(flat([g]), mut, [{ id: 'n.0.0', kind: 'weightedFill' }], spec);
+  assert.deepEqual(unexplained(r).map((x) => x.id).sort(), ['n.0', 'n.0', 'n.0.0.0', 'n.0.0.0'], JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+  // the parent's flag is not the excuse; a flagged root grandparent still explains it (R17 as amended)
+  r = probe(flat([g]), mut, [{ id: 'n.0', kind: 'shrink' }, { id: 'n.0.0', kind: 'weightedFill' }], spec);
+  assert.ok(!r.roots.some((x) => x.explainedBy === 'weightedFill'), JSON.stringify(r.roots));
 });
 
 // ---- coverage, flags, tolerances ----

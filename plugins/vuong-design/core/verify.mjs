@@ -24,7 +24,8 @@
 //    - size is inherited when |dw| <= tol, or the node is FILL (spec sizing) and its nearest source ancestor's size
 //      moved the same way by at least as much, or the node is FILL and non-FILL siblings' size changes it absorbs
 //      account for it, or the node is HUG and its size change equals the extent change of its grounded children
-//      (non-FILL, not positioned only from this node's far/middle edge). So a wrongly sized parent whose FILL children
+//      (non-FILL, not positioned only from this node's far/middle edge; a child within tolerance counts as unchanged,
+//      R19). So a wrongly sized parent whose FILL children
 //      absorb the change is the root, not its children; and a hugging frame around a wrong child is not a second root.
 //    - position is inherited when one of its edges (near, far, middle) is within tol of 0, or matches a moved edge of
 //      the nearest source ancestor (near, far, middle) or of the previous source sibling (near, far), that reference
@@ -32,9 +33,9 @@
 //   Small offsets cannot add up unseen: the first node whose offset exceeds tol while its references stayed within
 //   tol is a root. root.why lists the axes: x/y position, w/h size.
 //   Flags (R12, R17): a node's own flag explains its root; an ancestor's flag explains a descendant root only if that
-//   ancestor deviates for its own reason at that width (no edge of it within tol on an axis, or its size off on a
-//   non-HUG axis, or off on a HUG axis by more than its grounded children's extent change) and the flag is not
-//   text-only (mixedRunHeight). A HUG ancestor that only grows with the descendant is no excuse.
+//   ancestor is itself a root at that width (deviates for its own reason) and the flag is not text-only
+//   (mixedRunHeight). An ancestor that only inherited its deviation (pushed by a sibling, FILL growing with its
+//   parent, HUG growing with the descendant) is no excuse.
 //   fontSubstitution explains nothing (R10: capture measures the source in the Figma font). On a screen flagged
 //   unsafeWiden, roots at width B are `unchecked` (reason unsafeWiden), never explained.
 // Layer 3, content (modelled proxy):
@@ -145,7 +146,6 @@ export function verifyScreen(input, opts = {}) {
     const sz = (id, ax) => { const s = specById.get(id); return s && s.sz ? s.sz[ax] : null; };
     const edges = (d, ax) => [d[ax], d[ax] + d[ax + 2], d[ax] + d[ax + 2] / 2]; // near, far, middle
     const outside = (id) => !within(byId.get(id).n, D.get(id));
-    const anchored = (e, ax) => edges(D.get(e.n.id), ax).some((v) => Math.abs(v) <= tolOf(e.n) + EPS);
     // R16: a reference (parent edge, previous sibling edge) counts only if that reference node is outside tolerance;
     // an edge delta of a node within tolerance is never a reference, so sub-tolerance offsets cannot add up unseen
     const posOK = (e, ax, withParentFar) => {
@@ -160,13 +160,15 @@ export function verifyScreen(input, opts = {}) {
     };
     // HUG on axis ax: does the size change equal the extent change of the grounded children? Grounded = non-FILL and
     // not positioned from this node's far/middle edge (a child that only follows those edges would be circular).
+    // R19: a child within tolerance counts as unchanged (its source box), so nested HUG levels cannot each hide tol.
     const hugAccounts = (e, ax) => {
       const d = D.get(e.n.id), t = tolOf(e.n);
       const ks = (e.n.kids || []).filter((k) => D.has(k.id) && sz(k.id, ax) !== 'FILL' &&
         (posOK(byId.get(k.id), ax, false) || !posOK(byId.get(k.id), ax, true)));
       if (!ks.length) return false;
       const ext = (boxes) => Math.max(...boxes.map((b) => b[ax] + b[ax + 2])) - Math.min(...boxes.map((b) => b[ax]));
-      const dU = ext(ks.map((k) => layout[M].boxes[k.id])) - ext(ks.map((k) => src(k, M)));
+      const now = (k) => (outside(k.id) ? layout[M].boxes[k.id] : src(k, M));
+      const dU = ext(ks.map(now)) - ext(ks.map((k) => src(k, M)));
       return Math.abs(d[ax + 2] - dU) <= t + EPS;
     };
     const sizeOK = (e, ax) => {
@@ -186,13 +188,9 @@ export function verifyScreen(input, opts = {}) {
       if (me === 'HUG' && hugAccounts(e, ax)) return true;
       return false;
     };
-    // R17: an ancestor deviates for its own reason when, on some axis, no edge of it stays within tolerance (its
-    // position is off), or its size is off on a non-HUG axis, or on a HUG axis by more than its children account for
-    const ownDeviation = (a) => [0, 1].some((ax) => {
-      if (!anchored(a, ax)) return true;
-      if (Math.abs(D.get(a.n.id)[ax + 2]) <= tolOf(a.n) + EPS) return false;
-      return sz(a.n.id, ax) !== 'HUG' || !hugAccounts(a, ax);
-    });
+    // R17 (amended): an ancestor deviates for its own reason only when it is itself a root at this width; a size or
+    // position it inherited (pushed by a sibling, FILL growing with its parent, HUG growing with a child) is no excuse
+    const ownDeviation = (a) => [0, 1].some((ax) => !sizeOK(a, ax) || !posOK(a, ax, true));
     const explain = (e) => {
       for (let a = e, self = true; a; a = a.parent, self = false) {
         if (!self && (!D.has(a.n.id) || !outside(a.n.id) || !ownDeviation(a))) continue;

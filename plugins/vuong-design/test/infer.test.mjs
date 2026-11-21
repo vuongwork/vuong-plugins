@@ -122,9 +122,14 @@ test('flags: shrink, weightedFill and spaceAround on the right nodes', { skip },
   assert.ok(has('weightedFill', 'w2'), JSON.stringify(c.flags));
   assert.ok(has('weightedFill', 'w1'), JSON.stringify(c.flags));
   assert.ok(has('spaceAround', 'r3'), JSON.stringify(c.flags));
+  // equal grow, non-zero basis, different final sizes: Figma FILL behaves like basis 0
+  const a1 = c.flags.find((f) => f.kind === 'weightedFill' && f.id === c.node('a1').id);
+  assert.ok(a1, JSON.stringify(c.flags));
+  assert.match(a1.detail, /basis/);
   for (const f of c.flags) assert.equal(typeof f.detail, 'string');
   const got = c.flags.map((f) => `${f.id} ${f.kind}`).sort();
-  const want = [['sq', 'shrink'], ['w2', 'weightedFill'], ['w1', 'weightedFill'], ['r3', 'spaceAround']]
+  const want = [['sq', 'shrink'], ['w2', 'weightedFill'], ['w1', 'weightedFill'], ['r3', 'spaceAround'],
+    ['a1', 'weightedFill'], ['a2', 'weightedFill']]
     .map(([cls, kind]) => `${c.node(cls).id} ${kind}`).sort();
   assert.deepEqual(got, want);
 });

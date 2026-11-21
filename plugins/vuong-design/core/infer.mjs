@@ -406,11 +406,19 @@ export function inferScreen(screen) {
           for (const [f, cs] of fills) if (f.A[Z] > mn + 1) cs.min = r2(f.A[Z]);
         }
       }
-      // weightedFill: FILL siblings whose flex-grow differs (Figma FILL shares free space equally)
+      // weightedFill: Figma FILL behaves like flex: 1 1 0, so FILL siblings with different flex-grow, or equal grow
+      // on a non-zero basis (auto/content/px) that leaves them at different sizes, cannot be reproduced
       const grows = fills.filter(([f]) => f.src && f.src.flex);
-      if (grows.length > 1 && new Set(grows.map(([f]) => f.src.flex.g)).size > 1) {
-        const detail = `flex-grow ${grows.map(([f]) => f.src.flex.g).join('/')}`;
-        for (const [f] of grows) flag(f.id, 'weightedFill', detail);
+      if (grows.length > 1) {
+        const fx = grows.map(([f]) => f.src.flex);
+        const zeroBasis = (b) => /^0(\.0+)?(px|%)?$/.test(String(b).trim());
+        const sizes = grows.map(([f]) => f.A[Z]);
+        let detail = null;
+        if (new Set(fx.map((x) => x.g)).size > 1) detail = `flex-grow ${fx.map((x) => x.g).join('/')}`;
+        else if (fx.some((x) => !zeroBasis(x.b)) && Math.max(...sizes) - Math.min(...sizes) > 0.5) {
+          detail = `equal flex-grow ${fx[0].g} on basis ${fx.map((x) => x.b).join('/')}, sizes ${sizes.map(r2).join('/')}`;
+        }
+        if (detail) for (const [f] of grows) flag(f.id, 'weightedFill', detail);
       }
       // HUG is valid on an axis when frame size == content bbox + padding at BOTH widths
       const cb = union(items.map((i) => i.A)), cbB = union(items.map((i) => i.B));

@@ -15,9 +15,11 @@
 //    (a) text with font.sub (its Chrome size was measured in another font) and (b) the HUG height of wrapping text (it
 //    depends on the width, so a pin taken at width A is wrong at B): those hug naturally in the proxy. On a modelled
 //    page (spec root `model: 'figma'`, set by applyFigmaModel) they are then pinned to figmaTextBox(natural size)
-//    before boxes are read (re-measure-then-pin). R21: an unmodelled spec (inferScreen's, verify's layout proxy)
-//    applies no Figma model at all: no figmaTextBox, HUG text keeps Chrome's natural size. This is decided by the
-//    spec, not by a caller option, so the layout proxy cannot be rendered modelled by mistake.
+//    before boxes are read (re-measure-then-pin). R21/R26: an unmodelled spec (inferScreen's, verify's layout proxy)
+//    applies no Figma model at all: no figmaTextBox and no HUG text pinned to its spec w/h; every HUG text axis keeps
+//    Chrome's natural size, so a text styled differently from the source shows as a layout deviation. This is decided
+//    by the spec, not by a caller option, so the layout proxy cannot be rendered modelled by mistake; renderProxy
+//    returns the page's mark as `model` ('figma' | 'none', R27) and verifyScreen checks it.
 //  - fonts: every family goes through fontMap.substitute(firstFamily(ff)), i.e. the font Figma will really use.
 // Boxes are [x, y, w, h] relative to the root's top-left, rounded to 0.01, measured with transforms off — the same
 // convention as capture's rA/rB. The PNG keeps transforms. `dom` is what the page rendered per node id: { text? (leaf
@@ -45,6 +47,7 @@ const weight = (fw) => Math.min(900, Math.max(100, Math.round((parseFloat(fw) ||
 
 export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
   const { fontLinks = [], fontFaces = [], webFonts = true } = opts;
+  const modelled = spec.model === 'figma';
   const family = (ff) => fontMap.substitute(firstFamily(ff));
   const used = new Map(); // family -> Set('ital,wght')
   const use = (fam, fw, fst) => {
@@ -111,9 +114,11 @@ export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
       if (s === 'FIXED') return [`${dim}:${px(v)}`];
       if (s !== 'HUG') return [];
       if (isText) {
-        const pinned = !sub && (ax === 0 || !textWrap);
+        // R26: only a modelled page pins HUG text; an unmodelled one keeps Chrome's natural size, so a text whose spec
+        // style differs from the source shows as a layout deviation instead of being forced into the source box
+        const pinned = modelled && !sub && (ax === 0 || !textWrap);
         if (pinned) return [`${dim}:${px(v)}`];
-        data.push(ax === 0 ? 'data-pin-w' : 'data-pin-h');
+        if (modelled) data.push(ax === 0 ? 'data-pin-w' : 'data-pin-h');
         return [`${dim}:${ax === 0 ? 'max-content' : 'auto'}`];
       }
       return [`${dim}:${ax === 0 ? 'max-content' : 'auto'}`];
@@ -255,7 +260,8 @@ export async function renderProxy(browser, html, width, opts = {}) {
       for (const [id, x] of v) document.querySelector(`[data-id="${CSS.escape(id)}"]`).style.setProperty(d, `${x}px`);
     }, [dim, vals]);
     // R21: Figma's text rounding only on a modelled page; an unmodelled one keeps Chrome's natural sizes
-    if (await page.evaluate(() => document.querySelector('[data-root]').dataset.model === 'figma')) {
+    const model = (await page.evaluate(() => document.querySelector('[data-root]').dataset.model === 'figma')) ? 'figma' : 'none';
+    if (model === 'figma') {
       await pin('width', (await natural('[data-pin-w]')).map(([id, w, h, ls]) => [id, figmaTextBox(w, h, ls).w]));
       await pin('height', (await natural('[data-pin-h]')).map(([id, w, h]) => [id, figmaTextBox(w, h, 0).h]));
     }
@@ -296,7 +302,7 @@ export async function renderProxy(browser, html, width, opts = {}) {
       return { boxes, fontsMissing, dom };
     });
     const png = await page.locator('[data-root]').screenshot({ animations: 'disabled' });
-    return { boxes: res.boxes, png, fontsMissing: res.fontsMissing, dom: res.dom };
+    return { boxes: res.boxes, png, fontsMissing: res.fontsMissing, dom: res.dom, model };
   } finally {
     await page.close();
     rmSync(dir, { recursive: true, force: true });

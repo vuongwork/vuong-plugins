@@ -153,6 +153,18 @@ test('R21: an unmodelled spec keeps the natural HUG height of wrapping text; onl
   assert.equal(proxy[3], 26, 'the modelled proxy rounds up like Figma');
 });
 
+test('R26/R27: the unmodelled proxy pins no HUG text (a style error shows); the modelled one keeps its pins; both are marked', { skip }, async () => {
+  const spec = structuredClone(CASES.baseline.spec); // unmodelled; 'Big' measured 52x36 in the source at 28px
+  spec.kids[0].font = { ...spec.kids[0].font, fs: '40px' }; // the spec styles it at 40px
+  const layout = await renderProxy(browser, buildProxyHtml(spec, {}, fm, OFFLINE), 300);
+  assert.equal(layout.model, 'none');
+  assert.ok(layout.boxes['n.0'][2] > 52 + 5, `layout proxy width ${layout.boxes['n.0'][2]} (HUG text pinned to the source size)`);
+  const { spec: modelled } = applyFigmaModel(spec, fm);
+  const proxy = await renderProxy(browser, buildProxyHtml(modelled, {}, fm, OFFLINE), 300);
+  assert.equal(proxy.model, 'figma');
+  assert.deepEqual(proxy.boxes['n.0'].slice(2), [52, 36], 'the modelled proxy still pins the rounded HUG size');
+});
+
 test('icon renders from the symbol table; png is a PNG of the root', { skip }, async () => {
   const { boxes, png } = await render(CASES.icon, 100);
   assertBox(boxes['n.0'], CASES.icon.expect['n.0'], 'icon');

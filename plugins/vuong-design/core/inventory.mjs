@@ -4,8 +4,8 @@
 //
 // inventory(screens: [{ screen: IR screen, spec: modelled SNode root }]) -> { uses: Use[], vars }
 //
-// Use = { screen, node, cat, prop, value, raw, role, token?, tokenMismatch?, tokens?, flex?, unparsed?, run?, rawCandidates?,
-//         sizes?, fixed?, img? }
+// Use = { screen, node, cat, prop, value, raw, role, token?, tokenMismatch?, tokens?, flex?, unparsed?, noise?, run?,
+//         rawCandidates?, sizes?, fixed?, img? }
 //  - screen: IR screen id (name when id is missing); node: SNode id (= source INode id unless synthetic).
 //  - cat / prop:
 //      color   bg | borderT|R|B|L (border colour per side) | color (text: node colour and each distinct run colour)
@@ -30,6 +30,10 @@
 //    Several such entries with the same `to` (two source fonts both measured in Inter): raw stays the IR list and
 //    rawCandidates = the sorted `from`s. No matching entry (no override, or a font Figma has): raw = the IR list.
 //  - flex: 'sb' for a space-between primary axis (Figma auto spacing): prop gap, no value.
+//  - noise (R67): true on a space, size or radius use whose value is under 0.5 px. Such values are residues of the
+//    measured geometry (capture rounds rects to 0.01 px and infer derives padding as differences of them, and the
+//    R38 FILL split leaves 0.01-0.03 px on buttons / rows), not authored values: the use is listed for tracing (value
+//    and raw kept) but is not a design value: normalize and tokens skip it. Border widths and icons are never noise.
 //  - token: the CSS variable name from the IR node's tok[prop] (capture, Task 1), or undefined when the node has
 //    none (no tok, synthetic frame, a run with its own colour from a nested element). For type the tokens are per
 //    key in `tokens` ({ family, size, weight, lineHeight, letterSpacing }), only for keys the run does not override
@@ -59,6 +63,14 @@
 //  - abs offsets (positions), background images and gradients, outline, text decoration: not tokenised in plan 2.
 //  - paints inside icon markup (icon.svg) and the svg root's `color` (only reaches shapes through currentColor in
 //    the markup): only the root fill / stroke the proxy and Figma set are listed; 'none' is skipped.
+//  - M2-a: the svg root's fill when it is the CSS initial black (#000000) and no painted shape of the icon inherits
+//    it: the markup (icon.svg, or for a sprite icon the symbol in screen.svgDefs[icon.ref], R48 / R54) is parsed, and
+//    every fillable shape (path, rect, circle, ellipse, polygon, polyline, text), reached through groups and <use>
+//    (target in the markup or in svgDefs), has a fill of its own or of an ancestor below the root (attribute or
+//    inlined style; 'inherit' does not count; fill="none" does), or there is no fillable shape at all (lines only).
+//    Content of defs / clipPath / mask / pattern / marker / gradients is not painted except through <use>. A stroke
+//    icon (<g fill="none">) thus gives no black fill use. Markup missing (a sprite whose symbol was not captured), an
+//    unresolved <use>, or any other root fill colour: the use is kept.
 //  - duplicate run styles / colours inside one text node are listed once (a colour-only span does not add a type).
 //
 // Output order: uses sorted by screen, node id in tree order (DOM path; ::before and the sole text child first, then
@@ -112,6 +124,73 @@ const colorValue = (raw) => {
 const lsPx = (ls) => (ls == null || ls === 'normal' ? 0 : num(ls));
 const varPx = (v) => { const m = /^\s*(-?\d*\.?\d+)(px)?\s*$/.exec(String(v ?? '')); return m && (m[2] || +m[1] === 0) ? +m[1] : null; };
 const LEN_CATS = new Set(['space', 'size', 'radius', 'border', 'icon']);
+const NOISE_CATS = new Set(['space', 'size', 'radius']);
+const NOISE_PX = 0.5;
+
+// ---------------- M2-a: does the svg root's fill reach a painted shape? ----------------
+const SVG_TAG = /<!--[\s\S]*?-->|<(\/?)([A-Za-z][\w:.-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/g;
+const SVG_ATTR = /([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
+const SVG_VOID_HTML = /^(img|br|hr|input|meta|link)$/;
+function parseSvg(markup) {
+  const root = { tag: '#root', attrs: {}, kids: [] }, stack = [root];
+  for (const m of String(markup).matchAll(SVG_TAG)) {
+    if (!m[2]) continue; // comment
+    const tag = m[2].replace(/^.*:/, '').toLowerCase();
+    if (m[1]) { // closing tag: pop to the matching open element
+      const i = stack.map((e) => e.tag).lastIndexOf(tag);
+      if (i > 0) stack.length = i;
+      continue;
+    }
+    const attrs = {};
+    for (const a of m[3].matchAll(SVG_ATTR)) attrs[a[1].toLowerCase()] = a[2] ?? a[3] ?? a[4];
+    const el = { tag, attrs, kids: [] };
+    stack[stack.length - 1].kids.push(el);
+    if (!m[4] && !SVG_VOID_HTML.test(tag)) stack.push(el);
+  }
+  return root;
+}
+const SVG_SHAPES = new Set(['path', 'rect', 'circle', 'ellipse', 'polygon', 'polyline', 'text', 'tspan', 'textpath']);
+const SVG_HIDDEN = new Set(['defs', 'clippath', 'mask', 'pattern', 'marker', 'symbol', 'lineargradient', 'radialgradient', 'filter',
+  'title', 'desc', 'metadata', 'style', 'script']);
+const ownFill = (el) => {
+  const st = /(?:^|;)\s*fill\s*:\s*([^;]+)/i.exec(el.attrs.style || '');
+  const v = st ? st[1] : el.attrs.fill;
+  return v !== undefined && !/^\s*(inherit)?\s*$/i.test(String(v).replace(/!important/i, ''));
+};
+// true when some fillable shape inherits the root fill, or when that cannot be told (unresolved <use>)
+function rootFillReaches(markup, defs) {
+  const ids = new Map();
+  const index = (el) => { if (el.attrs && el.attrs.id && !ids.has(el.attrs.id)) ids.set(el.attrs.id, el); el.kids.forEach(index); };
+  const top = parseSvg(markup);
+  index(top);
+  for (const k of Object.keys(defs || {}).sort(cmpStr)) index(parseSvg(defs[k]));
+  const active = new Set();
+  const walk = (el, inherits, instanced) => {
+    if (!instanced && SVG_HIDDEN.has(el.tag)) return false;
+    const inh = inherits && !ownFill(el);
+    if (SVG_SHAPES.has(el.tag) && inh) return true;
+    if (el.tag === 'use') {
+      const ref = String(el.attrs.href ?? el.attrs['xlink:href'] ?? '').replace(/^.*#/, '');
+      const t = ids.get(ref);
+      if (!t || active.has(t)) return true; // cannot tell: keep the use
+      active.add(t);
+      const r = walk(t, inh, true);
+      active.delete(t);
+      return r;
+    }
+    return el.kids.some((k) => walk(k, inh, false));
+  };
+  // the root (svg, or the instanced symbol of a sprite) carries the icon's own fill: start below it
+  return top.kids.some((r) => r.kids.some((k) => walk(k, !ownFill(r) || r.tag === 'svg', false)));
+}
+function svgFillUnused(ic, screen) {
+  const c = parseColor(String(ic.fill));
+  if (c.unparsed !== undefined || toHex(c) !== '#000000') return false;
+  const defs = screen.svgDefs || {};
+  const markup = ic.svg !== undefined ? ic.svg : ic.ref != null ? defs[ic.ref] : undefined;
+  if (markup === undefined || markup === null) return false;
+  return !rootFillReaches(markup, defs);
+}
 const KEEP_FONT = new Set(['version', 'version-failed', 'override-failed']);
 
 function indexIR(tree) {
@@ -168,6 +247,7 @@ function screenUses(screen, spec) {
     const parentSig = sn.syn ? sigOf(sourceOf(sn.id)) : sigOf(ir ? irParent.get(ir.id) : null);
     const add = (cat, prop, v, extra = {}) => {
       const u = { screen: sid, node: sn.id, cat, prop, ...v, role: `${cat}|${prop}|${sig}|${parentSig}` };
+      if (NOISE_CATS.has(cat) && typeof v.value === 'number' && Math.abs(v.value) < NOISE_PX) u.noise = true; // R67
       const { token, ...rest } = extra;
       const t = token === undefined ? {} : cat === 'color' ? colTok(token, v.value) : LEN_CATS.has(cat) ? lenTok(token, v.value) : { token };
       for (const [k, x] of Object.entries({ ...t, ...rest })) if (x !== undefined) u[k] = x;
@@ -218,7 +298,7 @@ function screenUses(screen, spec) {
       addLen('icon', 'height', sn.h, tok.height, { sizes, fixed: sz[1] === 'FIXED' });
       const ic = sn.icon || {};
       if (ic.svg !== undefined || ic.ref !== undefined || ic.fill !== undefined || ic.stroke !== undefined) {
-        if (ic.fill && ic.fill !== 'none') addColor('fill', ic.fill, tok.fill);
+        if (ic.fill && ic.fill !== 'none' && !svgFillUnused(ic, screen)) addColor('fill', ic.fill, tok.fill);
         if (ic.stroke && ic.stroke !== 'none') addColor('stroke', ic.stroke, tok.stroke);
       } else if (ic.color) addColor('color', ic.color, tok.color);
       if (ic.glyph !== undefined && sn.font && num(sn.font.fs) != null) {

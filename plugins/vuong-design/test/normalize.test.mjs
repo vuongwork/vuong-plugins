@@ -32,10 +32,10 @@ test('ROLE_MAJORITY: padding 13 among five same-role frames at 12 becomes 12, au
 test('GRID4: padding 13 with no majority asks, proposal 12, the spec keeps 13', () => {
   const r = N([pad(13), pad(13, { node: '1.0' }), pad(14, { node: '1.1' }), pad(10, { node: '1.2' }), pad(11, { node: '1.3' })]);
   const e = only(r, 'GRID4').find((x) => x.from === 13);
-  assert.deepEqual([e.status, e.to, e.proposal, e.question], ['ask', 13, 12, 'grid4|space|paddingT|div.x|div.p|13']);
+  assert.deepEqual([e.status, e.to, e.proposal, e.question], ['ask', 13, 12, 'grid4|space|13|12']);
   assert.equal(e.nodes.length, 2);
   const q = r.questions.find((x) => x.key === e.question);
-  assert.deepEqual([q.code, q.options, q.default, q.affects, q.answered], ['GRID4', [12, 16, 13], 12, 2, undefined]);
+  assert.deepEqual([q.code, q.options, q.default, q.affects, q.answered, q.roles], ['GRID4', [12, 16, 13], 12, 2, undefined, ['space|paddingT|div.x|div.p']]);
   assert.match(q.text, /^[^\n]+\?$/);
   // 14: tie between 12 and 16 -> the larger
   assert.equal(only(r, 'GRID4').find((x) => x.from === 14).proposal, 16);
@@ -49,8 +49,9 @@ test('GRID4 answered from the rules file: "12" applies; keeping 13 is kept; anot
   const rules = readRules(fx('rules-answered.json'));
   let r = normalize(inv(uses()), rules);
   let [e] = only(r, 'GRID4');
-  assert.deepEqual([e.status, e.from, e.to, e.proposal], ['answered', 13, 12, 12]);
-  assert.equal(r.questions[0].answered, 12);
+  assert.deepEqual([e.status, e.from, e.to, e.proposal, e.question], ['answered', 13, 12, 12, 'grid4|space|13|12']);
+  // answered through the per-role key: the group question is resolved, not open
+  assert.deepEqual(r.questions.map((q) => [q.key, q.answered, q.resolved]), [['grid4|space|13|12', undefined, true], ['project.grid4', undefined, undefined]]);
   assert.deepEqual(r.stale, ['icon|18', 'project.lineHeightInt']);
   r = N(uses(), { 'grid4|space|paddingT|div.x|div.p|13': 16 });
   [e] = only(r, 'GRID4');
@@ -58,7 +59,7 @@ test('GRID4 answered from the rules file: "12" applies; keeping 13 is kept; anot
   r = N(uses(), { 'grid4|space|paddingT|div.x|div.p|13': 13 });
   assert.equal(r.entries.length, 0);
   assert.equal(r.counts.GRID4, 1);
-  assert.equal(r.questions[0].answered, 13);
+  assert.equal(r.questions[0].resolved, true);
   assert.throws(() => N(uses(), { 'grid4|space|paddingT|div.x|div.p|13': 15 }), /grid4\|space\|paddingT\|div\.x\|div\.p\|13/);
 });
 
@@ -172,8 +173,9 @@ test('SRC_SQUASH (R65): avatar 40/32 at A/B with a FIXED size asks to keep the l
     use('size', 'width', 50, 'img.ph|div.p', { img: true, sizes: [50, 30, 50.5, 30] })]);
   const s = only(r, 'SRC_SQUASH');
   assert.deepEqual(s.map((e) => [e.prop, e.from, e.proposal, e.status, e.nodes.length, e.question]),
-    [['height', 40, 40, 'ask', 2, 'squash|img.av|div.say'], ['width', 40, 40, 'ask', 2, 'squash|img.av|div.say']]);
-  assert.deepEqual(r.questions.map((q) => [q.key, q.options, q.default, q.affects]), [['squash|img.av|div.say', ['declared', 'keep'], 'declared', 2]]);
+    [['height', 40, 40, 'ask', 2, 'squash|size|40|40'], ['width', 40, 40, 'ask', 2, 'squash|size|40|40']]);
+  assert.deepEqual(r.questions.map((q) => [q.key, q.options, q.default, q.affects]),
+    [['project.srcSquash', ['accept-all', 'ask-each'], 'ask-each', 2], ['squash|size|40|40', ['declared', 'keep'], 'declared', 2]]);
   assert.equal(r.counts.IN_SCALE, 1); // a stable 50 px image keeps its size, never GRID4
   // squashed at A (32 at A, 40 at B, spec 32): proposal 40; answered -> applied
   const b = N([use('size', 'width', 32, 'img.av|div.say', { img: true, sizes: [32, 32, 40, 40] })], { 'squash|img.av|div.say': 'declared' });
@@ -223,7 +225,8 @@ test('works on a real inventory: tokened and in-scale values are kept', () => {
   assert.deepEqual(r.counts, { IN_SCALE: 4, TOKEN: 1 }); // paddingR/B/L 12 + height 80; paddingT has the token
   assert.deepEqual([...new Set(only(r, 'GRID4').map((e) => e.cat))], ['radius']);
   assert.equal(only(r, 'GRID4').length, 4);
-  assert.equal(r.questions.length, 4); // one per corner role
+  // R68: the four corner roles share one question (radius 6 -> 8) plus the project-wide one
+  assert.deepEqual(r.questions.map((q) => [q.key, q.affects, q.roles && q.roles.length]), [['grid4|radius|6|8', 1, 4], ['project.grid4', 1, undefined]]);
 });
 
 test('readRules: missing file is empty; bad version, missing version, unknown key throw naming it', () => {
@@ -241,7 +244,76 @@ test('rulesTemplate drafts the open questions with their defaults and texts', ()
   const r = N([pad(13, { node: 'a' }), pad(14, { node: 'b', screen: 's2' }), type(16, 20.8, 'p.a|div.c')], { 'grid4|space|paddingT|div.x|div.p|14': 12 });
   const t = rulesTemplate(r.questions);
   assert.deepEqual(Object.keys(t), ['version', 'answers', 'notes']);
-  assert.deepEqual(t.answers, { 'grid4|space|paddingT|div.x|div.p|13': 12, 'project.lineHeightInt': 'yes' });
+  assert.deepEqual(t.answers, { 'grid4|space|13|12': 12, 'project.grid4': 'ask-each', 'project.lineHeightInt': 'yes' });
   assert.deepEqual(Object.keys(t.notes), Object.keys(t.answers));
   assert.equal(t.version, 1);
+});
+
+test('R67: noise uses (< 0.5 px) are skipped and counted, never asked about, never in a role majority', () => {
+  const r = N([pad(0.01, { noise: true }), pad(0.02, { noise: true, node: 'n2' }), use('radius', 'radiusTL', 0.3, 'div.x|div.p', { noise: true }),
+    pad(13, { node: 'a' }), pad(14, { node: 'b' })]);
+  assert.equal(r.counts.NOISE, 3);
+  assert.ok(!r.entries.some((e) => e.from < 0.5));
+  assert.ok(!r.questions.some((q) => /\|0\.0[12]\||\|0\.3\|/.test(q.key)));
+  // noise does not make a majority: 13 among three noise uses and one 12 has none
+  const m = N([pad(0.01, { noise: true }), pad(0.01, { noise: true, node: 'n2' }), pad(0.01, { noise: true, node: 'n3' }), pad(12, { node: 'a' }), pad(13, { node: 'b' })]);
+  assert.deepEqual(only(m, 'GRID4').map((e) => e.from), [13]);
+});
+
+test('R68: one question per (code, cat, family, from, proposal) across roles; answer order per-role > group > project', () => {
+  const sp = (prop, v, role, node, o = {}) => use('space', prop, v, role, { node, ...o });
+  const mk = () => [
+    sp('paddingT', 13, 'div.a|div.p', 'a1'), sp('paddingL', 13, 'div.b|div.p', 'b1'), sp('gap', 13, 'div.c|div.p', 'c1', { screen: 's2' }),
+    sp('counterGap', 13, 'div.d|div.p', 'd1'), sp('paddingT', 10, 'div.a|div.p', 'a2'),
+    use('radius', 'radiusTL', 13, 'div.a|div.p', { node: 'a1' }), use('radius', 'radiusBR', 13, 'div.a|div.p', { node: 'a1' }),
+    use('size', 'width', 13, 'div.e|div.p', { node: 'e1' }), use('size', 'height', 13, 'div.e|div.p', { node: 'e1' }),
+    blue('#1a73e8', 'a.btn|div.p', { node: 'k1' }), blue('#1a73e8', 'a.btn|div.p', { node: 'k2' }),
+    blue('#1a74e8', 'span.t|div.p', { node: 'k3' }), use('color', 'color', '#1a74e8', 'span.u|div.p', { node: 'k4', run: 0 }),
+  ];
+  let r = N(mk());
+  assert.deepEqual(r.questions.map((q) => [q.key, q.affects, q.roles]), [
+    ['color|#1a74e8|#1a73e8', 2, ['color|bg|span.t|div.p', 'color|color|span.u|div.p']],
+    ['grid4|radius|13|12', 1, ['radius|radiusBR|div.a|div.p', 'radius|radiusTL|div.a|div.p']],
+    ['grid4|size|13|12', 1, ['size|height|div.e|div.p', 'size|width|div.e|div.p']],
+    ['grid4|space|10|12', 1, ['space|paddingT|div.a|div.p']],
+    ['grid4|space|13|12', 4, ['space|counterGap|div.d|div.p', 'space|gap|div.c|div.p', 'space|paddingL|div.b|div.p', 'space|paddingT|div.a|div.p']],
+    ['project.colorNear', 2, undefined],
+    ['project.grid4', 6, undefined],
+  ]);
+  assert.deepEqual(r.questions.find((q) => q.key === 'project.grid4').options, ['accept-all', 'ask-each']);
+  assert.ok(r.entries.every((e) => e.status === 'ask'));
+  // a group answer applies to every role of the group; a per-role answer wins over it
+  r = N(mk(), { 'grid4|space|13|12': 16, 'grid4|space|gap|div.c|div.p|13': 12 });
+  const sp13 = only(r, 'GRID4').filter((e) => e.cat === 'space' && e.from === 13);
+  assert.deepEqual(sp13.map((e) => [e.prop, e.status, e.to, e.question]), [
+    ['counterGap', 'answered', 16, 'grid4|space|13|12'], ['gap', 'answered', 12, 'grid4|space|13|12'],
+    ['paddingL', 'answered', 16, 'grid4|space|13|12'], ['paddingT', 'answered', 16, 'grid4|space|13|12']]);
+  assert.equal(r.questions.find((q) => q.key === 'grid4|space|13|12').answered, 16);
+  assert.deepEqual(r.stale, []);
+  // project accept-all applies each proposal where nothing more specific answered; a group 'keep' wins over it
+  r = N(mk(), { 'project.grid4': 'accept-all', 'grid4|size|13|12': 13, 'project.colorNear': 'accept-all' });
+  assert.deepEqual(only(r, 'GRID4').map((e) => [e.cat, e.prop, e.from, e.status, e.to]), [
+    ['radius', 'radiusBR', 13, 'answered', 12], ['radius', 'radiusTL', 13, 'answered', 12],
+    ['space', 'counterGap', 13, 'answered', 12], ['space', 'gap', 13, 'answered', 12], ['space', 'paddingL', 13, 'answered', 12],
+    ['space', 'paddingT', 10, 'answered', 12], ['space', 'paddingT', 13, 'answered', 12]]);
+  assert.deepEqual(only(r, 'COLOR_NEAR').map((e) => [e.status, e.to]), [['answered', '#1a73e8'], ['answered', '#1a73e8']]);
+  assert.equal(r.counts.GRID4, 2); // the two size uses kept by the group answer
+  assert.ok(r.questions.filter((q) => q.key.startsWith('grid4|') && q.key !== 'grid4|size|13|12').every((q) => q.resolved === true && q.answered === undefined));
+  assert.deepEqual(rulesTemplate(r.questions).answers, {});
+  // ask-each changes nothing; an invalid project answer throws naming the key
+  assert.equal(JSON.stringify(N(mk(), { 'project.grid4': 'ask-each' }).entries), JSON.stringify(N(mk()).entries));
+  assert.throws(() => N(mk(), { 'project.grid4': 'yes' }), /project\.grid4/);
+  // the template lists group and project keys only, never per-role keys
+  assert.deepEqual(Object.keys(rulesTemplate(N(mk()).questions).answers), ['color|#1a74e8|#1a73e8', 'grid4|radius|13|12', 'grid4|size|13|12',
+    'grid4|space|10|12', 'grid4|space|13|12', 'project.colorNear', 'project.grid4']);
+});
+
+test('R68: icon frames group by size across roles; project.iconFrame accept-all applies the proposals', () => {
+  const ic = (v, role, node) => [use('icon', 'width', v, role, { fixed: true, node }), use('icon', 'height', v, role, { fixed: true, node })];
+  const uses = () => [...ic(18, 'svg.a|div.r', '1'), ...ic(18, 'svg.b|div.s', '2'), ...ic(22, 'svg.a|div.r', '3')];
+  let r = N(uses());
+  assert.deepEqual(r.questions.map((q) => [q.key, q.affects, q.roles && q.roles.length]), [['icon|18', 2, 4], ['icon|22', 1, 2], ['project.iconFrame', 3, undefined]]);
+  r = N(uses(), { 'project.iconFrame': 'accept-all', 'icon|22': 22 });
+  assert.deepEqual([...new Set(only(r, 'ICON_FRAME').map((e) => `${e.from}->${e.to}:${e.status}`))], ['18->20:answered']);
+  assert.equal(r.counts.ICON_FRAME, 2);
 });

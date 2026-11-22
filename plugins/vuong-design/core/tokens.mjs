@@ -5,7 +5,8 @@
 // buildTokens(inv, entries = [], names = {}) -> { tokens, css, map, warnings }
 //  - Values are the values AFTER normalisation: a use covered by an entry with status 'auto' or 'answered' takes the
 //    entry's `to` (type entries: fontSize -> size, lineHeight -> lineHeight); 'ask' entries keep `from`. Uses with no
-//    value (inventory `unparsed`, space-between gaps) get no token and no map entry.
+//    value (inventory `unparsed`, space-between gaps) and geometry noise (inventory `noise`, R67: space / size / radius
+//    under 0.5 px) get no token and no map entry.
 //  - tokens = { primitive, role, component: {} } (groups are plain objects; a token has $type, $value, $description
 //    and $extensions['vuong-design'] = { uses, nodes, screens, ... }).
 //    primitive: color.cNN (by uses, descending, then hex), space.N, size.N (FIXED frame / image sizes and icon
@@ -184,7 +185,7 @@ export function buildTokens(inv, entries = [], names = {}) {
     }
   };
   for (const u of uses) {
-    if (u.unparsed || u.flex || u.value === null || u.value === undefined) continue;
+    if (u.unparsed || u.flex || u.noise || u.value === null || u.value === undefined) continue;
     const { value, by } = normValue(u, idx);
     let k = null;
     if (u.cat === 'color' && typeof value === 'string') k = addPrim('color', value, u);

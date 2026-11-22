@@ -8,7 +8,9 @@
 //    naming the file and the key. Whether an answer is one of its question's options is checked by normalize (it
 //    knows the options); answers for questions that no longer exist are reported there as `stale`.
 //  - rulesTemplate(questions) -> { version: 1, answers: { [key]: default }, notes: { [key]: question text } } for the
-//    questions not answered yet, keys sorted. A draft only: copying it answers every question with the proposal.
+//    open questions (neither answered nor resolved by a per-role or project answer), keys sorted. A draft only:
+//    copying it answers every group question with its proposal; the project keys draft 'ask-each' (no change). R68:
+//    normalize lists group and project keys only, so the template never holds per-role keys (still read if written).
 import { existsSync, readFileSync } from 'node:fs';
 
 export const RULES_VERSION = 1;
@@ -35,7 +37,7 @@ export function readRules(path) {
 }
 
 export function rulesTemplate(questions) {
-  const open = [...(questions || [])].filter((q) => q.answered === undefined).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const open = [...(questions || [])].filter((q) => q.answered === undefined && !q.resolved).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return {
     version: RULES_VERSION,
     answers: Object.fromEntries(open.map((q) => [q.key, q.default])),

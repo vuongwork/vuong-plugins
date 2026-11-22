@@ -14,13 +14,31 @@
 //    target appended in the rare case two entries would collide).
 //  - `kept` outcomes are not entries: counts[code] = number of use decisions kept under that code (TOKEN, FLEX,
 //    IN_SCALE, and a question code when the answer chose to keep the value). A type use makes two decisions (font
-//    size and line height).
-//  - Question = { key, cat, code, text (English, one sentence), options, default, affects (distinct nodes),
-//    answered? }. Every question is listed, answered or not (`answered` = the saved answer); the CLI asks only the
-//    open ones. rules.answers[key] must be one of `options` (compared as strings; a number may be written "12"),
-//    else normalize throws an Error naming the key. default = the proposal (what the template drafts), never
-//    applied without an answer. stale = answer keys that match no question (sorted).
+//    size and line height). counts.NOISE = uses skipped as geometry noise (R67).
+//  - Question = { key, cat, code, text (English, one sentence), options, default, affects (distinct nodes), roles?,
+//    answered?, resolved? }. Every question is listed, answered or not (`answered` = the saved answer for this key);
+//    resolved = true when the question has no answer of its own but every decision in it was settled by a per-role
+//    or project answer. The CLI asks only the open ones (neither answered nor resolved). rules.answers[key] must be
+//    one of `options` (compared as strings; a number may be written "12"), else normalize throws an Error naming the
+//    key. default = the proposal (what the template drafts), never applied without an answer. stale = answer keys
+//    that match no question and no per-role key (sorted).
 //  - unparsed = uses with no readable value (inventory `unparsed`), never normalised.
+//
+// R68: questions are grouped across roles, so a person answers one question per value, not per element:
+//  - group question, one per (code, cat, prop family, from, proposal), roles = the role keys it covers (sorted),
+//    affects = their distinct nodes. Prop families: space = padding T/R/B/L + gap + counterGap, radius = the four
+//    corners, size = width + height, icon = width + height; a colour is one family over every colour prop. Keys:
+//    GRID4 `grid4|<cat>|<from>|<proposal>` (e.g. grid4|space|13|12), ICON_FRAME `icon|<from>` (the proposal follows
+//    from the size), COLOR_NEAR `color|<from>|<to>`, SRC_SQUASH `squash|<cat>|<from>|<proposal>`. Entries stay per
+//    role; their `question` is the group key.
+//  - per-role keys (the earlier format) are still read, never listed: GRID4 `grid4|<role>|<from>`, SRC_SQUASH
+//    `squash|<node role>` (role without cat and prop). Same options as the group.
+//  - project questions (options accept-all / ask-each, default ask-each, so nothing changes without the user):
+//    project.grid4, project.iconFrame, project.colorNear, project.srcSquash; accept-all applies each decision's
+//    proposal. Listed when the code has at least one decision. (project.typeScale / project.lineHeightInt stay
+//    yes / no, as below.)
+//  - answer order for a decision: per-role key > group key > project key (accept-all) > none (ask). The template
+//    (rules-file.mjs rulesTemplate) therefore lists group and project keys only.
 //
 // Codes, in the order tried for each use (the first that applies decides):
 //  TOKEN           the use carries a CSS variable whose value is its value (inventory R64) -> kept.
@@ -33,8 +51,9 @@
 //                  Colour: no more frequent colour within ΔE2000 3 of the same alpha.
 //  ROLE_MAJORITY   off-scale space / frame size / radius / icon value whose role (all screens) has one value used by
 //                  strictly more than half its uses, that value in scale -> that value, auto.
-//  GRID4           off-grid space / frame size / radius with no majority -> question `grid4|<role>|<from>`, options
-//                  the two neighbouring multiples of 4 and the value itself, proposal the nearest (tie -> larger).
+//  GRID4           off-grid space / frame size / radius with no majority -> question `grid4|<cat>|<from>|<proposal>`
+//                  (R68), options the two neighbouring multiples of 4 and the value itself, proposal the nearest
+//                  (tie -> larger).
 //                  Never for font sizes, border widths, icons, images, flexible values.
 //  COLOR_DE1       colour (unnamed: no use of that hex has a token) within ΔE2000 < 1 of a more frequent unnamed
 //                  colour (more uses; tie -> lower hex) with the same alpha: its uses in a role the other colour also
@@ -53,8 +72,10 @@
 //  SRC_SQUASH      R65: an icon or image whose spec axis is FIXED but whose measured size differs between widths A
 //                  and B by more than 0.75 px (flex-shrink squashed it at one width). Capture records no declared CSS
 //                  size, so the declared size is taken to be the larger of the two measurements (flex-shrink only
-//                  shrinks; usually B, the wider) -> question `squash|<node role>` (options declared / keep), proposal
-//                  the larger size at both widths. An icon off 16/20/24 px reaches ICON_FRAME first.
+//                  shrinks; usually B, the wider) -> question `squash|<cat>|<from>|<proposal>` (options declared /
+//                  keep), proposal the larger size at both widths. An icon off 16/20/24 px reaches ICON_FRAME first.
+// Before every code: R67, a use marked `noise` by inventory (space / size / radius under 0.5 px, a rounding residue
+// of the measured geometry) is skipped and counted as NOISE; it never takes part in a role majority.
 // Not normalised in plan 2: shadow, opacity, icon glyph font size, type family / weight / style / letter spacing /
 // transform. A use with tokenMismatch (inventory R64) is treated as having no token.
 import { parseColor, deltaE2000 } from './color.mjs';
@@ -97,13 +118,36 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
   let unparsed = 0;
   const keep = (code) => { counts[code] = (counts[code] || 0) + 1; };
   const questions = new Map(); // key -> question
-  const pending = []; // decisions: { u, cat, role, prop, from, code, target, qkey?, auto?, keepValue?, node }
+  const pending = []; // decisions: { u, cat, role, prop, from, code, target, qkey?, rkey?, bulk?, auto?, keepOpt?, map?, node }
+  const roleKeys = new Map(); // per-role key -> options (read, never listed)
+  const bulks = new Map(); // project key -> { code, nodes }
 
-  const ask = (key, cat, code, text, options, def) => {
-    if (!questions.has(key)) questions.set(key, { key, cat, code, text, options, default: def, nodes: new Set() });
+  // text: a string or a function of the question (its roles / nodes are only known at the end)
+  const ask = (key, cat, code, text, options, def, grouped = true) => {
+    if (!questions.has(key)) questions.set(key, { key, cat, code, text, options, default: def, nodes: new Set(), roles: grouped ? new Set() : null });
     return key;
   };
-  const decide = (d) => pending.push(d);
+  const decide = (d) => {
+    if (d.rkey) roleKeys.set(d.rkey, questions.get(d.qkey).options);
+    if (d.bulk) {
+      const b = bulks.get(d.bulk) || { code: d.code, nodes: new Set() };
+      b.nodes.add(`${d.u.screen}|${d.u.node}`);
+      bulks.set(d.bulk, b);
+    }
+    pending.push(d);
+  };
+  const BULK = { GRID4: 'project.grid4', ICON_FRAME: 'project.iconFrame', COLOR_NEAR: 'project.colorNear', SRC_SQUASH: 'project.srcSquash' };
+  const BULK_CAT = { GRID4: 'space', ICON_FRAME: 'icon', COLOR_NEAR: 'color', SRC_SQUASH: 'size' };
+  const BULK_TEXT = {
+    GRID4: (n) => `Apply every proposed 4 px grid value (${n} off-grid spacing, size and radius question(s)) without asking each one?`,
+    ICON_FRAME: (n) => `Move every icon to its proposed 16, 20 or 24 px frame (${n} icon size question(s)) without asking each one?`,
+    COLOR_NEAR: (n) => `Merge every near colour (ΔE2000 < 3) into its proposed more frequent colour (${n} colour question(s)) without asking each one?`,
+    SRC_SQUASH: (n) => `Keep the declared (larger) size at both widths for every squashed icon or image (${n} question(s)) without asking each one?`,
+  };
+  const roleSummary = (q) => {
+    const sigs = [...q.roles].map((r) => { const [, prop, ...rest] = String(r).split('|'); return `${prop} on ${rest.join('|')}`; }).sort(cmpStr);
+    return sigs.length === 1 ? sigs[0] : `${sigs.length} roles, e.g. ${sigs[0]}`;
+  };
   const nodeOf = (u, withRun) => (withRun && u.run !== undefined ? { screen: u.screen, node: u.node, run: u.run } : { screen: u.screen, node: u.node });
 
   // ---------- numbers: space, size, radius, border, icon width/height ----------
@@ -120,7 +164,7 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     return onGrid(v);
   };
   const byRole = new Map();
-  for (const u of numeric) if (typeof u.value === 'number') {
+  for (const u of numeric) if (typeof u.value === 'number' && !u.noise) {
     const m = byRole.get(u.role) || new Map();
     m.set(u.value, (m.get(u.value) || 0) + 1);
     byRole.set(u.role, m);
@@ -133,6 +177,7 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
   };
 
   for (const u of numeric) {
+    if (u.noise) { keep('NOISE'); continue; }
     if (u.flex) { keep('FLEX'); continue; }
     if (typeof u.value !== 'number') { unparsed++; continue; }
     if (u.token) { keep('TOKEN'); continue; }
@@ -147,25 +192,25 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     }
     if (GRID_CATS.has(u.cat) && !(u.cat === 'size' && u.img)) {
       const nb = grid4Of(v), p = nearest(v, nb);
-      const key = ask(`grid4|${u.role}|${v}`, u.cat, 'GRID4',
-        `${u.cat} ${u.prop} ${v} px on ${nodeSig(u.role)} is off the 4 px grid and its role has no majority value: use ${p} px?`,
+      const key = ask(`grid4|${u.cat}|${v}|${p}`, u.cat, 'GRID4',
+        (q) => `${u.cat} ${v} px (${roleSummary(q)}) is off the 4 px grid with no majority value in its role: use ${p} px?`,
         [...nb, v], p);
-      decide({ ...base, code: 'GRID4', target: p, qkey: key, keepOpt: v, map: (a) => Number(a) });
+      decide({ ...base, code: 'GRID4', target: p, qkey: key, rkey: `grid4|${u.role}|${v}`, bulk: BULK.GRID4, keepOpt: v, map: (a) => Number(a) });
       continue;
     }
     if (u.cat === 'icon' && !inFrames(v)) {
       const p = nearest(v, FRAMES);
       const key = ask(`icon|${v}`, 'icon', 'ICON_FRAME', `Icons drawn at ${v} px are not on a 16, 20 or 24 px frame: use ${p} px?`, [...FRAMES, v], p);
-      decide({ ...base, code: 'ICON_FRAME', target: p, qkey: key, keepOpt: v, map: (a) => Number(a) });
+      decide({ ...base, code: 'ICON_FRAME', target: p, qkey: key, bulk: BULK.ICON_FRAME, keepOpt: v, map: (a) => Number(a) });
       continue;
     }
     // unstable icon (in frames) or image: SRC_SQUASH (R65)
     const ax = axisOf(u), p = r2(Math.max(u.sizes[ax], u.sizes[ax + 2]));
     const sig = nodeSig(u.role);
-    const key = ask(`squash|${sig}`, u.cat, 'SRC_SQUASH',
-      `${sig} has a FIXED size but measures differently at widths A and B (flex-shrink): keep its declared (larger) size at both widths?`,
+    const key = ask(`squash|${u.cat}|${v}|${p}`, u.cat, 'SRC_SQUASH',
+      (q) => `A ${u.cat === 'icon' ? 'icon' : 'image'} ${v} px (${roleSummary(q)}) has a FIXED size but measures differently at widths A and B (flex-shrink): keep its declared ${p} px at both widths?`,
       ['declared', 'keep'], 'declared');
-    decide({ ...base, code: 'SRC_SQUASH', target: p, qkey: key, keepOpt: 'keep', map: () => p });
+    decide({ ...base, code: 'SRC_SQUASH', target: p, qkey: key, rkey: `squash|${sig}`, bulk: BULK.SRC_SQUASH, keepOpt: 'keep', map: () => p });
   }
 
   // ---------- type: font size (TYPE_SCALE), line height (LINE_HEIGHT_INT) ----------
@@ -208,10 +253,10 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     }
   }
   if (typeDecisions.length) {
-    ask(TYPE_Q, 'type', 'TYPE_SCALE', `Move ${new Set(typeDecisions.map((d) => d.from)).size} odd font size(s) to the type scale ${scale.join(', ')} px (nearest size used in the same role)?`, ['yes', 'no'], 'yes');
+    ask(TYPE_Q, 'type', 'TYPE_SCALE', `Move ${new Set(typeDecisions.map((d) => d.from)).size} odd font size(s) to the type scale ${scale.join(', ')} px (nearest size used in the same role)?`, ['yes', 'no'], 'yes', false);
   }
   if (lhDecisions.length) {
-    ask(LH_Q, 'type', 'LINE_HEIGHT_INT', `Round ${new Set(lhDecisions.map((d) => d.from)).size} fractional line height(s) to whole px?`, ['yes', 'no'], 'yes');
+    ask(LH_Q, 'type', 'LINE_HEIGHT_INT', `Round ${new Set(lhDecisions.map((d) => d.from)).size} fractional line height(s) to whole px?`, ['yes', 'no'], 'yes', false);
   }
   typeDecisions.forEach(decide); lhDecisions.forEach(decide);
 
@@ -245,7 +290,8 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     const nearRest = fate.near && untok.some((u) => !(fate.de1 && fate.de1.roles.has(u.role)));
     const nearKey = nearRest ? `color|${X.hex}|${fate.near.to}` : null;
     const nearAnswer = nearKey ? answers[nearKey] : undefined;
-    if (autoMoves || (nearAnswer !== undefined && String(nearAnswer) === fate.near.to)) moved.add(X.hex);
+    const nearMoves = nearKey && (nearAnswer !== undefined ? String(nearAnswer) === fate.near.to : answers[BULK.COLOR_NEAR] === 'accept-all');
+    if (autoMoves || nearMoves) moved.add(X.hex);
   });
   for (const u of colors) {
     if (typeof u.value !== 'string') { unparsed++; continue; }
@@ -258,21 +304,40 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
       const why = named ? ' (a named colour is involved)' : ' in another role';
       const key = ask(`color|${u.value}|${to}`, 'color', 'COLOR_NEAR',
         `${u.value} is ${de.toFixed(2)} ΔE from the more frequent ${to}${why}: merge it into ${to}?`, [to, u.value], to);
-      decide({ ...base, code: 'COLOR_NEAR', target: to, qkey: key, keepOpt: u.value, map: (a) => String(a) });
+      decide({ ...base, code: 'COLOR_NEAR', target: to, qkey: key, bulk: BULK.COLOR_NEAR, keepOpt: u.value, map: (a) => String(a) });
       continue;
     }
     keep('IN_SCALE');
   }
 
-  // ---------- answers ----------
-  for (const [key, q] of questions) {
-    if (!(key in answers)) continue;
-    const a = answers[key];
-    const opt = q.options.find((o) => String(o) === String(a));
-    if (opt === undefined) throw new Error(`rules: answer ${JSON.stringify(a)} for "${key}" is not one of ${q.options.map((o) => JSON.stringify(o)).join(', ')}`);
-    q.answered = opt;
+  // ---------- project questions (R68) ----------
+  for (const [key, b] of [...bulks].sort((x, y) => cmpStr(x[0], y[0]))) {
+    const n = new Set(pending.filter((d) => d.bulk === key).map((d) => d.qkey)).size;
+    ask(key, BULK_CAT[b.code], b.code, BULK_TEXT[b.code](n), ['accept-all', 'ask-each'], 'ask-each', false);
+    const q = questions.get(key);
+    q.project = true;
+    for (const x of b.nodes) q.nodes.add(x);
   }
-  const stale = Object.keys(answers).filter((k) => !questions.has(k)).sort(cmpStr);
+
+  // ---------- answers ----------
+  const pick = (key, options) => {
+    const a = answers[key];
+    const opt = options.find((o) => String(o) === String(a));
+    if (opt === undefined) throw new Error(`rules: answer ${JSON.stringify(a)} for "${key}" is not one of ${options.map((o) => JSON.stringify(o)).join(', ')}`);
+    return opt;
+  };
+  for (const [key, q] of questions) if (key in answers) q.answered = pick(key, q.options);
+  const roleAnswer = new Map();
+  for (const [key, options] of roleKeys) if (key in answers) roleAnswer.set(key, pick(key, options));
+  const stale = Object.keys(answers).filter((k) => !questions.has(k) && !roleKeys.has(k)).sort(cmpStr);
+  // per-role key > group key > project key (accept-all) > none
+  const resolve = (d) => {
+    if (d.rkey && roleAnswer.has(d.rkey)) return { a: roleAnswer.get(d.rkey) };
+    const q = questions.get(d.qkey);
+    if (q.answered !== undefined) return { a: q.answered };
+    if (d.bulk && questions.get(d.bulk).answered === 'accept-all') return { proposal: true };
+    return null;
+  };
 
   // ---------- group decisions into entries ----------
   const groups = new Map();
@@ -281,9 +346,14 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     if (d.auto) { status = 'auto'; to = d.target; } else {
       const q = questions.get(d.qkey);
       q.nodes.add(`${d.u.screen}|${d.u.node}`);
-      if (q.answered === undefined) { status = 'ask'; to = d.from; } else {
-        if (String(q.answered) === String(d.keepOpt)) { keep(d.code); continue; }
-        to = d.map(q.answered);
+      if (q.roles) q.roles.add(d.role);
+      const r = resolve(d);
+      if (r === null) { status = 'ask'; to = d.from; q.open = true; } else if (r.proposal) {
+        to = d.target;
+        status = 'answered';
+      } else {
+        if (String(r.a) === String(d.keepOpt)) { keep(d.code); continue; }
+        to = d.map(r.a);
         status = 'answered';
       }
     }
@@ -311,8 +381,11 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
   });
 
   const qs = [...questions.values()].sort((a, b) => cmpStr(a.key, b.key)).map((q) => {
-    const o = { key: q.key, cat: q.cat, code: q.code, text: q.text, options: q.options, default: q.default, affects: q.nodes.size };
+    const text = typeof q.text === 'function' ? q.text(q) : q.text;
+    const o = { key: q.key, cat: q.cat, code: q.code, text, options: q.options, default: q.default, affects: q.nodes.size };
+    if (q.roles) o.roles = [...q.roles].sort(cmpStr);
     if (q.answered !== undefined) o.answered = q.answered;
+    else if (!q.open && !q.project) o.resolved = true;
     return o;
   });
   const sortedCounts = Object.fromEntries(Object.keys(counts).sort(cmpStr).map((k) => [k, counts[k]]));

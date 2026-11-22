@@ -220,3 +220,12 @@ test('readNames: missing file is {}, bad JSON and non-string values are errors',
   writeFileSync(join(dir, 'arr.json'), '[]');
   assert.throws(() => readNames(join(dir, 'arr.json')), /top level must be an object/);
 });
+
+test('R67: geometry noise (inventory noise: true) gets no primitive and no map entry', () => {
+  const inv = { vars: {}, uses: [use('space', 'paddingR', 0.02, 'div.btn|div.in', { node: 'n1', noise: true }), use('space', 'paddingT', 12, 'div.btn|div.in', { node: 'n1' }),
+    use('radius', 'radiusTL', 0.3, 'div.btn|div.in', { node: 'n1', noise: true })] };
+  const { tokens, map } = buildTokens(inv, []);
+  assert.deepEqual(Object.keys(tokens.primitive.space), ['12']);
+  assert.equal(tokens.primitive.radius, undefined);
+  assert.equal(map['s1|n1|space|paddingR'], undefined);
+});

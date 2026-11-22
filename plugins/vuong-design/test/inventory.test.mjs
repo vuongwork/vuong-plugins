@@ -224,3 +224,49 @@ test('icon and image size uses carry the sizes at A and B; icons say whether the
   assert.deepEqual(of(inv, '0.1.3', 'size').map((u) => [u.prop, u.value, u.sizes, u.img]), [['height', 32, [32, 32, 40, 40], true], ['width', 32, [32, 32, 40, 40], true]]);
   assert.ok(of(inv, '0.1.0', 'size').every((u) => u.sizes === undefined && u.img === undefined));
 });
+
+test('R67: space, size and radius under 0.5 px are geometry noise: marked, value kept for tracing; 0.5 px is not noise', () => {
+  const fx = fixture();
+  fx.spec.kids[0].lay.p = [12, 0.02, 0.5, 0.01];
+  fx.spec.kids[0].paint = { ...fx.spec.kids[0].paint, radius: ['0.3px', '8px', '8px', '8px'] };
+  fx.spec.kids[1].kids[0] = { ...fx.spec.kids[1].kids[0], h: 0.4 };
+  const inv = inventory([fx]);
+  const sp = Object.fromEntries(of(inv, '0.0', 'space').map((u) => [u.prop, [u.value, u.noise]]));
+  assert.deepEqual(sp, { paddingT: [12, undefined], paddingR: [0.02, true], paddingB: [0.5, undefined], paddingL: [0.01, true] });
+  const r = Object.fromEntries(of(inv, '0.0', 'radius').map((u) => [u.prop, u.noise]));
+  assert.deepEqual(r, { radiusTL: true, radiusTR: undefined, radiusBR: undefined, radiusBL: undefined });
+  assert.deepEqual(of(inv, '0.1.0', 'size').map((u) => [u.prop, u.noise]), [['height', true], ['width', undefined]]);
+  // borders and icons are never noise
+  assert.ok(inv.uses.filter((u) => u.cat === 'border' || u.cat === 'icon').every((u) => u.noise === undefined));
+});
+
+test('M2-a: an svg root fill that is the initial black and reaches no shape gives no fill use', () => {
+  const mk = (icon, svgDefs) => {
+    const fx = fixture();
+    fx.screen.tree.kids[1].kids[2].icon = icon;
+    fx.screen.tree.kids[1].kids[2].tok = {};
+    fx.spec.kids[1].kids[2].icon = icon;
+    if (svgDefs) fx.screen.svgDefs = svgDefs;
+    return of(inventory([fx]), '0.1.2', 'color').map((u) => [u.prop, u.value]);
+  };
+  const black = { color: 'rgb(38, 51, 92)', fill: 'rgb(0, 0, 0)', stroke: 'rgb(38, 51, 92)', sw: '1px' };
+  // stroke icon: every shape sits in <g fill="none"> -> the root fill paints nothing
+  assert.deepEqual(mk({ ...black, svg: '<svg viewBox="0 0 24 24"><g fill="none" stroke-width="2"><path d="M3 4h2"></path><circle cx="9" cy="19" r="1.4"></circle></g></svg>' }),
+    [['stroke', '#26335c']]);
+  // fill set on the shape itself (attribute or inlined style) and a line (no interior): nothing inherits
+  assert.deepEqual(mk({ ...black, svg: '<svg><path d="M1 1" fill="none"></path><rect width="2" height="2" style="fill: rgb(1, 2, 3);"></rect><line x1="0" y1="0" x2="1" y2="1"></line></svg>' }),
+    [['stroke', '#26335c']]);
+  // sprite icon (R54): the markup is the symbol in screen.svgDefs
+  assert.deepEqual(mk({ ...black, ref: 'i-back' }, { 'i-back': '<symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke-width="2.2"></path></symbol>' }),
+    [['stroke', '#26335c']]);
+  // a plain <path> with no fill inherits the root's black: the use stays
+  assert.deepEqual(mk({ ...black, svg: '<svg viewBox="0 0 24 24"><path d="M12 5v14"></path></svg>' }), [['fill', '#000000'], ['stroke', '#26335c']]);
+  // a <use> whose target (in the leading defs) has a shape with no fill inherits too
+  assert.deepEqual(mk({ ...black, svg: '<svg><defs><path id="p" d="M1 1"></path></defs><use href="#p"></use></svg>' }), [['fill', '#000000'], ['stroke', '#26335c']]);
+  // fill="inherit" is not an explicit fill
+  assert.deepEqual(mk({ ...black, svg: '<svg><path d="M1 1" fill="inherit"></path></svg>' }), [['fill', '#000000'], ['stroke', '#26335c']]);
+  // a sprite whose markup is missing, or no markup at all: kept (cannot tell)
+  assert.deepEqual(mk({ ...black, ref: 'gone' }), [['fill', '#000000'], ['stroke', '#26335c']]);
+  // a root fill that is not the initial black is always listed
+  assert.deepEqual(mk({ ...black, fill: 'rgb(37, 99, 235)', svg: '<svg><g fill="none"><path d="M1 1"></path></g></svg>' }), [['fill', '#2563eb'], ['stroke', '#26335c']]);
+});

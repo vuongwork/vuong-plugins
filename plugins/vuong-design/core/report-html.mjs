@@ -181,11 +181,12 @@ const KIND_TITLE = {
   crop: 'Image mismatches (crop fails)',
 };
 
-// key of a finding for grouping across screens: same file, node id, kind, width and numbers (rounded to 0.01)
+// key of a finding for grouping across screens: same file, node id, node fingerprint (tag, class, text: describeNode),
+// kind, width, numbers (rounded to 0.01) and status (R52: an open finding is never a repeat of an allowlisted one)
 const findingKey = (v, it) => {
   const x = it.x;
   const n = it.kind === 'crop' ? [x.ratio, x.diff, x.peak] : [...(x.delta || []), x.magnitude ?? ''];
-  return [v.file, it.id, it.kind, it.width, ...n.map((k) => (typeof k === 'number' ? r2(k) : k))].join('|');
+  return [v.file, it.id, it.node || '', it.kind, it.width, it.allowedBy ? 'allowed' : 'open', ...n.map((k) => (typeof k === 'number' ? r2(k) : k))].join('|');
 };
 
 function groupRepeats(screens) {

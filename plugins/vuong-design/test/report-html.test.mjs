@@ -81,3 +81,21 @@ test('a fixed, collapsible "How to read this report" section near the top', () =
   assert.match(html, /<details class="howto">/);
   for (const w of [/plugin bug/, /approved: ?true/, /magenta/, /caught/, /yellow/, /width A/i]) assert.match(html, w);
 });
+
+test('R52: an open finding is never shown as a repeat of an allowlisted one, nor of a finding on another node', () => {
+  // probe-group: s0 has the root allowlisted, s1 has the identical root open
+  const s0 = view({ summary: { screen: 's0', pass: true, allowed: 1 }, items: [root({ allowedBy: 'approved: badge rounding' })] });
+  const s1 = view({ summary: { screen: 's1', pass: false, unexplainedRoots: 1 }, items: [root()] });
+  let html = renderReportHtml({ screens: [s0, s1] });
+  const sec = html.slice(html.indexOf('id="s-f_html-s1"'));
+  assert.doesNotMatch(sec.slice(0, sec.indexOf('</section>')), /class="item repeat"/);
+  assert.match(sec, /<div class="item" data-kind="root"/);
+  // the same id with the same numbers on another node (another tag / class / text) is not a repeat either
+  const s2 = view({ summary: { screen: 's2', pass: false, unexplainedRoots: 1 }, items: [root({ node: 'span.pill "Old"' })] });
+  html = renderReportHtml({ screens: [s1, s2] });
+  assert.equal((html.match(/class="item repeat"/g) || []).length, 0);
+  // two open identical findings on the same node still group
+  const s3 = view({ summary: { screen: 's3', pass: false, unexplainedRoots: 1 }, items: [root()] });
+  html = renderReportHtml({ screens: [s1, s3] });
+  assert.equal((html.match(/class="item repeat"/g) || []).length, 1);
+});

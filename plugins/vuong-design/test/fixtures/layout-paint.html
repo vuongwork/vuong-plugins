@@ -1,6 +1,7 @@
 <!doctype html><html><head><meta charset="utf-8"><title>layout-paint</title>
 <!-- R50 (final-review probe-paint): large nodes (area > 4000 px²) whose paint the crops used to skip: a rounded card,
-     a bold text, an inline svg and an image shown with object-fit:cover and object-position:0 0. The page itself must
+     a bold text, an inline svg and an image shown with object-fit:cover (centred: R59, an off-centre position is
+     unsupported). The page itself must
      pass; an error planted in the spec on any of them (radius, font weight / size / style / decoration, svg colour /
      shape, image fit / position) must fail it. -->
 <style>
@@ -9,7 +10,7 @@ body{margin:0;font-family:Georgia,serif}
 .card{height:100px;background:#e0e0e0;border-radius:16px}
 .big{font-size:16px;line-height:24px;font-weight:700;color:#222}
 .ill{width:100px;height:100px;display:block}
-.ph{width:120px;height:80px;display:block;object-fit:cover;object-position:0 0}
+.ph{width:120px;height:80px;display:block;object-fit:cover}
 </style></head><body><div class="scr">
 <div class="card"></div>
 <div class="big">Hello world</div>

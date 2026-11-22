@@ -530,7 +530,12 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
       if (tag === 'img' || tag === 'video' || tag === 'canvas' || tag === 'iframe' || tag === 'picture') {
         if (b.width < 0.5 || b.height < 0.5) { excl(id, 'zero-size'); return null; }
         const img = tag === 'picture' ? el.querySelector('img') : el;
-        return { ...base(id, 'image', tag, cls, r, p), src: (img && (img.currentSrc || img.src)) || null, fit: cs.objectFit, pos: cs.objectPosition };
+        const ics = img && img !== el ? getComputedStyle(img) : cs; // a <picture> is drawn by its <img>
+        // R59: a Figma image fill reproduces object-fit cover / contain / fill (FILL / FIT / stretch) at the centre only
+        const off = [!['cover', 'contain', 'fill'].includes(ics.objectFit) && `object-fit ${ics.objectFit}`,
+          ics.objectPosition !== '50% 50%' && `object-position ${ics.objectPosition}`].filter(Boolean);
+        if (off.length) p.unsupported = [...(p.unsupported || []), { prop: 'image fit/position', value: off.join(', ') }];
+        return { ...base(id, 'image', tag, cls, r, p), src: (img && (img.currentSrc || img.src)) || null, fit: ics.objectFit, pos: ics.objectPosition };
       }
       if (isIconFont(cs)) {
         return { ...base(id, 'icon', tag, cls, r, p), font: useFont(font(cs)), icon: { glyph: el.textContent.trim(), color: cs.color } };

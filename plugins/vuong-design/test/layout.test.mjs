@@ -325,7 +325,7 @@ test('R50 (probe-paint): radius, font, svg and image errors on large nodes fail 
     svgColour: (sp) => { const n = find(sp, (x) => x.icon && x.icon.svg); n.icon.svg = n.icon.svg.replace(/#e53935|rgb\(229, 57, 53\)/g, '#1e88e5'); return [n.id, 'svg']; },
     svgShape: (sp) => { const n = find(sp, (x) => x.icon && x.icon.svg); n.icon.svg = n.icon.svg.replace(/<circle[^>]*>(<\/circle>)?/, '<rect x="10" y="10" width="80" height="80" fill="#e53935"></rect>'); return [n.id, 'svg']; },
     imgFit: (sp) => { const n = find(sp, (x) => x.t === 'I'); n.fit = 'fill'; return [n.id, 'image']; },
-    imgPos: (sp) => { const n = find(sp, (x) => x.t === 'I'); n.pos = '50% 50%'; return [n.id, 'image']; },
+    imgPos: (sp) => { const n = find(sp, (x) => x.t === 'I'); n.pos = '0px 0px'; return [n.id, 'image']; },
   };
   for (const [name, plant] of Object.entries(plants)) {
     const inf = structuredClone(base);

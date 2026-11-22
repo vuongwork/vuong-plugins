@@ -383,3 +383,12 @@ test('R54: only an svg made of exactly one <use> is a sprite reference; any othe
   assert.match(mixed.icon.svg, /<use\b[^>]*href="#sq"/);
   assert.match(mixed.icon.svg, /<defs>.*<symbol\b[^>]*id="sq".*<\/defs>/s, 'the <use> target is inlined in the markup');
 });
+
+test('R59: an image fit or position Figma cannot reproduce (fit none / scale-down, position off centre) is unsupported', { skip }, async () => {
+  const s = (await captureScreens(join(FIX, 'capture-image-fit.html'), { root: '.scr', fontOverride: false })).screens[0];
+  const imgs = walk(s.tree).filter((n) => n.kind === 'image');
+  const un = imgs.map((n) => [n.cls, (n.paint && n.paint.unsupported || []).map((u) => `${u.prop}: ${u.value}`).join('; ')]);
+  assert.deepEqual(un, [['cover', ''], ['contain', ''], ['fill', ''], ['mid', ''],
+    ['none', 'image fit/position: object-fit none'], ['sd', 'image fit/position: object-fit scale-down'],
+    ['tl', 'image fit/position: object-position 0px 0px'], ['right', 'image fit/position: object-position 100% 50%']]);
+});

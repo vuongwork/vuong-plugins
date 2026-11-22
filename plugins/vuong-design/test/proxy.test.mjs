@@ -234,3 +234,16 @@ test('R48: an inline svg root style from capture (inlined page paint) is appende
   assert.match(tag, /width:100%[^"]*;stroke-linejoin: round;/);
   assert.match(h, /<path d="M2 2L22 22" style="stroke: rgb\(1, 2, 3\);">/);
 });
+
+test('R55: renderProxy lists each used face (family, style, weight) that no loaded face covers (facesMissing)', { skip }, async () => {
+  const spec = structuredClone(CASES.baseline.spec);
+  const t = spec.kids[0];
+  t.font = { ...t.font, ff: 'HalfFace', fw: '400' };
+  const bold = { ...structuredClone(t), id: `${t.id}b`, font: { ...t.font, fw: '700' } };
+  spec.kids.push(bold);
+  const faces = ['@font-face { font-family: "HalfFace"; src: local("Georgia"); font-weight: 400; font-style: normal; }'];
+  const h = buildProxyHtml(spec, {}, defaultFontMap(['HalfFace']), { ...OFFLINE, fontFaces: faces });
+  const r = await renderProxy(browser, h, 300);
+  assert.deepEqual(r.facesMissing, ['HalfFace|0|700'], JSON.stringify(r));
+  assert.ok(!r.fontsMissing.includes('HalfFace'), 'the family itself rendered (its 400 face)');
+});

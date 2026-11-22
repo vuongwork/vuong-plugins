@@ -56,7 +56,7 @@ function fixture() {
     dom[n.id] = o; (n.kids || []).forEach(v);
   };
   v(screen.tree);
-  const proxy = { A: { boxes: boxes('A'), fontsMissing: [], dom, model: 'figma' }, B: { boxes: boxes('B'), fontsMissing: [], dom, model: 'figma' } };
+  const proxy = { A: { boxes: boxes('A'), fontsMissing: [], facesMissing: [], dom, model: 'figma' }, B: { boxes: boxes('B'), fontsMissing: [], facesMissing: [], dom, model: 'figma' } };
   const layout = { A: { boxes: boxes('A'), model: 'none' }, B: { boxes: boxes('B'), model: 'none' } };
   return { screen, spec, proxy, layout, flags: [], crops: [] };
 }
@@ -178,12 +178,17 @@ test('R29: in a HUG row the icon moving 3px is the root; the row only hugs it (n
 
 // ---- reviewer probes (fix round 1) ----
 const flat = (kids) => ({ id: 'n', kind: 'frame', rA: [0, 0, 400, 100], rB: [0, 0, 400, 100], kids });
+// R55: a hand-built text gets a spec font family, rendered as such in the DOM (its font is then checked, not unchecked)
+const withFonts = (spec, dom, tree) => {
+  const sv = (n) => { if (n.t === 'T' && !(n.font && n.font.ff)) n.font = { ...(n.font || {}), ff: 'Inter' }; (n.kids || []).forEach(sv); }; sv(spec);
+  const tv = (n) => { if (n.kind === 'text' && dom[n.id]) dom[n.id].ff ??= '"Inter"'; (n.kids || []).forEach(tv); }; tv(tree);
+};
 function probe(tree, mut, flags = [], spec = { id: 'n', t: 'F', kids: [] }, opts = {}) {
   const boxes = () => { const o = {}; const v = (n) => { o[n.id] = [...n.rA]; (n.kids || []).forEach(v); }; v(tree); return o; };
   const dom = {}; const v = (n) => { dom[n.id] = { color: 'rgb(0, 0, 0)', bg: 'rgba(0, 0, 0, 0)', ...SHOWN(), ...(n.kind === 'icon' ? { icon: 'svg' } : {}) }; (n.kids || []).forEach(v); }; v(tree);
-  const proxy = { A: { boxes: boxes(), fontsMissing: [], dom, model: 'figma' }, B: { boxes: boxes(), fontsMissing: [], dom, model: 'figma' } };
+  const proxy = { A: { boxes: boxes(), fontsMissing: [], facesMissing: [], dom, model: 'figma' }, B: { boxes: boxes(), fontsMissing: [], facesMissing: [], dom, model: 'figma' } };
   const layout = { A: { boxes: boxes(), model: 'none' }, B: { boxes: boxes(), model: 'none' } };
-  mut(proxy, layout);
+  mut(proxy, layout); withFonts(spec, dom, tree);
   return verifyScreen({ screen: { id: 's', tree }, spec, proxy, layout, flags, crops: [] }, opts);
 }
 const both = (fn) => (P, L) => { for (const X of [P, L]) for (const M of ['A', 'B']) fn(X[M].boxes, M); };
@@ -420,9 +425,9 @@ test('R20: shrink on an item drives width to height (wrap) but never height to w
 function probeAB(tree, mut, flags = [], spec = { id: 'n', t: 'F', kids: [] }) {
   const boxes = (M) => { const o = {}; const v = (n) => { o[n.id] = [...(M === 'A' ? n.rA : n.rB)]; (n.kids || []).forEach(v); }; v(tree); return o; };
   const dom = {}; const v = (n) => { dom[n.id] = { color: 'rgb(0, 0, 0)', bg: 'rgba(0, 0, 0, 0)', ...SHOWN() }; (n.kids || []).forEach(v); }; v(tree);
-  const proxy = { A: { boxes: boxes('A'), fontsMissing: [], dom, model: 'figma' }, B: { boxes: boxes('B'), fontsMissing: [], dom, model: 'figma' } };
+  const proxy = { A: { boxes: boxes('A'), fontsMissing: [], facesMissing: [], dom, model: 'figma' }, B: { boxes: boxes('B'), fontsMissing: [], facesMissing: [], dom, model: 'figma' } };
   const layout = { A: { boxes: boxes('A'), model: 'none' }, B: { boxes: boxes('B'), model: 'none' } };
-  mut(proxy, layout);
+  mut(proxy, layout); withFonts(spec, dom, tree);
   return verifyScreen({ screen: { id: 's', tree }, spec, proxy, layout, flags, crops: [] });
 }
 // n.0 (FIXED row 200) > n.0.0 (FILL, row, holds a FIXED 40x20 frame), n.0.1 (FILL); both FILL items flagged weightedFill
@@ -1411,4 +1416,36 @@ test('R50: an image is compared by object-fit, object-position and source with t
   const r = verifyScreen(k);
   assert.ok(r.skipped.includes('image'));
   assert.equal(r.pass, false);
+});
+
+// ---- fix round 9: R55 (font: a text without a spec family is unchecked; a face that did not load is a finding) ----
+test('R55: a text whose spec has no font family is unchecked, never silently skipped', () => {
+  const inp = fixture();
+  const sf = inp.spec.kids[0].kids[0]; sf.font = { ...sf.font }; delete sf.font.ff; // FONT is shared: copy before deleting
+  let r = verifyScreen(inp);
+  assert.ok(r.unchecked.includes('n.0.0'), JSON.stringify(r.unchecked));
+  assert.match(r.uncheckedReasons['n.0.0'], /font family/);
+  assert.equal(r.pass, false);
+  const k = fixture(); delete k.spec.kids[0].kids[0].font;
+  r = verifyScreen(k);
+  assert.ok(r.unchecked.includes('n.0.0'));
+});
+
+test('R55: a run whose face (family, style, weight) did not load in the proxy is a font-face finding', () => {
+  const mk = (missing) => {
+    const inp = fixture();
+    const t = inp.screen.tree.kids[0].kids[0];
+    t.runs = [{ t: 'In' }, { t: 'box', s: { fw: '700' } }];
+    inp.proxy.A.dom['n.0.0'].runs = domRuns(t);
+    inp.proxy.A.facesMissing = missing;
+    return inp;
+  };
+  assert.deepEqual(verifyScreen(mk([])).data, []);
+  const r = verifyScreen(mk(['Inter|0|700']));
+  assert.deepEqual(r.data.map((d) => [d.id, d.kind, d.expected, d.actual]), [['n.0.0', 'font-face', 'Inter 700', 'Inter 700 did not load (synthesised or fallback)']]);
+  assert.equal(r.pass, false);
+  assert.deepEqual(verifyScreen(mk(['Inter|1|700'])).data, [], 'an italic face nobody uses');
+  // a proxy without the observation is never a silent pass
+  const k = mk([]); delete k.proxy.A.facesMissing;
+  assert.ok(verifyScreen(k).skipped.includes('font-face'));
 });

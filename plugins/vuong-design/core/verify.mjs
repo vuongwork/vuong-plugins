@@ -655,6 +655,8 @@ export function verifyScreen(input, opts = {}) {
       const expected = iconKey(n.icon), actual = domIcon(d);
       if (expected !== actual) data.push({ id: n.id, kind: 'icon', expected, actual });
     }
+    // R55: a text whose spec carries no font family cannot have its font checked: unchecked, never a silent skip
+    if (isTextSrc(n) && !(s && s.font && s.font.ff != null)) uncheck(n.id, 'text without a font family in the spec: its font cannot be checked');
     if ((isTextSrc(n) || (n.kind === 'icon' && n.font)) && s && s.font && s.font.ff != null) {
       const expected = firstFamily(s.font.ff), actual = d.ff != null ? firstFamily(d.ff) : null;
       if (expected !== actual) data.push({ id: n.id, kind: 'font', expected, actual });
@@ -685,6 +687,7 @@ export function verifyScreen(input, opts = {}) {
 
   // ---- layer 3: R50 paint the crops cannot see on large nodes (any size; source computed vs proxy DOM, never the spec) ----
   const miss = new Set();
+  const faceMiss = Array.isArray(proxy.A && proxy.A.facesMissing) ? [...proxy.A.facesMissing, ...((proxy.B && proxy.B.facesMissing) || [])] : null;
   for (const { n } of dom ? list : []) {
     const d = dom[n.id];
     if (!d) continue;
@@ -707,6 +710,20 @@ export function verifyScreen(input, opts = {}) {
       else {
         const src = (n.runs || []).filter((r) => !r.br).map((r) => { const f = { ...n.font, ...(r.s || {}) }; return [r.t, f.fs, f.fw, f.fst, f.td, f.tt]; });
         for (const f of runStyleDiff(src, d.runs)) data.push({ id, kind: 'font-style', ...f });
+        // R55: every face a run uses (family, style, weight as rendered) must have loaded in the proxy
+        if (!Array.isArray(faceMiss)) miss.add('font-face');
+        else {
+          const seen = new Set();
+          for (const r of d.runs) {
+            if (!/\S/.test(String(r[0] ?? ''))) continue;
+            const fam = firstFamily(r[6] ?? d.ff ?? ''), ital = /italic|oblique/.test(r[3] || '') ? 1 : 0;
+            const w = Math.min(900, Math.max(100, Math.round((parseFloat(r[2]) || 400) / 100) * 100)), key = `${fam}|${ital}|${w}`;
+            if (seen.has(key) || !faceMiss.includes(key)) continue;
+            seen.add(key);
+            const face = `${fam} ${w}${ital ? ' italic' : ''}`;
+            data.push({ id, kind: 'font-face', expected: face, actual: `${face} did not load (synthesised or fallback)` });
+          }
+        }
       }
     }
     // inline svg: the serialised markup (inner paint inlined by capture, R48) by hash, the root's own inlined style, and

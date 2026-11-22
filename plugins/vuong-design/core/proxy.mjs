@@ -28,7 +28,7 @@
 // vis, disp, stroke ([t, r, b, l] 'Wpx style colour' | 'none', read back from how the page drew it), outline,
 // shadow (box-shadow layers other than the stroke's, or 'none'), bgImage (computed background-image), R50: radius
 // ([tl, tr, br, bl] computed), runs? (text leaf: [[text, font-size, font-weight, font-style, text-decoration-line,
-// text-transform]] per text node), svg? (inline svg: { markup = outerHTML without the root style, own = the root's
+// text-transform, font-family]] per text node), svg? (inline svg: { markup = outerHTML without the root style, own = the root's
 // declarations other than the proxy's box / paint keys, paint = computed root [color, fill, stroke, stroke-width] }),
 // img? (image node: { fit, pos, src } of its <img>, null when none was drawn) } — computed values, for verify's
 // content checks. Images also carry object-position (R50); corner radii are set per corner (a computed corner can be
@@ -249,6 +249,8 @@ export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
   const defs = Object.values(svgDefs).join('');
   return '<!doctype html><html><head><meta charset="utf-8">' +
     `<meta name="vd-fonts" content="${attr([...used.keys()].join('|'))}">` +
+    // R55: every face used, 'family|italic|weight', ';'-separated
+    `<meta name="vd-faces" content="${attr([...used].flatMap(([f, set]) => [...set].map((t) => `${f}|${t.replace(',', '|')}`)).join(';'))}">` +
     links.map((h) => `<link rel="stylesheet" href="${attr(h)}">`).join('') +
     `<style>html,body{margin:0;padding:0;background:#fff}${fontFaces.join('\n')}\n${rules.join('\n')}</style></head><body>` +
     (defs ? `<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>${defs}</defs></svg>` : '') +
@@ -308,6 +310,22 @@ export async function renderProxy(browser, html, width, opts = {}) {
         const own = faces.filter((x) => x.family.replace(/^["']|["']$/g, '') === f);
         return own.length ? !own.some((x) => x.status === 'loaded') : !(probe(f, 'monospace') || probe(f, 'serif'));
       });
+      // R55: per face (family, style, weight): a web font needs a loaded face whose weight range and style cover the use
+      // (else Chrome synthesises bold / italic or falls back); an installed family needs check + width probe in that
+      // style. Families missing altogether are already in fontsMissing.
+      const covers = (f, ital, w) => {
+        const [lo, hi = lo] = String(f.weight).split(/\s+/).map((x) => (x === 'normal' ? 400 : x === 'bold' ? 700 : Number(x)));
+        return w >= lo && w <= hi && (ital ? /italic|oblique/.test(f.style) : !/italic|oblique/.test(f.style));
+      };
+      const probeSt = (st, fam, fb) => { ctx.font = `${st} 72px "${fam}", ${fb}`; const a = ctx.measureText('mmmmmmmmmmlli1WÀỆ').width; ctx.font = `${st} 72px ${fb}`; return a !== ctx.measureText('mmmmmmmmmmlli1WÀỆ').width; };
+      const facesMissing = (document.querySelector('meta[name="vd-faces"]').content || '').split(';').filter(Boolean).filter((key) => {
+        const [fam, i, w] = key.split('|'), ital = i === '1', wt = Number(w);
+        if (fontsMissing.includes(fam)) return false;
+        const own = faces.filter((x) => x.family.replace(/^["']|["']$/g, '') === fam);
+        if (own.length) return !own.some((x) => x.status === 'loaded' && covers(x, ital, wt));
+        const st = `${ital ? 'italic ' : ''}${wt}`;
+        return !(document.fonts.check(`${st} 16px "${fam}"`) && (probeSt(st, fam, 'monospace') || probeSt(st, fam, 'serif')));
+      });
       // what the page really rendered, per node (verify layer 3): text of leaves (runs, <br> = space), icon reference,
       // computed colour / background colour / first font family
       const dom = {};
@@ -358,7 +376,7 @@ export async function renderProxy(browser, html, width, opts = {}) {
           const runs = [];
           const rec = (x) => {
             for (const c of x.childNodes) {
-              if (c.nodeType === 3) { const s = getComputedStyle(c.parentElement); runs.push([c.textContent, s.fontSize, s.fontWeight, s.fontStyle, s.textDecorationLine, s.textTransform]); }
+              if (c.nodeType === 3) { const s = getComputedStyle(c.parentElement); runs.push([c.textContent, s.fontSize, s.fontWeight, s.fontStyle, s.textDecorationLine, s.textTransform, s.fontFamily]); }
               else if (c.nodeType === 1 && c.tagName !== 'BR') rec(c);
             }
           };
@@ -378,10 +396,10 @@ export async function renderProxy(browser, html, width, opts = {}) {
         dom[el.dataset.id] = o;
       }
       document.getElementById('__vd_nt').remove();
-      return { boxes, fontsMissing, dom };
+      return { boxes, fontsMissing, facesMissing, dom };
     });
     const png = await page.locator('[data-root]').screenshot({ animations: 'disabled' });
-    return { boxes: res.boxes, png, fontsMissing: res.fontsMissing, dom: res.dom, model };
+    return { boxes: res.boxes, png, fontsMissing: res.fontsMissing, facesMissing: res.facesMissing, dom: res.dom, model };
   } finally {
     await page.close();
     rmSync(dir, { recursive: true, force: true });

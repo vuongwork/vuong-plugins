@@ -26,8 +26,13 @@
 // convention as capture's rA/rB. The PNG keeps transforms. `dom` is what the page rendered per node id: { text? (leaf
 // text, <br> as a space), icon? (<use> ref or 'svg'), color, bg, ff, op (effective opacity, product up to the page),
 // vis, disp, stroke ([t, r, b, l] 'Wpx style colour' | 'none', read back from how the page drew it), outline,
-// shadow (box-shadow layers other than the stroke's, or 'none'), bgImage (computed background-image) } —
-// computed values, for verify's content checks.
+// shadow (box-shadow layers other than the stroke's, or 'none'), bgImage (computed background-image), R50: radius
+// ([tl, tr, br, bl] computed), runs? (text leaf: [[text, font-size, font-weight, font-style, text-decoration-line,
+// text-transform]] per text node), svg? (inline svg: { markup = outerHTML without the root style, own = the root's
+// declarations other than the proxy's box / paint keys, paint = computed root [color, fill, stroke, stroke-width] }),
+// img? (image node: { fit, pos, src } of its <img>, null when none was drawn) } — computed values, for verify's
+// content checks. Images also carry object-position (R50); corner radii are set per corner (a computed corner can be
+// elliptical, which the border-radius shorthand would misread).
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -164,7 +169,8 @@ export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
     if (!isText) {
       if (p.bg) st.push(`background-color:${p.bg}`);
       if (p.bgImage) st.push(`background-image:${p.bgImage}`, 'background-size:cover', 'background-position:center');
-      if (p.radius) st.push(`border-radius:${p.radius.join(' ')}`);
+      // per corner: a computed corner can be elliptical ('10px 20px'), which the border-radius shorthand would misread
+      if (p.radius) ['top-left', 'top-right', 'bottom-right', 'bottom-left'].forEach((c, i) => st.push(`border-${c}-radius:${p.radius[i]}`));
       strokeCss(p, st, cls, data);
       if (p.clip) st.push('overflow:hidden');
       if (p.filter) st.push(`filter:${p.filter}`);
@@ -206,6 +212,7 @@ export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
         if (ic.sw) sv.push(`stroke-width:${ic.sw}`);
         const style = `style="${attr(sv.join(';'))}"`;
         if (ic.svg) {
+          data.push('data-svg');
           // R48: capture leaves only inlined paint (page CSS on the root) in the root's style: it goes after ours
           let own = '';
           const m = String(ic.svg).replace(/^(<svg\b[^>]*?)\sstyle="([^"]*)"/, (_, a, v) => { own = v; return a; });
@@ -214,7 +221,8 @@ export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
         else if (ic.ref) inner = `<svg ${style}><use href="#${attr(ic.ref)}"></use></svg>`;
       }
     } else if (n.t === 'I') {
-      if (n.src) inner = `<img alt="" src="${attr(n.src)}" style="display:block;width:100%;height:100%;object-fit:${attr(n.fit || 'fill')}">`;
+      data.push('data-img');
+      if (n.src) inner = `<img alt="" src="${attr(n.src)}" style="display:block;width:100%;height:100%;object-fit:${attr(n.fit || 'fill')};object-position:${attr(n.pos || '50% 50%')}">`;
     }
     if (n.kids) inner += n.kids.map((k) => node(k, n)).join('');
     if (cls.length) data.push(`class="${cls.join(' ')}"`);
@@ -282,6 +290,7 @@ export async function renderProxy(browser, html, width, opts = {}) {
       await pin('height', (await natural('[data-pin-h]')).map(([id, w, h]) => [id, figmaTextBox(w, h, 0).h]));
     }
     const res = await page.evaluate(() => {
+      const PROXY_SVG_KEYS = ['display', 'width', 'height', 'overflow', 'overflow-x', 'overflow-y', 'color', 'fill', 'stroke', 'stroke-width']; // R50: set by buildProxyHtml
       const root = document.querySelector('[data-root]'); const R = root.getBoundingClientRect();
       const r = (v) => Math.round(v * 100) / 100;
       const boxes = {};
@@ -304,7 +313,8 @@ export async function renderProxy(browser, html, width, opts = {}) {
       const dom = {};
       for (const el of document.querySelectorAll('[data-id]')) {
         const cs = getComputedStyle(el); const o = { color: cs.color, bg: cs.backgroundColor, ff: cs.fontFamily };
-        const use = el.querySelector(':scope > svg use');
+        // an inline svg (data-svg; R54: it may contain a <use> itself) or a sprite <use>
+        const use = el.dataset.svg == null && el.querySelector(':scope > svg use');
         if (use) o.icon = (use.getAttribute('href') || '').replace(/^#/, '');
         else if (el.querySelector(':scope > svg')) o.icon = 'svg';
         if (!el.querySelector('[data-id]') && !el.querySelector(':scope > svg')) {
@@ -340,6 +350,31 @@ export async function renderProxy(browser, html, width, opts = {}) {
           o.bgImage = cs.backgroundImage;
         }
         o.outline = cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0 ? `${cs.outlineWidth} ${cs.outlineStyle} ${cs.outlineColor}` : 'none';
+        // R50: corner radii; per-run font styles of a text leaf; an inline svg as serialised (root style without the
+        // proxy's own box / paint keys, which are compared as computed root paint); an image's fit, position, source
+        o.radius = [cs.borderTopLeftRadius, cs.borderTopRightRadius, cs.borderBottomRightRadius, cs.borderBottomLeftRadius];
+        const svg = el.querySelector(':scope > svg');
+        if (!el.querySelector('[data-id]') && !svg) {
+          const runs = [];
+          const rec = (x) => {
+            for (const c of x.childNodes) {
+              if (c.nodeType === 3) { const s = getComputedStyle(c.parentElement); runs.push([c.textContent, s.fontSize, s.fontWeight, s.fontStyle, s.textDecorationLine, s.textTransform]); }
+              else if (c.nodeType === 1 && c.tagName !== 'BR') rec(c);
+            }
+          };
+          rec(el); o.runs = runs;
+        }
+        if (svg && !use) {
+          const c = svg.cloneNode(true), own = [];
+          for (let i = 0; i < svg.style.length; i++) { const k = svg.style[i]; if (!PROXY_SVG_KEYS.includes(k)) own.push(`${k}: ${svg.style.getPropertyValue(k)}`); }
+          c.removeAttribute('style');
+          const ss = getComputedStyle(svg);
+          o.svg = { markup: c.outerHTML, own: own.sort().join('; '), paint: [ss.color, ss.fill, ss.stroke, ss.strokeWidth] };
+        }
+        if (el.dataset.img != null) {
+          const img = el.querySelector(':scope > img'), s = img && getComputedStyle(img);
+          o.img = img ? { fit: s.objectFit, pos: s.objectPosition, src: img.currentSrc || img.src } : null;
+        }
         dom[el.dataset.id] = o;
       }
       document.getElementById('__vd_nt').remove();

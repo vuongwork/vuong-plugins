@@ -87,6 +87,13 @@
 //   visibility visible, display not none), stroke (R30a: per side top/right/bottom/left and outline, width, style and
 //   colour of the source computed border / outline vs the proxy DOM `stroke` / `outline` as rendered). A proxy DOM
 //   without these observations puts 'visibility' / 'stroke' in `skipped`.
+//   R50, any node size, always source computed style (capture) vs what the proxy page rendered (never the spec, so a
+//   spec or proxy error is caught): radius (non-text nodes, per corner), font-style (text with a source font: font
+//   size, weight, style, text-decoration line and text-transform of every non-blank character, from the source runs
+//   vs the proxy DOM `runs`; skipped when the texts differ, which the text check reports), svg (inline svg: sha1 of the
+//   serialised markup without the root style attribute, the root's inlined declarations, and the root color / fill /
+//   stroke / stroke-width), image (object-fit, object-position, src; `img: null` = the proxy drew no image). A DOM
+//   without the observation puts 'radius' / 'font-style' / 'svg' / 'image' in `skipped`.
 //   R46, any node size: unsupported (capture's paint.unsupported, i.e. paint it does not translate: text-shadow,
 //   blend modes, masks, list markers, ..., R48 'svg <tag> <property>' for page CSS inside an inline svg that the
 //   serialised markup does not carry; and any box paint on a text node, which the proxy draws as text only),
@@ -94,13 +101,14 @@
 //   vs the proxy DOM's `shadow` / `bgImage`; a DOM without them puts 'effect' in `skipped`). Data findings are never
 //   allowlistable (pipeline gate).
 //   crops: input.crops = [{id, width, ratio, diff, peak}] from measureCrops at A and B on source nodes whose box has
-//   area <= 4000px², each window with the boxes of its own cropped descendants masked (R45: a container compares its
+//   area <= 4000px² and (R50) on leaves that paint content (text, icon, image) of any size, each window with the boxes of its own cropped descendants masked (R45: a container compares its
 //   own paint; children are compared in their own crops). Fails when ratio (differing / ink pixels) > 0.05 or peak (differing pixels in the densest
 //   8x8 CSS px square) >= 40. A failure on a node that is (inside) a raster node is in `cropExplained`. R44: a failure on a
 //   node that is itself a size root at that width (size delta > the 1px crop search) shares the root's status: in
 //   `cropExplained` with the root's flag, or in `cropLinked` ({..., root}) for an unexplained root; any other failure,
 //   inside a root's subtree included, is in `crop`.
 // pixel (whole screen, modelled proxy) and strict (share of checked nodes within tolerance, modelled) are reference.
+import { createHash } from 'node:crypto';
 import { firstFamily } from './font-map.mjs';
 import { cropDiffMany, pixelDiff } from './imgdiff.mjs';
 
@@ -142,6 +150,43 @@ export function normColor(c) {
   const a = v.length > 3 ? v[3] : 1;
   if (a === 0) return 'transparent';
   return a === 1 ? `rgb(${v[0]}, ${v[1]}, ${v[2]})` : `rgba(${v[0]}, ${v[1]}, ${v[2]}, ${r3(a)})`;
+}
+
+// ---- R50 helpers ----
+const CORNERS = ['top-left', 'top-right', 'bottom-right', 'bottom-left'];
+// a computed corner radius: '16px', '50%', '10px 20px' (elliptical); '10px 10px' is '10px'
+const normRadius = (v) => {
+  const p = String(v == null || v === '' ? '0px' : v).trim().split(/\s+/).map((x) => (/px$/.test(x) ? `${r2(parseFloat(x))}px` : x));
+  return p.length === 2 && p[0] === p[1] ? p[0] : p.join(' ');
+};
+const sha = (s) => createHash('sha1').update(String(s ?? '')).digest('hex').slice(0, 12);
+const short = (s) => { const t = String(s ?? ''); return t.length > 80 ? `${t.slice(0, 60)}… (${t.length} chars, sha1 ${sha(t)})` : t; };
+const unent = (s) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+const decls = (s) => s.split(';').map((x) => x.trim()).filter(Boolean).map((x) => x.replace(/\s*:\s*/, ': ')).sort().join('; ');
+// capture's serialised inline svg -> { markup without the root style attribute, the root's inlined declarations }
+export function splitSvgRoot(svg) {
+  let own = '';
+  const markup = String(svg).replace(/^(<svg\b[^>]*?)\sstyle="([^"]*)"/, (_, a, v) => { own = decls(unent(v)); return a; });
+  return { markup, own };
+}
+const RUN_PROPS = ['font-size', 'font-weight', 'font-style', 'text-decoration', 'text-transform'];
+const runNorm = [(v) => `${r2(parseFloat(v))}px`, (v) => String(v ?? '400'), (v) => String(v || 'normal'), (v) => String(v || 'none'), (v) => String(v || 'none')];
+// runs [[text, fs, fw, fst, td, tt]] of the source and of the proxy DOM, compared per non-blank character; one finding
+// per property (its first differing character). Texts that differ are not compared here (the text check reports them).
+function runStyleDiff(src, dom) {
+  const chars = (runs) => {
+    const out = [];
+    for (const r of runs) for (const ch of String(r[0] ?? '')) if (/\S/.test(ch)) out.push([ch, ...r.slice(1, 6).map((v, i) => runNorm[i](v))]);
+    return out;
+  };
+  const a = chars(src), b = chars(dom);
+  if (a.length !== b.length || a.some((x, i) => x[0] !== b[i][0])) return [];
+  const out = [];
+  RUN_PROPS.forEach((prop, k) => {
+    const i = a.findIndex((x, j) => x[k + 1] !== b[j][k + 1]);
+    if (i >= 0) out.push({ prop, expected: a[i][k + 1], actual: b[i][k + 1], at: i });
+  });
+  return out;
 }
 
 // Source nodes in pre-order with their source parent and previous source sibling.
@@ -638,6 +683,61 @@ export function verifyScreen(input, opts = {}) {
   if (noVis) skipped.push('visibility');
   if (noStroke) skipped.push('stroke');
 
+  // ---- layer 3: R50 paint the crops cannot see on large nodes (any size; source computed vs proxy DOM, never the spec) ----
+  const miss = new Set();
+  for (const { n } of dom ? list : []) {
+    const d = dom[n.id];
+    if (!d) continue;
+    const id = n.id;
+    // corner radii of a box (a text is drawn without its box: R46 inline-box)
+    if (!isTextSrc(n)) {
+      if (!Array.isArray(d.radius)) miss.add('radius');
+      else {
+        const s = (n.paint && n.paint.radius) || [];
+        CORNERS.forEach((c, i) => {
+          const expected = normRadius(s[i]), actual = normRadius(d.radius[i]);
+          if (expected !== actual) data.push({ id, kind: 'radius', side: c, expected, actual });
+        });
+      }
+    }
+    // font size / weight / style / decoration / transform per run, character by character (the proxy may split runs
+    // differently); only when the texts agree (a text mismatch is already a finding)
+    if (isTextSrc(n) && n.font) {
+      if (!Array.isArray(d.runs)) miss.add('font-style');
+      else {
+        const src = (n.runs || []).filter((r) => !r.br).map((r) => { const f = { ...n.font, ...(r.s || {}) }; return [r.t, f.fs, f.fw, f.fst, f.td, f.tt]; });
+        for (const f of runStyleDiff(src, d.runs)) data.push({ id, kind: 'font-style', ...f });
+      }
+    }
+    // inline svg: the serialised markup (inner paint inlined by capture, R48) by hash, the root's own inlined style, and
+    // the root paint the proxy sets from the source computed values
+    if (n.kind === 'icon' && n.icon && n.icon.svg) {
+      if (d.svg === undefined) miss.add('svg');
+      else if (!d.svg) data.push({ id, kind: 'svg', prop: 'markup', expected: 'inline svg', actual: 'none drawn' });
+      else {
+        const s = splitSvgRoot(n.icon.svg), hs = sha(s.markup), hp = sha(d.svg.markup);
+        if (hs !== hp) data.push({ id, kind: 'svg', prop: 'markup', expected: `sha1 ${hs} (${s.markup.length} chars)`, actual: `sha1 ${hp} (${String(d.svg.markup).length} chars)` });
+        if (s.own !== (d.svg.own || '')) data.push({ id, kind: 'svg', prop: 'root style', expected: s.own || 'none', actual: d.svg.own || 'none' });
+        const ic = n.icon, p = d.svg.paint || [];
+        [['color', ic.color], ['fill', ic.fill], ['stroke', ic.stroke], ['stroke-width', ic.sw]].forEach(([prop, v], i) => {
+          const norm = prop === 'stroke-width' ? (x) => (x == null ? '1px' : `${r2(parseFloat(x))}px`) : (x) => (x == null ? 'none' : normColor(x));
+          if (v != null && norm(v) !== norm(p[i])) data.push({ id, kind: 'svg', prop, expected: norm(v), actual: norm(p[i]) });
+        });
+      }
+    }
+    // image: object-fit, object-position and source as rendered
+    if (n.kind === 'image') {
+      if (d.img === undefined) miss.add('image');
+      else if (!d.img) data.push({ id, kind: 'image', prop: 'src', expected: n.src ? short(n.src) : `${n.tag || 'image'} content`, actual: 'no image' });
+      else {
+        for (const [prop, expected, actual] of [['object-fit', n.fit || 'fill', d.img.fit], ['object-position', n.pos || '50% 50%', d.img.pos], ['src', n.src || '', d.img.src || '']]) {
+          if (String(expected).trim() !== String(actual ?? '').trim()) data.push({ id, kind: 'image', prop, expected: short(expected), actual: short(actual) });
+        }
+      }
+    }
+  }
+  for (const k of miss) skipped.push(k);
+
   // ---- layer 3: R46 unsupported paint (any size) and effect data (box-shadow, background-image; any size) ----
   const hasFlagD = (id, kind) => (flagsById.get(id) || []).includes(kind);
   const rasterAt = (e) => { for (let a = e; a; a = a.parent) if (hasFlagD(a.n.id, 'raster')) return true; return false; };
@@ -719,7 +819,10 @@ export async function measureCrops(browser, screen, proxy, opts = {}) {
     if (!P || !P.png) throw new Error(`measureCrops: proxy PNG at ${M} is missing`);
     const pairs = [];
     const flat = flatten(screen.tree);
-    const rect = (n) => { const s = M === 'A' ? n.rA : n.rB, b = P.boxes[n.id]; return s && b && s[2] * s[3] > 0 && s[2] * s[3] <= maxArea ? [s, b] : null; };
+    // R50: a leaf that paints content (text, icon, image) is cropped at any size; containers above maxArea rely on
+    // the data checks (colour, radius, stroke, effect, visibility)
+    const paintLeaf = (n) => !(n.kids && n.kids.length) && (isTextSrc(n) || n.kind === 'icon' || n.kind === 'image');
+    const rect = (n) => { const s = M === 'A' ? n.rA : n.rB, b = P.boxes[n.id]; return s && b && s[2] * s[3] > 0 && (s[2] * s[3] <= maxArea || paintLeaf(n)) ? [s, b] : null; };
     const cropped = new Map(flat.map(({ n }) => [n.id, rect(n)]).filter(([, r]) => r));
     // R45: a container compares its own paint only: every descendant that has its own crop is masked (in the source
     // image at its source box, in the proxy image at its proxy box); a descendant without a crop stays in the window

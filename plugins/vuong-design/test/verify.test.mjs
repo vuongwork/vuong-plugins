@@ -16,7 +16,9 @@ const skip = process.env.VD_PLAYWRIGHT_FROM
 // Source tree: n (frame) > n.0 (HUG frame "card") > n.0.0 (text "Inbox"), n.0.1 (icon #ic); n.1 (frame below the card)
 // `layout` = the unmodelled proxy, `proxy` = the modelled one; both start exact. DOM observations mirror the source.
 // what the proxy DOM reports for a shown node without strokes (R30/R31 observations)
-const SHOWN = () => ({ op: 1, vis: 'visible', disp: 'block', stroke: ['none', 'none', 'none', 'none'], shadow: 'none', bgImage: 'none' });
+const SHOWN = () => ({ op: 1, vis: 'visible', disp: 'block', stroke: ['none', 'none', 'none', 'none'], shadow: 'none', bgImage: 'none', radius: ['0px', '0px', '0px', '0px'] });
+// R50: the per-run font observation of a text as the proxy DOM reports it ([text, size, weight, style, decoration, transform])
+const domRuns = (n) => (n.runs || []).filter((r) => !r.br).map((r) => { const f = { ...n.font, ...(r.s || {}) }; return [r.t, f.fs, f.fw, f.fst || 'normal', f.td || 'none', f.tt || 'none']; });
 const FONT = { ff: 'Inter', fs: '14px', fw: '400', lh: 20, c: 'rgb(34, 34, 34)' };
 function fixture() {
   const screen = {
@@ -49,6 +51,7 @@ function fixture() {
   const v = (n) => {
     const o = { color: n.font ? n.font.c : 'rgb(0, 0, 0)', bg: (n.paint && n.paint.bg) || 'rgba(0, 0, 0, 0)', ff: n.font ? `"${n.font.ff}"` : 'serif', ...SHOWN() };
     if (n.runs) o.text = n.runs.map((r) => r.t).join('');
+    if (n.runs && n.font) o.runs = domRuns(n);
     if (n.icon) o.icon = n.icon.ref;
     dom[n.id] = o; (n.kids || []).forEach(v);
   };
@@ -1309,4 +1312,103 @@ test('R49: an absolute text whose width is off and that also moved 2px is a root
   spec.kids[0].kids[0].abs.c = 'R';
   r = probe(tree, both((b) => { b['n.0.0'][0] -= 5; b['n.0.0'][2] += 5; }), [], spec);
   assert.deepEqual(r.roots.map((x) => x.why.join(',')), ['w', 'w'], JSON.stringify(r.roots));
+});
+
+// ---- fix round 9: R50 (data checks on paint the crops cannot see on large nodes: source computed vs proxy DOM) ----
+const dataOf = (r, kind) => r.data.filter((d) => d.kind === kind);
+test('R50: border-radius is compared per corner (source computed vs proxy DOM), at any size', () => {
+  const inp = fixture();
+  inp.screen.tree.kids[0].paint.radius = ['16px', '16px', '4px', '10px 20px'];
+  inp.proxy.A.dom['n.0'].radius = ['16px', '16px', '4px', '10px 20px'];
+  let r = verifyScreen(inp);
+  assert.deepEqual(dataOf(r, 'radius'), [], JSON.stringify(r.data));
+  assert.equal(r.pass, true);
+  inp.proxy.A.dom['n.0'].radius = ['16px', '16px', '4px', '10px'];
+  r = verifyScreen(inp);
+  assert.deepEqual(dataOf(r, 'radius').map((d) => [d.id, d.side, d.expected, d.actual]), [['n.0', 'bottom-left', '10px 20px', '10px']]);
+  assert.equal(r.pass, false);
+  // a radius the proxy drew that the source does not have
+  const j = fixture(); j.proxy.A.dom['n.1'].radius = ['8px', '8px', '8px', '8px'];
+  assert.equal(dataOf(verifyScreen(j), 'radius').length, 4);
+  // no radius observation in the proxy DOM: never a silent pass
+  const k = fixture(); delete k.proxy.A.dom['n.1'].radius;
+  r = verifyScreen(k);
+  assert.ok(r.skipped.includes('radius'));
+  assert.equal(r.pass, false);
+});
+
+test('R50: font size, weight, style, decoration and transform are compared per run with the proxy DOM', () => {
+  const base = () => {
+    const inp = fixture();
+    const t = inp.screen.tree.kids[0].kids[0];
+    t.font = { ...FONT, fst: 'normal', td: 'none', tt: 'none' }; t.runs = [{ t: 'In' }, { t: 'box', s: { fw: '700' } }];
+    inp.proxy.A.dom['n.0.0'].runs = domRuns(t);
+    return inp;
+  };
+  let r = verifyScreen(base());
+  assert.deepEqual(r.data, []);
+  assert.equal(r.pass, true);
+  for (const [i, prop, v] of [[2, 'font-weight', '400'], [1, 'font-size', '19px'], [3, 'font-style', 'italic'], [4, 'text-decoration', 'underline'], [5, 'text-transform', 'uppercase']]) {
+    const inp = base(); inp.proxy.A.dom['n.0.0'].runs[1][i] = v;
+    r = verifyScreen(inp);
+    assert.deepEqual(dataOf(r, 'font-style').map((d) => [d.id, d.prop, d.actual]), [['n.0.0', prop, v]], `${prop}: ${JSON.stringify(r.data)}`);
+    assert.equal(r.pass, false);
+  }
+  // the proxy split the text into runs differently but with the same styles per character: fine
+  const s = base(); s.proxy.A.dom['n.0.0'].runs = [['I', '14px', '400', 'normal', 'none', 'none'], ['n', '14px', '400', 'normal', 'none', 'none'], ['box', '14px', '700', 'normal', 'none', 'none']];
+  assert.deepEqual(verifyScreen(s).data, []);
+  // the bold run moved one character to the left: a weight mismatch
+  const m = base(); m.proxy.A.dom['n.0.0'].runs = [['I', '14px', '400', 'normal', 'none', 'none'], ['nbox', '14px', '700', 'normal', 'none', 'none']];
+  assert.deepEqual(dataOf(verifyScreen(m), 'font-style').map((d) => d.prop), ['font-weight']);
+  // no run observation: never a silent pass
+  const k = base(); delete k.proxy.A.dom['n.0.0'].runs;
+  r = verifyScreen(k);
+  assert.ok(r.skipped.includes('font-style'));
+  assert.equal(r.pass, false);
+});
+
+const SVG_SRC = '<svg viewBox="0 0 100 100" style="fill-opacity: 0.5;"><circle cx="50" cy="50" r="40" style="fill: rgb(229, 57, 53);"></circle></svg>';
+const svgFixture = () => {
+  const inp = fixture();
+  const ic = inp.screen.tree.kids[0].kids[1];
+  ic.icon = { ref: null, svg: SVG_SRC, color: 'rgb(0, 0, 0)', fill: 'rgb(0, 0, 0)', stroke: 'none', sw: '1px' };
+  inp.spec.kids[0].kids[1].icon = { svg: SVG_SRC };
+  Object.assign(inp.proxy.A.dom['n.0.1'], { icon: 'svg', svg: { markup: '<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" style="fill: rgb(229, 57, 53);"></circle></svg>', own: 'fill-opacity: 0.5', paint: ['rgb(0, 0, 0)', 'rgb(0, 0, 0)', 'none', '1px'] } });
+  return inp;
+};
+test('R50: an inline svg is compared by its serialised markup (with inlined paint) and its root paint', () => {
+  let r = verifyScreen(svgFixture());
+  assert.deepEqual(r.data, [], JSON.stringify(r.data));
+  const colour = svgFixture(); colour.proxy.A.dom['n.0.1'].svg.markup = colour.proxy.A.dom['n.0.1'].svg.markup.replace('229, 57, 53', '30, 136, 229');
+  assert.deepEqual(dataOf(verifyScreen(colour), 'svg').map((d) => [d.id, d.prop]), [['n.0.1', 'markup']]);
+  const own = svgFixture(); own.proxy.A.dom['n.0.1'].svg.own = '';
+  assert.deepEqual(dataOf(verifyScreen(own), 'svg').map((d) => d.prop), ['root style']);
+  const paint = svgFixture(); paint.proxy.A.dom['n.0.1'].svg.paint[1] = 'rgb(255, 0, 0)';
+  assert.deepEqual(dataOf(verifyScreen(paint), 'svg').map((d) => d.prop), ['fill']);
+  const k = svgFixture(); delete k.proxy.A.dom['n.0.1'].svg;
+  r = verifyScreen(k);
+  assert.ok(r.skipped.includes('svg') || dataOf(r, 'svg').length, JSON.stringify(r));
+  assert.equal(r.pass, false);
+});
+
+test('R50: an image is compared by object-fit, object-position and source with the proxy DOM', () => {
+  const mk = () => {
+    const inp = fixture();
+    inp.screen.tree.kids[1] = { ...inp.screen.tree.kids[1], kind: 'image', tag: 'img', src: 'data:image/png;base64,AAA', fit: 'cover', pos: '0px 0px' };
+    inp.spec.kids[1] = { ...inp.spec.kids[1], t: 'I', src: 'data:image/png;base64,AAA', fit: 'cover', pos: '0px 0px' };
+    inp.proxy.A.dom['n.1'].img = { fit: 'cover', pos: '0px 0px', src: 'data:image/png;base64,AAA' };
+    return inp;
+  };
+  assert.deepEqual(verifyScreen(mk()).data, []);
+  for (const [k, v] of [['fit', 'fill'], ['pos', '50% 50%'], ['src', 'data:image/png;base64,BBB']]) {
+    const inp = mk(); inp.proxy.A.dom['n.1'].img[k] = v;
+    const r = verifyScreen(inp);
+    assert.deepEqual(dataOf(r, 'image').map((d) => [d.id, d.prop, d.actual]), [['n.1', { fit: 'object-fit', pos: 'object-position', src: 'src' }[k], v]], JSON.stringify(r.data));
+  }
+  const none = mk(); none.proxy.A.dom['n.1'].img = null; // the proxy drew no image
+  assert.deepEqual(dataOf(verifyScreen(none), 'image').map((d) => d.actual), ['no image']);
+  const k = mk(); delete k.proxy.A.dom['n.1'].img;
+  const r = verifyScreen(k);
+  assert.ok(r.skipped.includes('image'));
+  assert.equal(r.pass, false);
 });

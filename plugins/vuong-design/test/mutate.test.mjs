@@ -7,7 +7,7 @@ const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const skip = process.env.VD_PLAYWRIGHT_FROM
   ? (process.platform === 'win32' ? false : 'needs a locally installed Georgia (Windows)')
   : 'set VD_PLAYWRIGHT_FROM to a dir with node_modules/playwright-core';
-const KINDS = ['moveShape', 'moveText', 'swapIcon', 'deleteLeaf', 'hideLeaf', 'thinStrokeSmall', 'thinStroke4000', 'drift', 'gap'];
+const KINDS = ['moveShape', 'moveText', 'swapIcon', 'deleteLeaf', 'hideLeaf', 'thinStrokeSmall', 'thinStroke4000', 'drift', 'gap', 'radiusLarge', 'fontLarge', 'svgLarge', 'imageLarge'];
 
 // offline stand-in for the Figma families (as in the verify pipeline test): Georgia is installed on Windows
 const available = ['Inter', 'Georgia'];
@@ -116,4 +116,25 @@ test('runMutations: a deliberately loose verifier (huge tolerances) is detected 
   const r = await run('capture-basic.html', { kinds: ['moveShape', 'moveText', 'gap'], verify: loose });
   assert.equal(r.allCaught, false);
   assert.ok(r.results.some((x) => x.caught === false), JSON.stringify(r.results));
+});
+
+test('R50: runMutations on layout-paint: radius, font, svg and image errors on large nodes are caught by data checks', { skip }, async () => {
+  const r = await run('layout-paint.html', { kinds: ['radiusLarge', 'fontLarge', 'svgLarge', 'imageLarge'] });
+  assert.equal(r.baseline.pass, true, JSON.stringify(r.baseline));
+  const t = Object.fromEntries(r.results.map((x) => [x.kind, x]));
+  assert.deepEqual(r.results.map((x) => [x.kind, x.target]), [['radiusLarge', 'n.1'], ['fontLarge', 'n.3'], ['svgLarge', 'n.5'], ['imageLarge', 'n.7']]);
+  for (const x of r.results) {
+    assert.equal(x.caught, true, JSON.stringify(x));
+    assert.ok(x.by.includes('data'), JSON.stringify(x));
+  }
+  assert.ok(t.radiusLarge.found.includes('data|n.1|radius'), JSON.stringify(t.radiusLarge));
+  assert.ok(t.fontLarge.found.includes('data|n.3|font-style'), JSON.stringify(t.fontLarge));
+  assert.ok(t.svgLarge.found.includes('data|n.5|svg'), JSON.stringify(t.svgLarge));
+  assert.ok(t.imageLarge.found.includes('data|n.7|image'), JSON.stringify(t.imageLarge));
+  assert.equal(r.allCaught, true);
+});
+
+test('R50: the large-node kinds skip when the screen has no node above 4000 px² of that type', { skip }, async () => {
+  const r = await basicRun();
+  for (const k of ['svgLarge', 'imageLarge']) assert.equal(r.results.find((x) => x.kind === k).skipped, 'no candidate', k);
 });

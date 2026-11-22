@@ -1,15 +1,15 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>layout-crop</title>
-<!-- Deliberate crop-only failure (CLI exit 1): the image n.0 (80x40 source, left half red, right half blue) is shown
-     in a 40x40 box with object-fit:cover and object-position:0 0, so the page shows its red half. Capture carries
-     src and object-fit but not object-position, so the proxy centres the image (half red, half blue). Geometry,
-     colour, image src/fit and every other data check match; only the crop at A and B differs.
-     (object-position is a known gap of R46's unsupported list: see the 8b-3 report. When it is added there, this
-     fixture needs another crop-only difference.) -->
+<!-- Deliberate crop-only failure (CLI exit 1): the image n.0 is a 2x2 px red/blue checker scaled up to 40x40 with
+     image-rendering:pixelated, so the page shows four sharp squares. Capture does not read image-rendering, so the
+     proxy scales it smoothly (a blurred blend). Geometry, colour, image src / fit / object-position (R50) and every
+     other data check match; only the crop at A and B differs.
+     (image-rendering is a known gap of R46's unsupported list, parked in the final review. When it is added there,
+     this fixture needs another crop-only difference.) -->
 <style>
 body{margin:0;font-family:Georgia,serif}
 .scr{width:300px;height:200px;background:#fff;display:flex;flex-direction:column;gap:8px;padding:8px}
-.im{display:block;width:40px;height:40px;object-fit:cover;object-position:0 0}
+.im{display:block;width:40px;height:40px;image-rendering:pixelated}
 .row{display:flex;gap:8px}.a{width:40px;height:20px;background:#ccc}
 .tx{width:40px;height:20px;background:#09f;transform:translateX(4px)}
-</style></head><body><div class="scr"><img class="im" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='40'%3E%3Crect width='40' height='40' fill='%23e53935'/%3E%3Crect x='40' width='40' height='40' fill='%231e88e5'/%3E%3C/svg%3E"><div class="row"><div class="a"></div><div class="tx"></div></div></div></body></html>
+</style></head><body><div class="scr"><img class="im" alt="" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGN4amkq1/GUQa7j6VNLUwAoBAW9Vyd8NwAAAABJRU5ErkJggg=="><div class="row"><div class="a"></div><div class="tx"></div></div></div></body></html>

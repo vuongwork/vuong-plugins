@@ -512,7 +512,7 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
       if (tag === 'img' || tag === 'video' || tag === 'canvas' || tag === 'iframe' || tag === 'picture') {
         if (b.width < 0.5 || b.height < 0.5) { excl(id, 'zero-size'); return null; }
         const img = tag === 'picture' ? el.querySelector('img') : el;
-        return { ...base(id, 'image', tag, cls, r, p), src: (img && (img.currentSrc || img.src)) || null, fit: cs.objectFit };
+        return { ...base(id, 'image', tag, cls, r, p), src: (img && (img.currentSrc || img.src)) || null, fit: cs.objectFit, pos: cs.objectPosition };
       }
       if (isIconFont(cs)) {
         return { ...base(id, 'icon', tag, cls, r, p), font: useFont(font(cs)), icon: { glyph: el.textContent.trim(), color: cs.color } };
@@ -926,7 +926,7 @@ function mergeNode(a, mapB) {
   if (a.lines != null) n.lines = [a.lines, b && b.lines != null ? b.lines : null];
   if (a.tw != null) n.tw = [a.tw, b && b.tw != null ? b.tw : null];
   if (a.icon) n.icon = a.icon;
-  if (a.src !== undefined) { n.src = a.src; n.fit = a.fit; }
+  if (a.src !== undefined) { n.src = a.src; n.fit = a.fit; n.pos = a.pos; }
   if (a.approx) n.approx = true;
   if (a.flex) n.flex = a.flex;
   if (a.pct) n.pct = a.pct;

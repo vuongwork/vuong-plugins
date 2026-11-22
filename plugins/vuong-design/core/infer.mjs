@@ -6,7 +6,7 @@
 // SNode = { id, t: 'F'|'T'|'V'|'I', w, h, sz: [x, y] of 'FILL'|'HUG'|'FIXED',
 //   lay?: { d: 'H'|'V', wrap?, cg?, p: [t, r, b, l], g? | sb?, pa: 'S'|'C'|'E', ca: 'S'|'C'|'E'|'B' },
 //   min?, max? (width in px), abs?: { x, y, c: 'L'|'R'|'LR'|'C'|'SCALE', cy?: 'B'|'TB'|'C'|'SCALE' (omitted = top) },
-//   paint?, font?, runs?, icon?, src?, fit?, syn?, kids? }
+//   paint?, font?, runs?, icon?, src?, fit?, pos? (object-position, R50), syn?, kids? }
 // Stretch on the counter axis is expressed per child (sz FILL), so ca 'X' is never emitted.
 // Every non-syn SNode id is its source INode id; synthetic frames are `<parentId>.g<k>` and have no source box.
 // syn kinds: 'row'/'col'/'prox'/'push' groups, 'align' wrappers (counter-axis offset), 'track' (R42: equal FILL
@@ -241,7 +241,7 @@ export function inferScreen(screen) {
     } else if (n.kind === 'icon') {
       sp.t = 'V'; sp.icon = n.icon; if (n.font) sp.font = n.font;
     } else if (n.kind === 'image') {
-      sp.t = 'I'; sp.src = n.src; sp.fit = n.fit;
+      sp.t = 'I'; sp.src = n.src; sp.fit = n.fit; if (n.pos) sp.pos = n.pos;
     }
     return sp;
   }

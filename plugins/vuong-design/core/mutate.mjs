@@ -33,6 +33,12 @@
 //    layout-proxy size + 0.4 (only if its source main size is the same at A and B, else the container is not
 //    eligible).
 //  - gap: the gap of the first auto-layout container with >= 2 flow items (not space-between) grows by 3px.
+//  R50, paint on large nodes (source area > 4000px², where no container crop runs):
+//  - radiusLarge: the first frame with a corner radius loses it (all corners 0); else the first one with a background
+//    gets 12px corners.
+//  - fontLarge: the first text leaf with visible text switches weight (>= 600 -> 400, else 700) on all its runs.
+//  - svgLarge: the first inline svg icon gets a small magenta square drawn first inside it (markup changed).
+//  - imageLarge: the first image switches object-fit (cover -> contain, anything else -> cover).
 // No candidate -> { kind, target: null, caught: null, by: [], skipped: 'no candidate' }; runMutations never throws for
 // that.
 //
@@ -45,7 +51,8 @@
 import { normColor } from './verify.mjs';
 import { runScreen } from './pipeline.mjs';
 
-export const KINDS = ['moveShape', 'moveText', 'swapIcon', 'deleteLeaf', 'hideLeaf', 'thinStrokeSmall', 'thinStroke4000', 'drift', 'gap'];
+export const KINDS = ['moveShape', 'moveText', 'swapIcon', 'deleteLeaf', 'hideLeaf', 'thinStrokeSmall', 'thinStroke4000', 'drift', 'gap',
+  'radiusLarge', 'fontLarge', 'svgLarge', 'imageLarge'];
 const MOVE = 3, DRIFT = 0.4, GAP = 3, SMALL = 4000;
 const BOX_EPS = 0.05, AT_EPS = 0.5;
 const W = ['A', 'B'];
@@ -131,6 +138,17 @@ function choose(kind, spec, src) {
       }) || null;
     case 'gap':
       return walk(spec).find(({ n }) => flowKids(n).length >= 2 && !n.lay.sb) || null;
+    case 'radiusLarge': {
+      const big = all.filter((e) => e.n.t === 'F' && !e.n.syn && areaA(e.n) > SMALL);
+      return big.find((e) => e.n.paint && Array.isArray(e.n.paint.radius) && e.n.paint.radius.some((r) => parseFloat(r) > 0)) ||
+        big.find((e) => e.n.paint && (opaque(e.n.paint.bg) || e.n.paint.bgImage)) || null;
+    }
+    case 'fontLarge':
+      return leaves.find((e) => e.n.t === 'T' && e.n.font && textOf(e.n).trim() !== '' && areaA(e.n) > SMALL) || null;
+    case 'svgLarge':
+      return leaves.find((e) => e.n.t === 'V' && e.n.icon && e.n.icon.svg && areaA(e.n) > SMALL) || null;
+    case 'imageLarge':
+      return leaves.find((e) => e.n.t === 'I' && e.n.src && areaA(e.n) > SMALL) || null;
     default:
       throw new Error(`runMutations: unknown kind ${kind}`);
   }
@@ -217,6 +235,24 @@ function mutate(kind, spec, pick, base) {
       break;
     }
     case 'gap': { const { n } = find(spec, id); n.lay = { ...n.lay, g: (n.lay.g || 0) + GAP }; break; }
+    case 'radiusLarge': {
+      const { n } = find(spec, id), p = n.paint = { ...(n.paint || {}) };
+      const had = Array.isArray(p.radius) && p.radius.some((r) => parseFloat(r) > 0);
+      p.radius = [0, 1, 2, 3].map(() => (had ? '0px' : '12px'));
+      break;
+    }
+    case 'fontLarge': {
+      const { n } = find(spec, id);
+      n.font = { ...n.font, fw: (parseFloat(n.font.fw) || 400) >= 600 ? '400' : '700' };
+      n.runs = (n.runs || []).map((r) => { if (!r.s || r.s.fw == null) return r; const s = { ...r.s }; delete s.fw; return Object.keys(s).length ? { ...r, s } : { t: r.t }; });
+      break;
+    }
+    case 'svgLarge': {
+      const { n } = find(spec, id);
+      n.icon = { ...n.icon, svg: String(n.icon.svg).replace(/^(<svg\b[^>]*>)/, '$1<rect x="0" y="0" width="25%" height="25%" fill="rgb(255, 0, 255)"></rect>') };
+      break;
+    }
+    case 'imageLarge': { const { n } = find(spec, id); n.fit = n.fit === 'cover' ? 'contain' : 'cover'; break; }
   }
 }
 
@@ -268,7 +304,7 @@ export async function runMutations(browser, screen, inferred, fontMap, opts = {}
     const pick = opts.targets && opts.targets[kind] ? pickId(kind, inferred.spec, opts.targets[kind]) : choose(kind, inferred.spec, src);
     if (!pick) { results.push({ kind, target: null, caught: null, by: [], skipped: 'no candidate' }); continue; }
     const spec = clone(inferred.spec);
-    mutate(kind, spec, pick, base.layout);
+    mutate(kind, spec, pick, base.layout)
     const run = await pipeline(browser, screen, spec, flags, fontMap, opts);
     const hit = touched(inferred.spec, pick.n.id, base, run);
     const fresh = failures(run.report).filter((f) => !before.has(f.key));

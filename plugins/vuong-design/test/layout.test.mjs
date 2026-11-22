@@ -297,3 +297,39 @@ test('R49 (probe-r47): a moved % anchor is a position root on its child even whe
   const r = report.roots.filter((x) => x.id === 'n.7.0' && !x.explainedBy);
   assert.ok(r.length && r.every((x) => x.why.includes('w') && x.why.includes('x')), JSON.stringify(report.roots));
 });
+
+test('R50 (probe-paint): radius, font, svg and image errors on large nodes fail the screen; the page itself passes', { skip }, async () => {
+  const { captureScreens } = await import('../core/capture.mjs');
+  const { inferScreen } = await import('../core/infer.mjs');
+  const { runScreen } = await import('../core/pipeline.mjs');
+  const { measureCrops } = await import('../core/verify.mjs');
+  const screen = (await captureScreens(join(FIX, 'layout-paint.html'), { root: '.scr', fontMap: fm, webFonts: false, png: true })).screens[0];
+  const base = inferScreen(screen);
+  const find = (s, pred) => (pred(s) ? s : (s.kids || []).map((k) => find(k, pred)).find(Boolean));
+  const plants = {
+    baseline: () => null,
+    radius0: (sp) => { const n = find(sp, (x) => x.paint && x.paint.radius); n.paint.radius = ['0px', '0px', '0px', '0px']; return [n.id, 'radius']; },
+    weight400: (sp) => { const n = find(sp, (x) => x.t === 'T'); n.font.fw = '400'; for (const r of n.runs || []) if (r.s) delete r.s.fw; return [n.id, 'font-style']; },
+    size19: (sp) => { const n = find(sp, (x) => x.t === 'T'); n.font.fs = '19px'; return [n.id, 'font-style']; },
+    italic: (sp) => { const n = find(sp, (x) => x.t === 'T'); n.font.fst = 'italic'; return [n.id, 'font-style']; },
+    underline: (sp) => { const n = find(sp, (x) => x.t === 'T'); n.font.td = 'underline'; return [n.id, 'font-style']; },
+    svgColour: (sp) => { const n = find(sp, (x) => x.icon && x.icon.svg); n.icon.svg = n.icon.svg.replace(/#e53935|rgb\(229, 57, 53\)/g, '#1e88e5'); return [n.id, 'svg']; },
+    svgShape: (sp) => { const n = find(sp, (x) => x.icon && x.icon.svg); n.icon.svg = n.icon.svg.replace(/<circle[^>]*>(<\/circle>)?/, '<rect x="10" y="10" width="80" height="80" fill="#e53935"></rect>'); return [n.id, 'svg']; },
+    imgFit: (sp) => { const n = find(sp, (x) => x.t === 'I'); n.fit = 'fill'; return [n.id, 'image']; },
+    imgPos: (sp) => { const n = find(sp, (x) => x.t === 'I'); n.pos = '50% 50%'; return [n.id, 'image']; },
+  };
+  for (const [name, plant] of Object.entries(plants)) {
+    const inf = structuredClone(base);
+    const want = plant(inf.spec);
+    const e = await runScreen(browser, screen, inf, fm, { proxy: { webFonts: false } });
+    if (!want) {
+      assert.equal(e.report.pass, true, `${name}: ${JSON.stringify({ data: e.report.data, crop: e.report.crop, roots: e.report.roots })}`);
+      // crops now also cover the large leaves (text, svg, image), not only nodes <= 4000 px²
+      const ids = new Set((await measureCrops(browser, screen, e.layout)).map((c) => c.id));
+      for (const pred of [(x) => x.t === 'T', (x) => x.icon && x.icon.svg, (x) => x.t === 'I']) assert.ok(ids.has(find(base.spec, pred).id), `${name}: crop ids ${[...ids]}`);
+      continue;
+    }
+    assert.equal(e.report.pass, false, name);
+    assert.ok(e.report.data.some((d) => d.id === want[0] && d.kind === want[1]), `${name}: ${JSON.stringify(e.report.data)}`);
+  }
+});

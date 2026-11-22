@@ -29,8 +29,8 @@ node plugins/vuong-design/core/layout.mjs --corpus plugins/vuong-design/test/cor
 
 - `--root`: selector of the screens (one screen per match). `--widen`: the element to widen for width B (the screen or an ancestor). `--name`: selector inside a screen whose text names it.
 - Tolerances default to 0.5px (frames), 1px (text), 2px (Figma model deltas before they need approval).
-- `--no-webfonts`: never fetch Google Fonts (by default only font family names are sent, to render the font Figma will use); families that do not render are reported.
-- `--mutate`: also plants known errors to check the checker (≈30 s per screen); `--mutate-sample <n>` limits it to n screens per file.
+- Fonts: before measuring, the source page is re-rendered with the face Figma will use: a Google Fonts face when Figma has the family (reason `version`), otherwise a substitute such as Inter for system-ui or Times New Roman (reasons `not-in-figma`, `system`); `line-height: normal` is written as explicit px (Figma has no "normal"). Google Fonts are fetched even when the page does not reference them; only the family name is sent. `--no-webfonts` stops that extra fetching only: the page's own font links and `@font-face` rules still load during capture and are copied into the proxy. Families that do not render are reported (`font-face` data finding when a used face is missing in the proxy).
+- `--mutate`: also plants known errors to check the checker (≈30 s per screen); `--mutate-sample <n>` limits it to n screens per file. A missed mutation makes the run exit 1 (R53); a kind with no candidate node is `skipped`, not missed.
 - `--corpus`: runs every file of a corpus JSON (`files: [{ file, root, widen? }]`, names relative to `--corpus-dir` or `$VD_CORPUS_DIR`) and uses its `allowlist` unless `--allowlist` is given.
 
 Environment: `VD_PLAYWRIGHT_FROM` (see Setup), `VD_CORPUS_DIR` (corpus mode and the acceptance test), `VD_ACCEPT_MUTATE=1` (mutation part of the acceptance test).
@@ -42,9 +42,11 @@ Outputs in `<out>` (corpus mode: `ir.json` and `spec-*.json` in `<out>/<file nam
 | `ir.json` | the captured screens (boxes at widths A and B, paint, fonts, font substitutions, normalisation counts), without PNGs |
 | `spec-<id>.json` | the modelled spec of a screen (compact JSON; `specBytes` is its size, `payloadOver50k` when above 50 000) |
 | `report.json` | per screen: summary row, the gate after the allowlist, the full verify report, flags, mutations |
-| `report.html` | self-contained page (images inline, works offline): summary table, then per screen every unexplained root, needs-approval entry and crop fail with the source crop and the proxy crop side by side, data findings, and the normalisation section (font substitutions, line heights made explicit, original vs measured screen) |
+| `report.html` | self-contained page (images inline, works offline): a "How to read this report" section, the summary table, then per screen a one-line verdict (what failed, whether you must act), every unexplained root, needs-approval entry and crop fail with the source crop and the proxy crop side by side (crops caused by a layout error are shown linked, with that root), data findings, and the "Normalisation" section (font substitutions with their reason, line heights made explicit, original vs measured screen). Every number carries its unit (px, %, 0-255 colour difference); identical findings repeated across screens are grouped |
 
-Exit code: 0 when every screen passes, 1 when one does not, 2 on a usage or setup error.
+Exit code: 0 when every screen passes, 1 when one does not (or a mutation was missed), 2 on a usage or setup error.
+
+What is checked (beyond coverage and position per node): position is checked independently of size, per axis (R49), so a size explanation never excuses a wrong position. Data checks run at every size (R50): border radius (per corner), font size, weight, style, decoration and transform per text run, inline svg content hash, image fit, object-position and src. Text, icon and image leaves are also cropped and compared at any size. `font-face` findings (R55) report a used face (weight/style) that did not load in the proxy.
 
 Allowlist entries: `{ file, screen, node, width: "A"|"B", kind: "root"|"approval"|"crop", delta | ratio + peak, fingerprint, reason, approved }` (`file` relative to the corpus dir). Each entry records what was approved (R51): the magnitude (`delta` [dx, dy, dw, dh] for roots and approvals, `ratio` and `peak` for crops) and the node's `fingerprint` (source tag, class, text or icon ref); it is honoured only while the node keeps that fingerprint and the finding stays within the approved magnitude (+0.25 px per delta component, +0.02 ratio, peak no larger). `report.json` has an `allowlistDraft` per screen with these fields filled in (`approved: false`) to copy from. Only `approved: true` entries count, and only for unexplained roots, needs-approval entries and crop fails (a crop linked to a root counts only with that root's entry); unchecked nodes, skipped layers and data findings (including `unsupported` paint and `effect` mismatches) always fail. Entries are approved by the user, from `report.html`.
 
@@ -56,7 +58,7 @@ VD_PLAYWRIGHT_FROM=... VD_CORPUS_DIR=... node --test plugins/vuong-design/test/a
 
 Runs the 25 screens of `test/corpus.json` (skipped without `VD_CORPUS_DIR`). It requires full coverage, no unexplained root, no needs-approval entry and no crop fail outside the approved allowlist, no data finding, and (with `VD_ACCEPT_MUTATE=1`) every mutation caught or skipped.
 
-Current numbers (2026-11-22, after 8b-3: R47 SCALE for % authored absolute nodes and R48 inline svg paint, HEAD 4b7895c, empty allowlist; not passing yet: what is left needs the user's approval, see below). CLI on the whole corpus: 123 s.
+Current numbers (2026-11-22, after round 9: R49-R55, empty allowlist; not passing yet: what is left needs the user's approval, see below). CLI on the whole corpus: about 143 s. The per-screen table below is from the earlier run (HEAD 4b7895c); only planora s3 has changed since (1 unexplained root, now failing), and the totals row after it is current.
 
 | File | Screen | Checked | Unexplained roots | Explained roots | Needs approval (max px) | Crop fails A/B (+ linked) | Data | specBytes | Pass |
 |---|---|---|---|---|---|---|---|---|---|
@@ -85,13 +87,14 @@ Current numbers (2026-11-22, after 8b-3: R47 SCALE for % authored absolute nodes
 | calendar-layout-v2.html | s0 | 112/112 | 0 | 4 | 0 | 0/0 | 0 | 25375 | pass |
 | calendar-layout-v2.html | s1 | 112/112 | 0 | 4 | 1 (2.19) | 0/0 | 0 | 26072 | fail |
 | calendar-layout-v3.html | s0 | 165/165 | 0 | 4 | 0 | 0/0 | 0 | 36024 | pass |
-| **Total** | 25 | | **0** | 45 | **8** (max 4.25) | **3** (+0 linked) | 0 | max 36024 | **20/25** |
+| **Total (current)** | 25 | | **1** | | **8** (max 4.25) | **3** (+1 linked) | 0 | | **19/25** |
 
 "Crop fails" are standalone crop fails; "+ linked" are crop fails on an unexplained size root (R44), which pass only together with that root's allowlist entry. "Needs approval" lists model roots above tolModel plus at most one cumulative model-drift entry per screen (R43), with the largest accumulated model delta as its magnitude.
 
-What is left (0 roots, 8 approvals, 3 crops):
+What is left (1 root, 8 approvals, 3 crops + 1 linked):
+- planora s3 `n.0.13.0` (the one unexplained root): the avatar in a row that shrinks at width A and is centred at width B (the FILL icon box is 179.5 px at B, so the avatar sits 23.25 px further left). Classed as a Figma limitation pending the user's approval; its linked crop passes or fails with that root's allowlist entry.
 - Figma text-box round-up accumulating down a screen (needs approval, or a real-Figma check of fractional line heights): entry s0 (max 3.25px) and s1 (max 4.25px), calendar-v2 s1 (2.19px); planora s4 chip row width round-up (2.28px).
 - planora s11 `n.0.13.1.1.0` (A, B) and `n.0.13.1.1.1` (B): crops inside the shrink-flagged row `n.0.13.1` (the flag explains the row's size, not the children's paint; they stand alone, R44).
 - To check in real Figma (plan 3): R47 SCALE is relative to the parent frame, CSS % to the containing block's padding box (equal here: no border, parent = containing block; otherwise the fit fails and fixed constraints stand in, visibly); the `left: 52%` badge and `left: 58%` / `55%` markers hang from zero-width SCALE anchor frames (Figma's minimum size is 0.01).
 
-Mutations (`--mutate`, full corpus, HEAD 4b7895c, 939 s): 180 caught, 0 missed, 45 skipped (no candidate).
+Mutations (`--mutate`, full corpus, after round 9): 221 caught, 0 missed, 104 skipped (no candidate; the large svg and image kinds have no candidate in this corpus and are covered by tests).

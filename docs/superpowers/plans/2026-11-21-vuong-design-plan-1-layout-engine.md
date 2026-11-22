@@ -21,7 +21,7 @@ Các kế hoạch tiếp theo: 2 design system + chuẩn hoá, 3 ghi Figma (bi�
 - Ngưỡng vị trí mặc định: khung ≤ 0,5px, chữ ≤ 1px, chỉnh được (Task 6, Task 8). Căn cứ ở spec mục 14.
 - Spec chỉ chứa khái niệm Figma: chiều xếp H/V, wrap, padding[4], gap hoặc spaceBetween, căn trục chính/phụ (S/C/E/stretch), FILL/HUG/FIXED cho từng trục, min/max width, absolute + ràng buộc (L, R, LR, C; SCALE chỉ cho node absolute viết bằng %, R47), chữ, vector, ảnh, sơn. Không có margin.
 - Không ghi file ngoài thư mục `--out` người dùng chỉ định; không sửa HTML nguồn.
-- Không gửi dữ liệu dự án ra mạng (font Google vẫn được tải khi HTML tự tham chiếu).
+- Không gửi dữ liệu dự án ra mạng. Font Google vẫn được tải kể cả khi HTML không tham chiếu (R9, R41: chỉ tên họ font rời máy, để nguồn và bản mô phỏng render đúng bản font Figma dùng); `--no-webfonts` tắt phần nạp thêm này, còn link font và `@font-face` của chính trang vẫn tải và được chép sang bản mô phỏng.
 
 ## Review Focus
 
@@ -89,7 +89,7 @@ Các kế hoạch tiếp theo: 2 design system + chuẩn hoá, 3 ghi Figma (bi�
   - `SNode = { id, t: 'F'|'T'|'V'|'I', w, h, lay?: { d: 'H'|'V', wrap?, p: [t,r,b,l], g?, sb?, pa: 'S'|'C'|'E', ca: 'S'|'C'|'E'|'X'|'B' }, sz: [ 'FILL'|'HUG'|'FIXED', 'FILL'|'HUG'|'FIXED' ], min?, max?, abs?: { x, y, c: 'L'|'R'|'LR'|'C' }, paint?, font?, runs?, icon?, syn?, kids? }`. `syn` đánh dấu khung nhóm sinh ra khi tách nhóm.
   - `Flag = { id, kind: 'shrink'|'weightedFill'|'spaceAround'|'mixedRunHeight'|'raster'|'unsafeWiden', detail }`. `unsafeWiden` gắn vào gốc màn khi `screen.widen.unsafe`; khi đó FILL/HUG/FIXED suy ra cho màn đó coi là chưa tin được.
   - `Stats = { grouping, pushSplit, spaceBetween, absOverlap, absOverflow, absTransform, wrappers, wrapRows }`.
-- Thuật toán: mục 7 của spec. Không rẽ nhánh theo `display`/`flex`/`grid`/`margin` khi quyết định bố cục. Chỉ đọc CSS để biết sơn, font và ý định co giãn. Mã tham khảo: spike2 `infer.js`, gồm cả các sửa đã làm trong bản thử: HUG khi "kích thước = nội dung + padding ở cả hai độ rộng", khoảng trống thừa đưa vào căn lề, minWidth cho lưới `1fr` có sàn nội dung, FILL + maxWidth, con duy nhất rộng theo % thì đặt tuyệt đối. Ràng buộc SCALE thì thay bằng C hoặc LR, chọn cái khớp hơn ở độ rộng B.
+- Thuật toán: mục 7 của spec. Không rẽ nhánh theo `display`/`flex`/`grid`/`margin` khi quyết định bố cục. Chỉ đọc CSS để biết sơn, font và ý định co giãn. Mã tham khảo: spike2 `infer.js`, gồm cả các sửa đã làm trong bản thử: HUG khi "kích thước = nội dung + padding ở cả hai độ rộng", khoảng trống thừa đưa vào căn lề, minWidth cho lưới `1fr` có sàn nội dung, FILL + maxWidth, con duy nhất rộng theo % thì đặt tuyệt đối. SCALE chỉ cho node absolute viết bằng % (R47, quyết định người dùng 2026-11-22); vị trí % với kích thước cố định dùng khung phụ `anchor` rộng 0 mang SCALE. Mọi trường hợp khác dùng C hoặc LR, chọn cái khớp hơn ở độ rộng B.
 
 - [ ] **Step 1: Viết fixture và test**. Mỗi fixture một hành vi, mỗi test assert đúng các trường sau:
   - `infer-row-gap`: 3 item cách đều 8 → `lay.d === 'H'`, `lay.g === 8`.
@@ -100,11 +100,11 @@ Các kế hoạch tiếp theo: 2 design system + chuẩn hoá, 3 ghi Figma (bi�
   - `infer-sizing`: ô `flex:1` → `sz[0] === 'FILL'`; nhãn ngắn → `'HUG'`; avatar 40px → `'FIXED'`.
   - `infer-text`: chữ một dòng không giãn → `HUG`; chữ xuống dòng → `FIXED` với `w` bằng độ rộng đo ở A; chữ giãn theo khung → `FILL`.
   - `infer-flags`: `flex-shrink` ép item, `flex:2/flex:1`, `space-evenly` → `flags` có lần lượt `shrink`, `weightedFill`, `spaceAround` với `id` đúng node.
-  - `infer-baseline`: tiêu đề 22px và chữ phụ 12,5px căn theo chân chữ trong một hàng → `lay.ca === 'B'` và không có node `syn` bọc chữ phụ (thay cho 65 khung bọc ở bản thử 2).
+  - `infer-baseline`: tiêu đề 22px và chữ phụ 12,5px căn theo chân chữ trong một hàng → `lay.ca === 'B'` và không có node `syn` bọc chữ phụ (căn baseline thay khung bọc cho phần tử lệch chân chữ; khung bọc `align` cho margin/inset lệch trục phụ vẫn còn, 65 khung của bản thử 2 là loại này, không phải khung baseline).
   - `infer-raster`: phần tử có `filter: blur(2px)` và phần tử có `background: conic-gradient(...)` → `flags` có `raster` cho cả hai.
-  - Không node nào có `abs.c === 'SCALE'`.
+  - SCALE (R47): chỉ node absolute có left/right/top/bottom/width/height viết bằng % trên trục đó mới có `abs.c` / `abs.cy === 'SCALE'`; vị trí % với kích thước cố định → khung `syn: 'anchor'` rộng 0 mang SCALE, node treo bên trong bằng L/R (T/B); mọi node khác không có SCALE.
 - [ ] **Step 2: Chạy** → FAIL.
-- [ ] **Step 3: Viết** `inferScreen` (chuyển từ spike2 `infer.js`; thêm phát hiện `flags`; bỏ SCALE).
+- [ ] **Step 3: Viết** `inferScreen` (chuyển từ spike2 `infer.js`; thêm phát hiện `flags`; SCALE chỉ theo R47, không suy SCALE từ hình học).
 - [ ] **Step 4: Chạy** → PASS. **Commit** `feat(vuong-design): recursive geometric layout inference`.
 
 ### Task 4: Mô hình khác biệt của Figma (figma-model)

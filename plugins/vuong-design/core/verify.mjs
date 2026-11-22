@@ -56,7 +56,9 @@
 //   Small offsets cannot add up unseen: the first node whose offset exceeds tol while its references stayed within
 //   tol is a root. root.why lists the axes: x/y position, w/h size. R49: position and size are judged separately
 //   on each axis (a node off in size is still examined for position by its aligned edge), and a flag or an
-//   allowlist entry that covers a size never covers a position.
+//   allowlist entry that covers a size never covers a position. R57: a FILL item on its flow container's main axis
+//   is aligned by that container's packing (start, space-between or none: near edge; end: far edge; centre:
+//   middle), not "stretched" (near or far): a padding error the FILL item absorbs moves its packed edge.
 //   Flags (R12, R17, R20, R22-R24): a flag explains only deviations it can cause, axis by axis (every axis in root.why
 //   must be covered). shrink: the item's own size on its container's main axis. weightedFill: main-axis SIZE of the
 //   FILL items of that container (never a position), only when the container's main size is ok or it is an explained
@@ -306,8 +308,20 @@ export function verifyScreen(input, opts = {}) {
       const al = ax === mainOf(c) ? (c.lay.sb ? null : c.lay.pa) : c.lay.ca;
       return al === 'S' || al === 'E' || al === 'C' ? al : null;
     };
+    // R57: a stretched (FILL) item on its flow container's main axis is placed by the packing of that row / column:
+    // start-packed (or space-between, or no packing given) by its near edge, end-packed by its far edge, centred by its
+    // middle; never "near or far" (a padding error the FILL item absorbs moves its packed edge). Its own shrink /
+    // weightedFill flag still explains only its size. Cross-axis stretch and absolute LR / TB pins stay 'X'.
+    const posAlign = (id, ax) => {
+      const al = alignOf(id, ax);
+      if (al !== 'X') return al;
+      const s = specById.get(id), c = specParent.get(id);
+      if (!s || s.abs || !c || !c.lay || mainOf(c) !== ax) return al;
+      const pa = c.lay.sb ? 'S' : c.lay.pa;
+      return pa === 'E' || pa === 'C' ? pa : 'S';
+    };
     const posOK = (e, ax, withParentFar, strict = false) => {
-      const t = tolOf(e.n), all = edges(D.get(e.n.id), ax), al = alignOf(e.n.id, ax);
+      const t = tolOf(e.n), all = edges(D.get(e.n.id), ax), al = posAlign(e.n.id, ax);
       // R34 (M1): a node stays where it is anchored: its own aligned edge (start / end / centre; near or far when
       // stretched or unknown); the middle edges (its own and its ancestor's) count only for a centred node
       // An aligned node whose own edge stayed while its ancestor's same edge moved beyond tolerance is not at its

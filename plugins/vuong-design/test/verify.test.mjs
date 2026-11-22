@@ -1449,3 +1449,37 @@ test('R55: a run whose face (family, style, weight) did not load in the proxy is
   const k = mk([]); delete k.proxy.A.facesMissing;
   assert.ok(verifyScreen(k).skipped.includes('font-face'));
 });
+
+// ---------------- fix round 10: R57 (a stretched main-axis item is judged by its packed edge) ----------------
+test('R57 (probe-r49fill): a FILL item judged by the edge its row packs from; shrink never covers its position', () => {
+  // row 300 at x 0, padding-left 10: a FILL 160 | gap 10 | b FIXED 60
+  const Fl = (id, sz, d, pa, kids) => ({ id, t: 'F', sz, lay: { d, pa, ca: 'S', p: [0, 0, 0, 10], g: 10 }, kids });
+  const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 300, 40], rB: [0, 0, 300, 40], kids: [
+    { id: 'n.0.0', kind: 'frame', rA: [10, 0, 160, 40], rB: [10, 0, 160, 40] }, { id: 'n.0.1', kind: 'frame', rA: [180, 0, 60, 40], rB: [180, 0, 60, 40] }] }]);
+  const spec = (pa) => Fl('n', ['FIXED', 'FIXED'], 'V', 'S', [Fl('n.0', ['FIXED', 'FIXED'], 'H', pa, [F('n.0.0', ['FILL', 'FIXED']), F('n.0.1', ['FIXED', 'FIXED'])])]);
+  const fl = [{ id: 'n.0.0', kind: 'shrink' }];
+  const xRoot = (r) => r.roots.find((x) => x.id === 'n.0.0' && x.width === 'A' && x.why.includes('x'));
+  // planted: padding-left 20 instead of 10, the FILL item absorbs it (near edge +10, far edge stays)
+  const pad = both((b) => { b['n.0.0'][0] += 10; b['n.0.0'][2] -= 10; });
+  for (const fls of [[], fl]) {
+    const r = probe(tree, pad, fls, spec('S'));
+    assert.equal(r.pass, false, JSON.stringify(r.roots));
+    assert.ok(xRoot(r) && !xRoot(r).explainedBy, JSON.stringify(r.roots));
+  }
+  // centre-packed: the middle edge moved 5px
+  assert.ok(xRoot(probe(tree, pad, fl, spec('C'))), 'centre');
+  // legit: the flagged FILL item squeezed 10px at its far edge, b pushed along
+  let r = probe(tree, both((b) => { b['n.0.0'][2] -= 10; b['n.0.1'][0] -= 10; }), fl, spec('S'));
+  assert.equal(r.pass, true, JSON.stringify(r.roots));
+  // end-packed row [b, FILL]: judged by the far edge (padding-right error: far edge -10 is a position root)
+  const tree2 = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 300, 40], rB: [0, 0, 300, 40], kids: [
+    { id: 'n.0.0', kind: 'frame', rA: [10, 0, 60, 40], rB: [10, 0, 60, 40] }, { id: 'n.0.1', kind: 'frame', rA: [80, 0, 210, 40], rB: [80, 0, 210, 40] }] }]);
+  const spec2 = Fl('n', ['FIXED', 'FIXED'], 'V', 'S', [Fl('n.0', ['FIXED', 'FIXED'], 'H', 'E', [F('n.0.0', ['FIXED', 'FIXED']), F('n.0.1', ['FILL', 'FIXED'])])]);
+  r = probe(tree2, both((b) => { b['n.0.1'][2] -= 10; }), [{ id: 'n.0.1', kind: 'shrink' }], spec2);
+  assert.ok(r.roots.some((x) => x.id === 'n.0.1' && x.why.includes('x') && !x.explainedBy), JSON.stringify(r.roots));
+  // stretched on the cross axis (FILL height): still near or far, as before
+  const tree3 = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 300, 40], rB: [0, 0, 300, 40], kids: [{ id: 'n.0.0', kind: 'frame', rA: [10, 0, 160, 40], rB: [10, 0, 160, 40] }] }]);
+  const spec3 = Fl('n', ['FIXED', 'FIXED'], 'V', 'S', [Fl('n.0', ['FIXED', 'FIXED'], 'H', 'S', [F('n.0.0', ['FIXED', 'FILL'])])]);
+  r = probe(tree3, both((b) => { b['n.0.0'][1] += 4; b['n.0.0'][3] -= 4; }), [{ id: 'n.0.0', kind: 'mixedRunHeight' }], spec3);
+  assert.ok(!r.roots.some((x) => x.why.includes('y')), JSON.stringify(r.roots));
+});

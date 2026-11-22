@@ -94,6 +94,10 @@
 //   serialised markup without the root style attribute, the root's inlined declarations, and the root color / fill /
 //   stroke / stroke-width), image (object-fit, object-position, src; `img: null` = the proxy drew no image). A DOM
 //   without the observation puts 'radius' / 'font-style' / 'svg' / 'image' in `skipped`.
+//   R55: a text whose spec has no font family is `unchecked` (its font cannot be checked); font-face: every face a
+//   text run renders (first family, italic or not, weight rounded to 100) must not be in the proxy's `facesMissing`
+//   (no loaded face covers it: Chrome synthesised it or fell back); a proxy without facesMissing puts 'font-face' in
+//   `skipped`.
 //   R46, any node size: unsupported (capture's paint.unsupported, i.e. paint it does not translate: text-shadow,
 //   blend modes, masks, list markers, ..., R48 'svg <tag> <property>' for page CSS inside an inline svg that the
 //   serialised markup does not carry; and any box paint on a text node, which the proxy draws as text only),

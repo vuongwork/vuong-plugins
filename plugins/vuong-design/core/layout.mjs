@@ -115,6 +115,7 @@ export async function main(argv, deps = {}) {
     } else {
       jobs = [{ path: resolve(o.html), file: basename(o.html), root: o.root, widen: o.widen, nameOf: o.nameOf, viewport: o.viewport, dir: '' }];
     }
+    if (!jobs.length) throw new UsageError(`corpus ${o.corpus} has no files`);
     if (o.allowlist) allowlist = readAllowlist(o.allowlist);
     for (const j of jobs) if (!existsSync(j.path)) throw new UsageError(`HTML file not found: ${j.path}`);
   } catch (e) { log(`error: ${e.message}`); return 2; }

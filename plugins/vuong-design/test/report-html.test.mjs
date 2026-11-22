@@ -106,3 +106,23 @@ test('R53: a mutation the verifier missed is in the verdict line, even on a pass
   assert.match(verdictLine(view({ summary: { pass: false, unexplainedRoots: 1, mutation: { ...m, missed: ['gap'] } }, items: [root()] })), /missed 1 planted error \(gap\)/);
   assert.equal(verdictLine(view({ summary: { pass: true, mutation: { allCaught: true, caught: 12, missed: [], skipped: 1 } } })), 'Matches.');
 });
+
+test('M2: a mutation table where no kind ran says all caught: n/a', () => {
+  const v = view({ mutations: { allCaught: null, results: [{ kind: 'swapIcon', target: null, caught: null, by: [], skipped: 'no candidate' }] } });
+  assert.match(renderReportHtml({ screens: [v] }), /all caught: n\/a/);
+  const w = view({ mutations: { allCaught: false, results: [{ kind: 'gap', target: 'n', caught: false, by: [] }] } });
+  assert.match(renderReportHtml({ screens: [w] }), /all caught: no/);
+});
+
+test('M1: crop fails linked to an open root are listed as items (with their root)', async () => {
+  const { screenView } = await import('../core/report-html.mjs');
+  const report = { id: 's0', flags: [], data: [], unchecked: [], uncheckedReasons: {}, skipped: [], tol: null };
+  const entry = { screen: { id: 's0', W: [300, 420], tree: { id: 'n', kids: [] } }, report, layout: { A: { boxes: {} }, B: { boxes: {} } }, proxy: { A: { boxes: {} }, B: { boxes: {} } } };
+  const linked = { id: 'n.1', width: 'A', ratio: 0.3, diff: 40, peak: 50, root: 'n.1' };
+  const g = { open: { roots: [], approvals: [], crops: [], cropsLinked: [linked] }, allowed: { roots: [], approvals: [], crops: [], cropsLinked: [] } };
+  const v = await screenView(null, 'f.html', entry, g, summary({ pass: false, cropLinked: 1 }));
+  assert.deepEqual(v.items.map((i) => [i.kind, i.id, i.width]), [['crop', 'n.1', 'A']]);
+  const html = renderReportHtml({ screens: [v] });
+  assert.match(html, /data-kind="crop"/);
+  assert.match(html, /caused by the layout error on <code>n\.1<\/code>/);
+});

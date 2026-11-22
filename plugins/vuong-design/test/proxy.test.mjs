@@ -247,3 +247,20 @@ test('R55: renderProxy lists each used face (family, style, weight) that no load
   assert.deepEqual(r.facesMissing, ['HalfFace|0|700'], JSON.stringify(r));
   assert.ok(!r.fontsMissing.includes('HalfFace'), 'the family itself rendered (its 400 face)');
 });
+
+test('M7: renderProxy leaves no temp dir behind when the page cannot be opened', async () => {
+  const { mkdtempSync, readdirSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const dir = mkdtempSync(join(tmpdir(), 'vd-m7-'));
+  const saved = [process.env.TEMP, process.env.TMP, process.env.TMPDIR];
+  process.env.TEMP = process.env.TMP = process.env.TMPDIR = dir;
+  try {
+    const broken = { newPage: async () => { throw new Error('no page'); } };
+    await assert.rejects(renderProxy(broken, '<!doctype html><div data-root></div>', 100), /no page/);
+    assert.deepEqual(readdirSync(dir), []);
+  } finally {
+    [process.env.TEMP, process.env.TMP, process.env.TMPDIR] = saved;
+    for (const [k, v] of [['TEMP', saved[0]], ['TMP', saved[1]], ['TMPDIR', saved[2]]]) if (v === undefined) delete process.env[k];
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

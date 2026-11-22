@@ -95,6 +95,9 @@ export async function screenView(browser, file, entry, g, summary) {
   for (const a of g.allowed.approvals) add('approval', a, 'proxy', a.allowedBy);
   for (const c of g.open.crops) add('crop', c, 'layout');
   for (const c of g.allowed.crops) add('crop', c, 'layout', c.allowedBy);
+  // M1: crop fails on an unexplained size root (R44) are listed too; they pass or fail with that root
+  for (const c of g.open.cropsLinked || []) add('crop', c, 'layout');
+  for (const c of g.allowed.cropsLinked || []) add('crop', c, 'layout', `with the layout error on ${c.root}`);
 
   const jobs = [];
   for (const it of items) {
@@ -172,7 +175,8 @@ function itemNumbers(v, it) {
     return `Model delta (Figma model vs layout proxy): ${describeDelta(x.delta)}, ${at}; total ${px(x.magnitude)},${tol}.` +
       (x.drift ? ' This is the largest accumulated difference on the screen (small steps adding up).' : '');
   }
-  return `${pct(x.ratio)} of pixels differ; largest colour difference ${num(x.peak)}/255; ${px(x.diff)} differ, ${at}.`;
+  return `${pct(x.ratio)} of pixels differ; largest colour difference ${num(x.peak)}/255; ${px(x.diff)} differ, ${at}.` +
+    (x.root ? ` This mismatch is caused by the layout error on <code>${esc(x.root)}</code> (its size changed): it passes or fails with that error.` : '');
 }
 
 const KIND_TITLE = {
@@ -295,7 +299,7 @@ function renderScreen(v, g) {
   }
   if (v.mutations) {
     const m = v.mutations;
-    parts.push(`<h3>Mutations: planted errors, each must be caught (all caught: ${m.allCaught ? 'yes' : 'no'})</h3><table><tr><th>planted error</th><th>target</th><th>caught</th><th>caught by</th></tr>` +
+    parts.push(`<h3>Mutations: planted errors, each must be caught (all caught: ${m.allCaught === null || m.allCaught === undefined ? 'n/a' : m.allCaught ? 'yes' : 'no'})</h3><table><tr><th>planted error</th><th>target</th><th>caught</th><th>caught by</th></tr>` +
       m.results.map((r) => `<tr><td>${esc(r.kind)}</td><td><code>${esc(r.target ?? '')}</code></td><td>${r.caught === null ? `skipped (not applicable: ${esc(r.skipped)})` : r.caught ? 'yes' : 'no'}</td><td>${esc((r.by || []).join(', '))}</td></tr>`).join('') + '</table>');
   }
   parts.push('</section>');

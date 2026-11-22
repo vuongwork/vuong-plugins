@@ -416,3 +416,11 @@ test('R54: an svg with a <use> and its own shapes is drawn whole by the proxy an
   const mixed = (function f(n) { return n.cls === 'mixed' ? n : (n.kids || []).map(f).find(Boolean); })(screen.tree);
   assert.equal(e.proxy.A.dom[mixed.id].icon, 'svg');
 });
+
+test('M3: a corpus without files is a usage error (exit 2)', async () => {
+  const dir = tmp(), q = quiet();
+  writeFileSync(join(dir, 'c.json'), JSON.stringify({ files: [], allowlist: [] }));
+  assert.equal(await main(['--corpus', join(dir, 'c.json'), '--corpus-dir', dir, '--out', join(dir, 'o')], { log: q.log }), 2);
+  assert.match(q.lines.join('\n'), /no files/);
+  rmSync(dir, { recursive: true, force: true });
+});

@@ -266,11 +266,13 @@ const NO_TRANSFORM = '[data-id]{transform:none!important;translate:none!importan
 // off in the PNG. Boxes stay relative to the root and are unaffected.
 export async function renderProxy(browser, html, width, opts = {}) {
   const origin = opts.origin || [0, 0];
-  const dir = mkdtempSync(join(tmpdir(), 'vd-proxy-'));
-  const file = join(dir, 'proxy.html');
-  writeFileSync(file, html);
+  // M7: the temp dir is made only once the page exists, and removed in the same finally
   const page = await browser.newPage({ viewport: { width: Math.ceil(width) + 40, height: 1000 }, deviceScaleFactor: DSF });
+  let dir = null;
   try {
+    dir = mkdtempSync(join(tmpdir(), 'vd-proxy-'));
+    const file = join(dir, 'proxy.html');
+    writeFileSync(file, html);
     await page.goto(pathToFileURL(file).href, { waitUntil: 'load' });
     await page.evaluate(async ([w, css, o]) => {
       document.querySelector('[data-root]').style.setProperty('--W', `${w}px`);
@@ -402,6 +404,6 @@ export async function renderProxy(browser, html, width, opts = {}) {
     return { boxes: res.boxes, png, fontsMissing: res.fontsMissing, facesMissing: res.facesMissing, dom: res.dom, model };
   } finally {
     await page.close();
-    rmSync(dir, { recursive: true, force: true });
+    if (dir) rmSync(dir, { recursive: true, force: true });
   }
 }

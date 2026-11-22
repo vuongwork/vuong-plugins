@@ -28,6 +28,8 @@ const DEFAULT_VIEWPORT = 1400;
 const VIEWPORT_HEIGHT = 1000;
 const r2 = (v) => Math.round(v * 100) / 100;
 
+// R47: an INode whose element is position absolute/fixed carries pct = {l, r, t, b, w, h} for the insets and sizes
+//   authored in % (computed value, read with the element briefly display:none; px-only nodes have no pct).
 // ---------------- breakpoints ----------------
 
 // Extract width breakpoints from a media query text: (min-width: Npx|em|rem), (max-width: ...), and range syntax.
@@ -261,6 +263,19 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
     }
     return out;
   };
+  // R47: authored % of an absolutely positioned element's insets and size ({l, r, t, b, w, h}: the computed value,
+  // e.g. '52%' or 'calc(50% - 4px)', only where it contains a %). Computed styles report px for a rendered element;
+  // with display:none the resolved value is the computed one, so the element is hidden for the read and restored.
+  const PCT_PROPS = [['l', 'left'], ['r', 'right'], ['t', 'top'], ['b', 'bottom'], ['w', 'width'], ['h', 'height']];
+  const authoredPct = (el) => {
+    if (!el.style || !/^(absolute|fixed)$/.test(getComputedStyle(el).position)) return null;
+    const st = el.style, had = st.getPropertyValue('display'), pri = st.getPropertyPriority('display'), attr = el.getAttribute('style');
+    st.setProperty('display', 'none', 'important');
+    const cs = getComputedStyle(el), out = {};
+    for (const [k, prop] of PCT_PROPS) { const v = cs.getPropertyValue(prop); if (v.includes('%')) out[k] = v; }
+    if (attr === null) el.removeAttribute('style'); else if (had) st.setProperty('display', had, pri); else st.removeProperty('display');
+    return Object.keys(out).length ? out : null;
+  };
   const font = (cs) => ({ ff: cs.fontFamily, fs: cs.fontSize, fw: cs.fontWeight, fst: cs.fontStyle, lh: lhPx(cs), ls: cs.letterSpacing,
     c: cs.color, td: cs.textDecorationLine, tt: cs.textTransform, ta: cs.textAlign, ws: cs.whiteSpace });
   const isIconFont = (cs) => /Material (Symbols|Icons)/i.test(cs.fontFamily);
@@ -396,6 +411,7 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
     const walk = (el, id, clip, inHidden = false) => {
       const res = walkEl(el, id, clip, inHidden);
       if (res && !Array.isArray(res) && flexItem.has(el)) res.flex = flexItem.get(el);
+      if (res && !Array.isArray(res)) { const pc = authoredPct(el); if (pc) res.pct = pc; }
       return res;
     };
     const walkEl = (el, id, clip, inHidden) => {
@@ -844,6 +860,7 @@ function mergeNode(a, mapB) {
   if (a.src !== undefined) { n.src = a.src; n.fit = a.fit; }
   if (a.approx) n.approx = true;
   if (a.flex) n.flex = a.flex;
+  if (a.pct) n.pct = a.pct;
   if (a.flexBox) n.flexBox = a.flexBox;
   if (a.kids) n.kids = a.kids.map((k) => mergeNode(k, mapB));
   return n;

@@ -8,7 +8,8 @@
 //    on the counter axis: FILL = align-self:stretch, HUG = content size, FIXED = px. HUG on something that cannot hug in
 //    Figma (leaf frame, icon, image) is FIXED, as in the builder.
 //  - absolute children (n.abs, or any child of a frame without auto layout) are placed from x/y by their constraints:
-//    c L/R/LR/C horizontally, cy T(default)/B/TB/C vertically, against the parent's spec size. No SCALE.
+//    c L/R/LR/C/SCALE horizontally, cy T(default)/B/TB/C/SCALE vertically, against the parent's spec size. SCALE (R47)
+//    = left/width (top/height) in % of that size; a zero-size 'anchor' wrapper (infer) is just a frame like any other.
 //  - strokes never take space (strokesIncludedInLayout = false): solid borders are inset box-shadows, other styles an
 //    absolutely positioned ::before overlay. paint.strokeOverlay (bordered FILL cells) is drawn the same way.
 //  - text: width HUG = nowrap, FIXED/FILL = wraps. HUG sizes already pinned by applyFigmaModel are used as px, except
@@ -41,6 +42,7 @@ const r2 = (v) => Math.round(v * 100) / 100;
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const attr = (s) => esc(s).replace(/"/g, '&quot;');
 const px = (v) => `${r2(v)}px`;
+const pct = (v) => `${Math.round(v * 1e8) / 1e6}%`;
 
 const canHug = (n) => n.t === 'T' || (n.t === 'F' && !!(n.lay && n.lay.d));
 const sizing = (n, ax) => { const s = (n.sz && n.sz[ax]) || 'FIXED'; return s === 'HUG' && !canHug(n) ? 'FIXED' : s; };
@@ -140,6 +142,9 @@ export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
       const axis = (con, off, size, P, L, R, ax) => {
         const end = px(P - off - size);
         if (con === 'LR' || con === 'TB') return [`${L}:${px(off)}`, `${R}:${end}`];
+        // R47 SCALE: inset and size keep their share of the parent's spec size. CSS % is relative to the padding box;
+        // proxy frames draw strokes as shadows (no border), so that box is the frame's box, as in Figma.
+        if (con === 'SCALE' && P > 0) return [`${L}:${pct(off / P)}`, `${ax ? 'height' : 'width'}:${pct(size / P)}`];
         const sz = ownSize(ax);
         if (con === 'R' || con === 'B') return [`${R}:${end}`, ...sz];
         if (con === 'C') return [`${L}:calc(50% + ${px(off - P / 2)})`, ...sz];

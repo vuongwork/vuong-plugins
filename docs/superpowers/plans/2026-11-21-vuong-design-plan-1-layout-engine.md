@@ -19,7 +19,7 @@ Các kế hoạch tiếp theo: 2 design system + chuẩn hoá, 3 ghi Figma (bi�
 - Chromium: dùng bản Playwright đã cài (`%LOCALAPPDATA%\ms-playwright\chromium-*`), không tải mới.
 - Hai độ rộng: gốc và gốc + Δ. Δ mặc định 120px, chỉnh được; tự hạ để không vượt mốc media query (Task 2). Căn cứ ở spec mục 6.
 - Ngưỡng vị trí mặc định: khung ≤ 0,5px, chữ ≤ 1px, chỉnh được (Task 6, Task 8). Căn cứ ở spec mục 14.
-- Spec chỉ chứa khái niệm Figma: chiều xếp H/V, wrap, padding[4], gap hoặc spaceBetween, căn trục chính/phụ (S/C/E/stretch), FILL/HUG/FIXED cho từng trục, min/max width, absolute + ràng buộc (L, R, LR, C; không bao giờ SCALE), chữ, vector, ảnh, sơn. Không có margin.
+- Spec chỉ chứa khái niệm Figma: chiều xếp H/V, wrap, padding[4], gap hoặc spaceBetween, căn trục chính/phụ (S/C/E/stretch), FILL/HUG/FIXED cho từng trục, min/max width, absolute + ràng buộc (L, R, LR, C; SCALE chỉ cho node absolute viết bằng %, R47), chữ, vector, ảnh, sơn. Không có margin.
 - Không ghi file ngoài thư mục `--out` người dùng chỉ định; không sửa HTML nguồn.
 - Không gửi dữ liệu dự án ra mạng (font Google vẫn được tải khi HTML tự tham chiếu).
 

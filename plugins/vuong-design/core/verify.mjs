@@ -248,7 +248,7 @@ export function verifyScreen(input, opts = {}) {
     const alignOf = (id, ax) => {
       const s = specById.get(id), c = specParent.get(id);
       if (!s) return null;
-      if (s.abs) { const con = ax ? s.abs.cy || 'T' : s.abs.c || 'L'; return { L: 'S', T: 'S', R: 'E', B: 'E', C: 'C', LR: 'X', TB: 'X' }[con] || null; }
+      if (s.abs) { const con = ax ? s.abs.cy || 'T' : s.abs.c || 'L'; return { L: 'S', T: 'S', R: 'E', B: 'E', C: 'C', LR: 'X', TB: 'X' }[con] || null; } // SCALE (R47): unknown
       if (!c || !c.lay || !c.lay.d) return null;
       if (sz(id, ax) === 'FILL') return 'X';
       const al = ax === mainOf(c) ? (c.lay.sb ? null : c.lay.pa) : c.lay.ca;

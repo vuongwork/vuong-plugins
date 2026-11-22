@@ -40,7 +40,7 @@ function ctx(screen) {
   return { ...res, inodes, snodes, byId, node, box };
 }
 
-const FIXTURES = ['row-gap', 'push', 'proximity', 'overlap', 'overflow', 'sizing', 'text', 'flags', 'baseline', 'raster', 'noflags', 'zorder'];
+const FIXTURES = ['row-gap', 'push', 'proximity', 'overlap', 'overflow', 'sizing', 'text', 'flags', 'baseline', 'raster', 'noflags', 'zorder', 'percent'];
 const C = {};
 before(async () => {
   if (skip) return;
@@ -188,10 +188,20 @@ test('every source node appears exactly once; syn ids are <parent>.g<k>', { skip
   }
 });
 
-test('no SCALE constraint, only Figma sizing values, no margins', { skip }, () => {
+// R47: SCALE (per axis) only where the source node authored a % on that axis; a syn anchor wrapper carries the
+// SCALE of its single child's % position
+const pctAxis = (n, ax) => !!(n && n.pct) && (ax ? ['t', 'b', 'h'] : ['l', 'r', 'w']).some((q) => n.pct[q]);
+test('SCALE only for % authored absolute nodes (R47), only Figma sizing values, no margins', { skip }, () => {
   for (const f of FIXTURES) {
+    const src = new Map(C[f].inodes.map((n) => [n.id, n]));
     for (const s of C[f].snodes) {
-      if (s.abs) assert.ok(['L', 'R', 'LR', 'C'].includes(s.abs.c), `${f} ${s.id}: c = ${s.abs.c}`);
+      if (s.abs) {
+        assert.ok(['L', 'R', 'LR', 'C', 'SCALE'].includes(s.abs.c), `${f} ${s.id}: c = ${s.abs.c}`);
+        assert.ok([undefined, 'B', 'TB', 'C', 'SCALE'].includes(s.abs.cy), `${f} ${s.id}: cy = ${s.abs.cy}`);
+        const owner = s.syn === 'anchor' ? src.get(s.kids[0].id) : src.get(s.id);
+        if (s.abs.c === 'SCALE') assert.ok(pctAxis(owner, 0), `${f} ${s.id}: SCALE x without a % on x`);
+        if (s.abs.cy === 'SCALE') assert.ok(pctAxis(owner, 1), `${f} ${s.id}: SCALE y without a % on y`);
+      }
       assert.ok(Array.isArray(s.sz) && s.sz.length === 2, `${f} ${s.id}: sz`);
       for (const v of s.sz) assert.ok(['FILL', 'HUG', 'FIXED'].includes(v), `${f} ${s.id}: sz ${v}`);
       assert.ok(['F', 'T', 'V', 'I'].includes(s.t), `${f} ${s.id}: t ${s.t}`);
@@ -358,4 +368,77 @@ test('R42: equal tracks with centred items → FILL track wrappers (min = item w
     assert.deepEqual(t.kids.map((k) => k.id), [`n.${i}`]);
   }
   assert.equal(spec.lay.p[3], 10);
+});
+
+test('R47: capture reads authored % of absolute nodes (computed values are px)', { skip }, () => {
+  const c = C.percent;
+  const inode = (cls) => c.inodes.find((n) => hasCls(n, cls));
+  assert.deepEqual(inode('fill').pct, { w: '60%' });
+  assert.deepEqual(inode('mark').pct, { l: '58%' });
+  assert.deepEqual(inode('badge').pct, { l: '52%' });
+  assert.equal(inode('full').pct, undefined);
+  assert.equal(inode('pin').pct, undefined);
+  assert.equal(inode('bar').pct, undefined, 'relative (not absolute) nodes carry no pct');
+});
+
+test('R47: % fill → SCALE; % left with a fixed / auto size → zero-width SCALE anchor; px-only absolute never SCALE', { skip }, () => {
+  const c = C.percent;
+  const fill = c.node('fill');
+  assert.equal(fill.abs.c, 'SCALE');
+  assert.equal(fill.abs.cy, undefined, 'top:0; bottom:0 in a parent of constant height: T');
+  const parentOf = (s) => c.snodes.find((p) => (p.kids || []).includes(s));
+  for (const cls of ['mark', 'badge']) {
+    const k = c.node(cls), a = parentOf(k);
+    assert.equal(a.syn, 'anchor', `${cls} sits in an anchor wrapper`);
+    assert.equal(a.kids.length, 1);
+    assert.equal(a.w, 0);
+    assert.equal(a.abs.c, 'SCALE');
+    assert.equal(a.abs.cy, undefined, `${cls}: y is px (top)`);
+    assert.equal(a.h, k.h);
+    assert.deepEqual([k.abs.x, k.abs.y, k.abs.c, k.abs.cy], [0, 0, 'L', undefined]);
+    assert.equal(a.paint, undefined);
+  }
+  const full = c.node('full');
+  assert.ok(full.abs, 'full is absolute');
+  assert.equal(full.abs.c, 'LR', 'spans the parent: geometry fits SCALE, but nothing is authored in %');
+});
+
+test('R47: the proxy of the inferred spec reproduces the % nodes at A and B', { skip }, async () => {
+  const { buildProxyHtml, renderProxy } = await import('../core/proxy.mjs');
+  const { defaultFontMap } = await import('../core/font-map.mjs');
+  const { launchBrowser } = await import('../core/browser.mjs');
+  const c = C.percent, s = c.screen;
+  const browser = await launchBrowser();
+  try {
+    const h = buildProxyHtml(c.spec, s.svgDefs || {}, defaultFontMap(), { webFonts: false });
+    for (const [i, M] of [[0, 'rA'], [1, 'rB']]) {
+      const { boxes } = await renderProxy(browser, h, s.W[i]);
+      for (const cls of ['fill', 'mark', 'badge', 'full']) {
+        const n = c.inodes.find((x) => hasCls(x, cls));
+        const d = boxes[n.id].map((v, j) => v - n[M][j]);
+        // the badge's text renders in the offline fallback font here: its own width is not the point, its place is
+        const ds = cls === 'badge' ? d.slice(0, 2) : d;
+        assert.ok(ds.every((v) => Math.abs(v) <= 0.5), `${cls} @${'AB'[i]}: ${JSON.stringify(d)}`);
+      }
+    }
+  } finally { await browser.close(); }
+});
+
+test('R47: geometry alone never gives SCALE; an authored % does (hand-built)', () => {
+  // child spans x 30..90 of 300 at A and 42..126 of 420 at B: x/W and w/W constant
+  const kid = (extra) => N('n.1', [30, 50, 60, 10], [42, 50, 84, 10], { paint: { pos: 'absolute' }, ...extra });
+  const tree = (extra) => N('n', [0, 0, 300, 100], [0, 0, 420, 100], {
+    kids: [N('n.0', [0, 0, 300, 60], [0, 0, 420, 60]), kid(extra)],
+  });
+  const plain = inferScreen(screenOf(tree({}))).spec.kids.find((k) => k.id === 'n.1');
+  assert.ok(plain.abs);
+  assert.notEqual(plain.abs.c, 'SCALE');
+  const pct = inferScreen(screenOf(tree({ pct: { l: '10%', w: '20%' } }))).spec.kids.find((k) => k.id === 'n.1');
+  assert.equal(pct.abs.c, 'SCALE');
+  assert.equal(pct.abs.cy, undefined);
+  // authored % whose geometry does not scale (containing block is not the parent) → no SCALE, best fixed constraint
+  const off = inferScreen(screenOf(N('n', [0, 0, 300, 100], [0, 0, 420, 100], {
+    kids: [N('n.0', [0, 0, 300, 60], [0, 0, 420, 60]), N('n.1', [30, 50, 60, 10], [30, 50, 60, 10], { paint: { pos: 'absolute' }, pct: { l: '10%' } })],
+  }))).spec.kids.find((k) => k.id === 'n.1');
+  assert.equal(off.abs.c, 'L');
 });

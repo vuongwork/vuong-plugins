@@ -5,12 +5,18 @@
 //
 // SNode = { id, t: 'F'|'T'|'V'|'I', w, h, sz: [x, y] of 'FILL'|'HUG'|'FIXED',
 //   lay?: { d: 'H'|'V', wrap?, cg?, p: [t, r, b, l], g? | sb?, pa: 'S'|'C'|'E', ca: 'S'|'C'|'E'|'B' },
-//   min?, max? (width in px), abs?: { x, y, c: 'L'|'R'|'LR'|'C', cy?: 'B'|'TB'|'C' (omitted = top) },
+//   min?, max? (width in px), abs?: { x, y, c: 'L'|'R'|'LR'|'C'|'SCALE', cy?: 'B'|'TB'|'C'|'SCALE' (omitted = top) },
 //   paint?, font?, runs?, icon?, src?, fit?, syn?, kids? }
 // Stretch on the counter axis is expressed per child (sz FILL), so ca 'X' is never emitted.
 // Every non-syn SNode id is its source INode id; synthetic frames are `<parentId>.g<k>` and have no source box.
 // syn kinds: 'row'/'col'/'prox'/'push' groups, 'align' wrappers (counter-axis offset), 'track' (R42: equal FILL
-// tracks with min = item width, item centred: CSS grid repeat(n, 1fr) + centred items, or space-around).
+// tracks with min = item width, item centred: CSS grid repeat(n, 1fr) + centred items, or space-around), 'anchor'
+// (R47: zero-size frame on an axis where its one child has a % inset but a size that does not scale; the wrapper is
+// SCALE-constrained at the inset's place, the child hangs from it with L/R (T/B) at 0 / -size).
+// R47: constraint SCALE (per axis) only for an absolutely positioned source node whose authored inset or size on that
+// axis is in % (capture's INode.pct) and whose boxes at A and B keep their share of the parent; never from geometry
+// alone. Figma SCALE is relative to the parent frame's box; CSS % to the containing block's padding box, so a bordered
+// or non-parent containing block fails the fit and keeps the fixed constraints (visible as deviations).
 
 const EPS = 0.75;  // geometric equality tolerance
 const GROW = 0.75; // "changed between widths"
@@ -248,7 +254,7 @@ export function inferScreen(screen) {
     return sp.lay && internal.get(sp).hugOK[ax] ? 'HUG' : 'FIXED';
   };
 
-  // Figma constraint that best predicts the box at width B (ties: simplest first). No SCALE: C or LR stand in.
+  // Figma constraint that best predicts the box at width B (ties: simplest first). SCALE only through pctMode (R47).
   const constraint = (s1, e1, s2, e2, z1, z2, p1, p2, names) => {
     const grows = Math.abs(z2 - z1) > GROW;
     const cand = [
@@ -262,6 +268,30 @@ export function inferScreen(screen) {
     if (best === cand[2] && !grows) best = cand[0][1] <= cand[1][1] ? cand[0] : cand[1];
     return best[0];
   };
+
+  // R47: per axis, how an absolutely positioned node with an authored % on that axis follows its parent:
+  // 'SCALE' (position and size keep their share of the parent: Figma SCALE), 'S' / 'E' (the start / end inset keeps
+  // its share while the size stays: anchor wrapper), or null (no % on the axis, or the geometry at A and B fits
+  // neither, e.g. the containing block is not the parent or has a border: the fixed constraints stand in). When the
+  // parent does not change on the axis the geometry cannot tell, and the authored form decides.
+  const PCT_TOL = 0.5;
+  function pctMode(L, k, ax, s1, e1, s2, e2) {
+    const pc = k.src && k.src.pct, pos = k.src && k.src.paint && k.src.paint.pos;
+    if (!pc || !/^(absolute|fixed)$/.test(pos || '')) return null;
+    const [ps, pe, pz] = ax ? ['t', 'b', 'h'] : ['l', 'r', 'w'];
+    if (!pc[ps] && !pc[pe] && !pc[pz]) return null;
+    const P1 = L.A[ax + 2], P2 = L.B[ax + 2], z1 = k.A[ax + 2], z2 = k.B[ax + 2];
+    if (!(P1 > 0)) return null;
+    const sc = (v) => (v / P1) * P2;
+    const errScale = Math.abs(sc(s1) - s2) + Math.abs(sc(z1) - z2);
+    const errS = Math.abs(sc(s1) - s2) + Math.abs(z2 - z1), errE = Math.abs(sc(e1) - e2) + Math.abs(z2 - z1);
+    const scales = !!pc[pz] || (!!pc[ps] && !!pc[pe]);
+    if (Math.abs(P2 - P1) <= GROW) return scales ? 'SCALE' : pc[ps] ? 'S' : 'E';
+    if (errScale <= PCT_TOL) return 'SCALE';
+    if (pc[ps] && errS <= PCT_TOL && (!pc[pe] || errS <= errE)) return 'S';
+    if (pc[pe] && errE <= PCT_TOL) return 'E';
+    return null;
+  }
 
   // ---- recursive frame inference ----
   function infer(L) {
@@ -510,11 +540,39 @@ export function inferScreen(screen) {
       const cs = infer(k);
       const lA = k.A[0] - L.A[0], rA = L.A[0] + L.A[2] - (k.A[0] + k.A[2]), lB = k.B[0] - L.B[0], rB = L.B[0] + L.B[2] - (k.B[0] + k.B[2]);
       const tA = k.A[1] - L.A[1], bA = L.A[1] + L.A[3] - (k.A[1] + k.A[3]), tB = k.B[1] - L.B[1], bB = L.B[1] + L.B[3] - (k.B[1] + k.B[3]);
-      cs.abs = { x: r2(lA), y: r2(tA), c: constraint(lA, rA, lB, rB, k.A[2], k.B[2], L.A[2], L.B[2], ['L', 'R', 'LR', 'C']) };
-      const cy = constraint(tA, bA, tB, bB, k.A[3], k.B[3], L.A[3], L.B[3], ['T', 'B', 'TB', 'C']);
-      if (cy !== 'T') cs.abs.cy = cy;
+      const px = [constraint(lA, rA, lB, rB, k.A[2], k.B[2], L.A[2], L.B[2], ['L', 'R', 'LR', 'C']),
+        constraint(tA, bA, tB, bB, k.A[3], k.B[3], L.A[3], L.B[3], ['T', 'B', 'TB', 'C'])];
+      const pm = [pctMode(L, k, 0, lA, rA, lB, rB), pctMode(L, k, 1, tA, bA, tB, bB)];
+      const con = [0, 1].map((ax) => (pm[ax] === 'SCALE' ? 'SCALE' : px[ax]));
+      cs.abs = { x: r2(lA), y: r2(tA), c: con[0] };
+      if (con[1] !== 'T') cs.abs.cy = con[1];
       cs.sz = [defaultSize(k, cs, 0), defaultSize(k, cs, 1)];
-      childSpecs.push(cs);
+      if (!pm.some((m) => m === 'S' || m === 'E')) { childSpecs.push(cs); continue; }
+      // R47 anchor: a % inset with a size that does not scale. Figma has no "scale position, keep size" constraint,
+      // so a zero-size frame on that axis carries the % position (SCALE keeps it at 0) and the node hangs from it,
+      // start- or end-aligned. On the other axis the wrapper takes the node's extent and constraint.
+      const off = [[lA, k.A[2]], [tA, k.A[3]]];
+      const W = { id: `${L.id}.g${synCount.get(L.id) || 0}`, t: 'F', syn: 'anchor', w: 0, h: 0, sz: ['FIXED', 'FIXED'] };
+      synCount.set(L.id, (synCount.get(L.id) || 0) + 1);
+      const wa = [], ka = [];
+      for (const ax of [0, 1]) {
+        const [o, z] = off[ax], anch = pm[ax] === 'S' || pm[ax] === 'E';
+        if (anch) {
+          wa[ax] = { at: r2(pm[ax] === 'E' ? o + z : o), c: 'SCALE' };
+          ka[ax] = pm[ax] === 'E' ? { at: r2(-z), c: ax ? 'B' : 'R' } : { at: 0, c: ax ? 'T' : 'L' };
+        } else {
+          wa[ax] = { at: r2(o), c: con[ax], z: r2(z) };
+          ka[ax] = { at: 0, c: /^(LR|TB|SCALE)$/.test(con[ax]) ? (ax ? 'TB' : 'LR') : ax ? 'T' : 'L' };
+        }
+      }
+      W.w = wa[0].z ?? 0; W.h = wa[1].z ?? 0;
+      W.abs = { x: wa[0].at, y: wa[1].at, c: wa[0].c };
+      if (wa[1].c !== 'T') W.abs.cy = wa[1].c;
+      cs.abs = { x: ka[0].at, y: ka[1].at, c: ka[0].c };
+      if (ka[1].c !== 'T') cs.abs.cy = ka[1].c;
+      W.kids = [cs];
+      internal.set(W, { hugOK: [false, false], fillAx: [false, false], key: internal.get(cs).key, pk: internal.get(cs).pk });
+      childSpecs.push(W);
     }
     // z-order: flow children keep primary order (auto layout order is paint order); absolute children are inserted
     // by CSS paint order (R39), before the first child CSS paints above them

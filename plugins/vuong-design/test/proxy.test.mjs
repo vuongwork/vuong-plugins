@@ -199,3 +199,27 @@ test('R30/R31: dom reports the rendered strokes per side (shadow or overlay), th
   assert.equal(r.dom.n.op, 0.5); assert.equal(r.dom['n.0'].op, 0.5); assert.equal(r.dom['n.1'].op, 0.25);
   assert.equal(r.dom['n.2'].vis, 'visible'); assert.notEqual(r.dom['n.2'].disp, 'none');
 });
+
+test('R47: SCALE keeps inset and size as a share of the parent; a zero-width SCALE anchor keeps a % inset with a fixed size', { skip }, async () => {
+  const fixed = (id, w, h, abs) => ({ id, t: 'F', w, h, sz: ['FIXED', 'FIXED'], abs });
+  const spec = {
+    id: 'n', t: 'F', w: 300, h: 60, sz: ['FIXED', 'FIXED'], lay: { d: 'V', p: [0, 0, 0, 0], g: 0, pa: 'S', ca: 'S' },
+    kids: [
+      fixed('n.0', 10, 10),
+      fixed('n.1', 60, 8, { x: 30, y: 4, c: 'SCALE' }), // left 10%, width 20%
+      { id: 'n.g0', t: 'F', syn: 'anchor', w: 0, h: 16, sz: ['FIXED', 'FIXED'], abs: { x: 174, y: 20, c: 'SCALE' }, // left 58%
+        kids: [fixed('n.2', 2.5, 16, { x: 0, y: 0, c: 'L' })] },
+      { id: 'n.g1', t: 'F', syn: 'anchor', w: 0, h: 10, sz: ['FIXED', 'FIXED'], abs: { x: 270, y: 40, c: 'SCALE' }, // right 10%
+        kids: [fixed('n.3', 20, 10, { x: -20, y: 0, c: 'R' })] },
+    ],
+  };
+  const h = buildProxyHtml(spec, {}, fm, OFFLINE);
+  assert.match(h, /data-id="n\.1"[^>]*left:10%[^>]*width:20%/);
+  const A = (await renderProxy(browser, h, 300)).boxes, B = (await renderProxy(browser, h, 420)).boxes;
+  assertBox(A['n.1'], [30, 4, 60, 8], 'A scale');
+  assertBox(B['n.1'], [42, 4, 84, 8], 'B scale');
+  assertBox(A['n.2'], [174, 20, 2.5, 16], 'A anchor');
+  assertBox(B['n.2'], [243.6, 20, 2.5, 16], 'B anchor: 58% of 420, width kept');
+  assertBox(B['n.3'], [358, 40, 20, 10], 'B end anchor: right edge at 90% of 420');
+  assertBox(B['n.g0'], [243.6, 20, 0, 16], 'B wrapper stays zero-width');
+});

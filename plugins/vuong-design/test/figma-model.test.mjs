@@ -96,3 +96,16 @@ test('substituted HUG text is flagged, marked font.sub and not pinned', () => {
   assert.deepEqual([out.kids[0].w, out.kids[0].h], [33.2, 18.89]);
   assert.equal(flags.find((f) => f.kind === 'fontSubstitution').detail, 'Segoe UI \u2192 Inter');
 });
+
+test('R47: SCALE constraints and anchor wrappers pass through unchanged', () => {
+  const kid = { id: 'k', t: 'F', w: 2.5, h: 16, sz: ['FIXED', 'FIXED'], abs: { x: 0, y: 0, c: 'L' } };
+  const spec = root(
+    { id: 's', t: 'F', w: 60, h: 8, sz: ['FIXED', 'FIXED'], abs: { x: 30, y: 4, c: 'SCALE', cy: 'SCALE' } },
+    { id: 'r.g0', t: 'F', syn: 'anchor', w: 0, h: 16, sz: ['FIXED', 'FIXED'], abs: { x: 174, y: 20, c: 'SCALE' }, kids: [kid] },
+  );
+  const { spec: out } = applyFigmaModel(spec, defaultFontMap());
+  assert.deepEqual(out.kids[0].abs, { x: 30, y: 4, c: 'SCALE', cy: 'SCALE' });
+  assert.equal(out.kids[1].syn, 'anchor');
+  assert.deepEqual([out.kids[1].w, out.kids[1].abs], [0, { x: 174, y: 20, c: 'SCALE' }]);
+  assert.deepEqual(out.kids[1].kids[0].abs, { x: 0, y: 0, c: 'L' });
+});

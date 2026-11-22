@@ -296,3 +296,16 @@ test('R74: an icon axis the spec made FILL carries the flex item natural size (c
   inv = inventory([fx]);
   assert.ok(of(inv, '0.1.2', 'icon').every((u) => u.natural === undefined));
 });
+
+test('R80: no size use on an axis that stretches (abs LR / TB / SCALE); the other axis keeps its size', () => {
+  const mk = (abs) => {
+    const screen = { id: 's', W: [375, 495], tree: { id: 'n', kind: 'frame', tag: 'div', cls: 'card', rA: [0, 0, 343, 200], rB: [0, 0, 463, 200], kids: [
+      { id: 'n.0', kind: 'frame', tag: 'div', cls: 'overlay', rA: [0, 0, 343, 50], rB: [0, 0, 463, 50], paint: { bg: 'rgb(0, 0, 0)' } }] } };
+    const spec = { id: 'n', t: 'F', sz: ['FIXED', 'FIXED'], w: 343, h: 200, kids: [{ id: 'n.0', t: 'F', sz: ['FIXED', 'FIXED'], w: 343, h: 50, abs, paint: { bg: 'rgb(0, 0, 0)' } }] };
+    return inventory([{ screen, spec }]).uses.filter((u) => u.cat === 'size').map((u) => u.prop).sort();
+  };
+  assert.deepEqual(mk({ x: 0, y: 0, c: 'LR' }), ['height']);
+  assert.deepEqual(mk({ x: 0, y: 0, c: 'SCALE', cy: 'TB' }), []);
+  assert.deepEqual(mk({ x: 0, y: 0, c: 'L', cy: 'SCALE' }), ['width']);
+  assert.deepEqual(mk({ x: 0, y: 0, c: 'R' }), ['height', 'width']);
+});

@@ -49,7 +49,23 @@ const r4 = (v) => Math.round(v * 10000) / 10000;
 const VD = 'vuong-design';
 const PILL_PX = 9999; // R70: radius.full
 
-export const numName = (v) => String(r2(v)).replace('-', 'm').replace('.', '_');
+const fmtNum = (v, d) => (d <= 2 ? String(r2(v)) : String(Number(v.toFixed(d))));
+export const numName = (v, d = 2) => fmtNum(v, d).replace('-', 'm').replace('.', '_');
+// m5: names for a set of numbers, one per value: 2 decimals; only values whose names collide get more decimals (3, 4,
+// ... up to 20) until every name stands for one value. Deterministic (depends on the set only, not its order).
+export function numNames(values) {
+  const uniq = [...new Set(values)];
+  const dec = new Map(uniq.map((v) => [v, 2]));
+  for (;;) {
+    const by = new Map();
+    for (const v of uniq) { const n = numName(v, dec.get(v)); (by.get(n) || by.set(n, []).get(n)).push(v); }
+    const clash = [...by.values()].filter((vs) => vs.length > 1);
+    if (!clash.length) return new Map(uniq.map((v) => [v, numName(v, dec.get(v))]));
+    let grew = false;
+    for (const vs of clash) for (const v of vs) if (dec.get(v) < 20) { dec.set(v, dec.get(v) + 1); grew = true; }
+    if (!grew) throw new Error(`numNames: values ${clash[0].join(', ')} cannot be told apart`);
+  }
+}
 export const useKey = (u) => `${u.screen}|${u.node}|${u.cat}|${u.prop}${u.run !== undefined ? `|${u.run}` : ''}`;
 
 // ---------------- normalised values ----------------
@@ -234,7 +250,9 @@ export function buildTokens(inv, entries = [], names = {}) {
       }
     } else {
       list.sort((a, b) => a.value - b.value);
-      list.forEach((p) => { p.path = `primitive.${cat}.${p.pill ? 'full' : numName(cat === 'opacity' ? p.value * 100 : p.value)}`; });
+      const nv = (p) => (cat === 'opacity' ? p.value * 100 : p.value);
+      const names = numNames(list.filter((p) => !p.pill).map(nv));
+      list.forEach((p) => { p.path = `primitive.${cat}.${p.pill ? 'full' : names.get(nv(p))}`; });
     }
     order.push(...list);
   }

@@ -7,7 +7,9 @@
 //   checklist = { version: 1, groups: [{ id, label, items: [{ id, label, tag, check?, question? }] }] }; `question`
 //   links an item to a project question key (an answer marks the item 'answered').
 //
-// coverage(checklist, { inv, tokens, screens, rules }) -> { items, contrast, touch, summary }
+// coverage(checklist, { inv, tokens, screens, rules }) -> { items, contrast, touch, summary, vars }
+//  - vars (R79): { complex, unreadable } = the sums of capture's screen.varsComplex (var() declarations inside a function
+//    or with a fallback: no token attributed) and screen.varsUnreadable (stylesheets that could not be read).
 //  - inv: inventory; tokens: buildTokens().tokens; screens: capture IR screens (tree, W, vars ...), each with an optional
 //    `darkMode` boolean the caller fills (the CSS has dark-mode styles); rules: readRules() result.
 //  - items: one per checklist item, in checklist order: { id, group, label, tag, state, evidence }.
@@ -244,7 +246,11 @@ export function coverage(checklist, { inv, tokens, screens, rules } = {}) {
   }
   const summary = { total: items.length, covered: 0, answered: 0, missing: 0 };
   for (const it of items) summary[it.state]++;
-  return { items, contrast, touch, summary };
+  // R79: CSS variable uses capture could not attribute (var() inside a function or with a fallback: no token) and
+  // stylesheets it could not read, summed over the file's screens
+  const vars = { complex: 0, unreadable: 0 };
+  for (const s of screens || []) { vars.complex += Number(s.varsComplex) || 0; vars.unreadable += Number(s.varsUnreadable) || 0; }
+  return { items, contrast, touch, summary, vars };
 }
 
 // ---------------- project questions (§8.4) ----------------

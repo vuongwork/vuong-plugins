@@ -6,7 +6,8 @@
 //  - tokens: buildTokens().tokens (DTCG, $extensions['vuong-design'] = { uses, nodes, screens, merged?, var?, ... }).
 //  - entries / counts: normalize() entries and counts (counts = kept decisions per code, optional).
 //  - questions: normalize() questions, plus coverage projectQuestions() (code PROJECT, the §8.4 confirmations).
-//  - coverage: coverage() result { items, contrast, touch, summary }.
+//  - coverage: coverage() result { items, contrast, touch, summary, vars } (R79: vars gives one line on CSS variable
+//    uses capture could not attribute, and that a colour behind a scoped variable is treated as named).
 //  - samples: { [typography token path]: sample text } (typeSamples() builds it from the real text runs); missing ->
 //    'Aa Bb 123 Tiếng Việt'.
 //  - crops: [{ entry: entry id, src, norm }]: before / after images of a change, data URLs or file paths (a path is
@@ -408,6 +409,17 @@ function renderChanges(entries, counts, crops) {
   return parts.join('\n');
 }
 
+// R79: what capture could not attribute to a CSS variable, and what that means for the colours
+function varsLine(v) {
+  if (!v) return '';
+  const named = 'A colour whose variable has another value in its scope (a scoped override such as .dark { --fg: ... }) is treated as named: it is never merged without an answer.';
+  if (!v.complex && !v.unreadable) return `<p class="muted">Every CSS variable use was attributed. ${esc(named)}</p>`;
+  const parts = [];
+  if (v.complex) parts.push(`${plural(v.complex, 'CSS variable use')} could not be attributed (var() inside a function or with a fallback): those values count as unnamed, so check their merges under Changes.`);
+  if (v.unreadable) parts.push(`${plural(v.unreadable, 'stylesheet')} could not be read: its variables are not known.`);
+  return `<p class="v">${esc([...parts, named].join(' '))}</p>`;
+}
+
 function renderCoverage(cov) {
   if (!cov) return '<section id="coverage"><h2>Coverage</h2><p>Not measured.</p></section>';
   const s = cov.summary;
@@ -428,7 +440,7 @@ function renderCoverage(cov) {
   }).join('');
   const tRows = touch.map((t) => `<tr><td>${esc(t.screen)}</td><td><code>${esc(t.node)}</code></td><td>${esc(t.tag)}</td><td class="v">${esc(t.size)}</td></tr>`).join('');
   return `<section id="coverage"><h2>Coverage <span class="muted">(${s.covered + s.answered}/${s.total} items covered or answered)</span></h2>` +
-    `<p class="muted">What a complete design system needs, checked against the source. Missing items are not errors: they are what to add or decide next.</p>${groupHtml}` +
+    `<p class="muted">What a complete design system needs, checked against the source. Missing items are not errors: they are what to add or decide next.</p>${varsLine(cov.vars)}${groupHtml}` +
     `<h3>Contrast below WCAG AA (${contrast.length})</h3>` +
     (contrast.length ? `<details${contrast.length <= 20 ? ' open' : ''}><summary>${plural(contrast.length, 'text colour')} below 4.5:1 (large text 3:1); nothing is changed automatically</summary><div class="wrap"><table><tr><th>screen</th><th>node</th><th>text on background</th><th>ratio</th><th>needed</th><th>font size</th></tr>${cRows}</table></div></details>` : '<p>Every text colour meets WCAG AA.</p>') +
     `<h3>Touch targets under 44×44 px (${touch.length})</h3>` +

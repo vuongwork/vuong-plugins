@@ -192,3 +192,14 @@ test('typeSamples: the most frequent real text of each typography primitive, via
   assert.equal(s['primitive.typography.t14-400-2'], 'Ghi chú'); // line height 20.8 px sorts after 20 px
   assert.equal(s['primitive.typography.t14-400'], undefined); // only blank text: no sample
 });
+
+test('R79: the coverage section says how many CSS variable uses could not be attributed and what that means for colours', () => {
+  const f = fixture();
+  const html = renderDsReport({ tokens: f.tokens, entries: f.norm.entries, questions: f.questions, coverage: { ...f.cov, vars: { complex: 7, unreadable: 2 } }, title: 't', generated: '' });
+  const t = textOf(html).replace(/\s+/g, ' ');
+  assert.match(t, /7 CSS variable uses could not be attributed/);
+  assert.match(t, /2 stylesheets could not be read/);
+  assert.match(t, /treated as named/);
+  const z = textOf(renderDsReport({ tokens: f.tokens, entries: f.norm.entries, questions: f.questions, coverage: { ...f.cov, vars: { complex: 0, unreadable: 0 } }, title: 't', generated: '' })).replace(/\s+/g, ' ');
+  assert.match(z, /Every CSS variable use was attributed/);
+});

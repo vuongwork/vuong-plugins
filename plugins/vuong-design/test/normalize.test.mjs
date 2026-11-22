@@ -383,3 +383,14 @@ test('R74: a squashed icon whose spec axis is FILL asks SRC_SQUASH with the natu
   assert.equal(N([av({ natural: undefined })]).counts.FLEX, 1);
   assert.equal(N([av({ sizes: [26, 34, 26, 34], natural: 34 })]).counts.FLEX, 1);
 });
+
+test('R79: a colour with a scoped variable (tokenMismatch) is named: never merged automatically, a COLOR_NEAR question at most', () => {
+  const c = (hex, o = {}) => use('color', 'bg', hex, 'button.btn|div.row', o);
+  const r = N([c('#1a73e8'), c('#1a73e8'), c('#1a73e8'), c('#1a74e8', { node: '0.9', tokenMismatch: '--fg' })]);
+  assert.deepEqual(only(r, 'COLOR_DE1'), []);
+  assert.ok(r.entries.every((e) => e.status !== 'auto'), JSON.stringify(r.entries));
+  assert.ok(only(r, 'COLOR_NEAR').every((e) => e.status === 'ask'), JSON.stringify(r.entries));
+  // the same colour without any variable is merged automatically (control)
+  const p = N([c('#1a73e8'), c('#1a73e8'), c('#1a73e8'), c('#1a74e8', { node: '0.9' })]);
+  assert.deepEqual(only(p, 'COLOR_DE1').map((e) => [e.from, e.to, e.status]), [['#1a74e8', '#1a73e8', 'auto']]);
+});

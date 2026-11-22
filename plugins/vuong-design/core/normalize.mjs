@@ -58,7 +58,7 @@
 //                  (R68), options the two neighbouring multiples of 4 and the value itself, proposal the nearest
 //                  (tie -> larger).
 //                  Never for font sizes, border widths, icons, images, flexible values.
-//  COLOR_DE1       colour (unnamed: no use of that hex has a token) within ΔE2000 < 1 of a more frequent unnamed
+//  COLOR_DE1       colour (unnamed: no use of that hex has a token or, R79, a tokenMismatch) within ΔE2000 < 1 of a more frequent unnamed
 //                  colour (more uses; tie -> lower hex) with the same alpha: its uses in a role the other colour also
 //                  has -> merged, auto. Its uses in other roles fall to COLOR_NEAR.
 //  COLOR_NEAR      ΔE2000 < 3 to a more frequent colour of the same alpha otherwise (different roles, or either one
@@ -97,7 +97,10 @@
 // Before every code: R67, a use marked `noise` by inventory (space / size / radius under 0.5 px, a rounding residue
 // of the measured geometry) is skipped and counted as NOISE; it never takes part in a role majority.
 // Not normalised in plan 2: shadow, opacity, icon glyph font size, type family / weight / style / letter spacing /
-// transform. A use with tokenMismatch (inventory R64) is treated as having no token.
+// transform. A use with tokenMismatch (inventory R64) is treated as having no token, except R79: a colour (hex) is
+// named when any of its uses has a token OR a tokenMismatch (a variable scoped lower down, `.dark { --fg: ... }`,
+// resolves to the use's colour while its :root value differs), so it never merges automatically (no COLOR_DE1): a
+// COLOR_NEAR question at most.
 import { parseColor, deltaE2000 } from './color.mjs';
 import { cmpNodeId } from './inventory.mjs';
 
@@ -309,7 +312,7 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
   for (const u of colors) {
     if (typeof u.value !== 'string') continue;
     const h = hexes.get(u.value) || { hex: u.value, n: 0, roles: new Set(), named: false, alpha: u.value.length === 9 ? u.value.slice(7) : 'ff' };
-    h.n++; h.roles.add(u.role); if (u.token) h.named = true;
+    h.n++; h.roles.add(u.role); if (u.token || u.tokenMismatch) h.named = true; // R79
     hexes.set(u.value, h);
   }
   const order = [...hexes.values()].sort((a, b) => b.n - a.n || cmpStr(a.hex, b.hex));

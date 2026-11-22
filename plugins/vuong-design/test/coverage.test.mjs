@@ -175,3 +175,13 @@ test('end to end on inventory output: tokens + coverage run on a real inventory 
   const res = coverage(loadChecklist(), { inv, tokens, screens: [scr] });
   assert.equal(res.items.length > 40, true);
 });
+
+test('R79: CSS variable uses capture could not attribute are summed over the screens (varsComplex, varsUnreadable)', () => {
+  const a = screen({ extra: { id: 's1', varsComplex: 3, varsUnreadable: 1 } }), b = screen({ extra: { id: 's2', name: 's2', varsComplex: 2 } });
+  const inv = { uses: [], vars: {} };
+  const { tokens } = buildTokens(inv, []);
+  const cov = coverage(loadChecklist(), { inv, tokens, screens: [a, b] });
+  assert.deepEqual(cov.vars, { complex: 5, unreadable: 1 });
+  const none = coverage(loadChecklist(), { inv, tokens, screens: [screen()] });
+  assert.deepEqual(none.vars, { complex: 0, unreadable: 0 });
+});

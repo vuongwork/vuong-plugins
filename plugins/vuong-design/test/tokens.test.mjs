@@ -242,3 +242,17 @@ test('R70: pill radii share one primitive radius.full (9999 px) with a note', ()
   assert.equal(map['s1|p1|radius|radiusTL'], 'primitive.radius.full');
   assert.match(css, /--radius-full: 9999px;/);
 });
+
+test('m5: distinct values always get distinct primitive names (12 vs 12.004, float residue); deterministic', () => {
+  seq = 0;
+  const u = (node, v) => use('space', 'paddingL', v, `div.c${node}|div`, { node });
+  const b = buildTokens({ uses: [u('0.1', 12), u('0.2', 12.004), u('0.3', 12.02), u('0.4', 22.03 - 10.01), u('0.5', 16)], vars: {} }, []);
+  const names = Object.keys(b.tokens.primitive.space).sort();
+  assert.equal(names.length, 5, JSON.stringify(names));
+  // values that are unique at 2 decimals keep their short name
+  assert.ok(names.includes('16'), JSON.stringify(names));
+  assert.ok(names.includes('12'), JSON.stringify(names));
+  assert.ok(names.includes('12_004'), JSON.stringify(names));
+  const again = buildTokens({ uses: [u('0.5', 16), u('0.4', 22.03 - 10.01), u('0.3', 12.02), u('0.2', 12.004), u('0.1', 12)], vars: {} }, []);
+  assert.deepEqual(Object.keys(again.tokens.primitive.space).sort(), names);
+});

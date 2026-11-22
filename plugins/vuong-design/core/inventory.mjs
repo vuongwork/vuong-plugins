@@ -68,7 +68,9 @@
 // Excluded, and why:
 //  - zero padding / gap / radius / border width: 0 is the absence of the property, not a value to tokenise.
 //  - size of FILL / HUG axes (flexible, Global Constraints), text boxes (follow the text), the screen root (the
-//    artboard width is a device size), synthetic frames (their size is inferred, not authored), min/max.
+//    artboard width is a device size), synthetic frames (their size is inferred, not authored; R47 'anchor'
+//    wrappers included), min/max. R80: nor an axis whose abs constraint stretches with the parent (x: abs.c, y:
+//    abs.cy LR / TB / SCALE): a `left: 0; right: 0` overlay is as wide as its card at each width, not an authored size.
 //  - abs offsets (positions), background images and gradients, outline, text decoration: not tokenised in plan 2.
 //  - paints inside icon markup (icon.svg) and the svg root's `color` (only reaches shapes through currentColor in
 //    the markup): only the root fill / stroke the proxy and Figma set are listed; 'none' is skipped.
@@ -298,8 +300,10 @@ function screenUses(screen, spec) {
     // ---- size: FIXED axes of frames and images ----
     if ((sn.t === 'F' || sn.t === 'I') && !sn.syn && !isRoot && Array.isArray(sn.sz)) {
       const im = sn.t === 'I' ? { sizes, img: true } : {};
-      if (sn.sz[0] === 'FIXED') addLen('size', 'width', sn.w, tok.width, im);
-      if (sn.sz[1] === 'FIXED') addLen('size', 'height', sn.h, tok.height, im);
+      // R80: an axis pinned to stretch with its parent (abs LR / TB / SCALE) has no authored size
+      const stretch = (c) => c === 'LR' || c === 'TB' || c === 'SCALE';
+      if (sn.sz[0] === 'FIXED' && !(sn.abs && stretch(sn.abs.c))) addLen('size', 'width', sn.w, tok.width, im);
+      if (sn.sz[1] === 'FIXED' && !(sn.abs && stretch(sn.abs.cy))) addLen('size', 'height', sn.h, tok.height, im);
     }
 
     // ---- icons ----

@@ -354,7 +354,7 @@ test('R51: an entry is honoured only when the node fingerprint matches and the f
   const approve = (rep, w = where) => [...rep.roots.filter((x) => !x.explainedBy).map((x) => allowlistEntry('root', x, w)),
     ...rep.needsApproval.map((x) => allowlistEntry('approval', x, w)), ...rep.crop.map((x) => allowlistEntry('crop', x, w))].map((e) => ({ ...e, reason: 'ok', approved: true }));
   const list = approve(r);
-  assert.deepEqual(list[0], { file: 'f.html', screen: 's0', node: 'n.1', width: 'A', kind: 'root', delta: [1, 0, 0, 0], fingerprint: { tag: 'span', cls: 'badge', text: 'Inbox 3' }, reason: 'ok', approved: true });
+  assert.deepEqual(list[0], { file: 'f.html', screen: 's0', node: 'n.1', width: 'A', kind: 'root', delta: [1, 0, 0, 0], why: ['x'], fingerprint: { tag: 'span', cls: 'badge', text: 'Inbox 3' }, reason: 'ok', approved: true });
   assert.deepEqual(list[2].fingerprint, { tag: 'svg', cls: 'ic', ref: 'star' });
   assert.equal(gate(r, list, where).pass, true);
   // within the slack (0.25 px per delta component, 0.02 crop ratio): still honoured
@@ -423,4 +423,54 @@ test('M3: a corpus without files is a usage error (exit 2)', async () => {
   assert.equal(await main(['--corpus', join(dir, 'c.json'), '--corpus-dir', dir, '--out', join(dir, 'o')], { log: q.log }), 2);
   assert.match(q.lines.join('\n'), /no files/);
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ---------------- fix round 10: R56 (allowlist entries are honoured only for the same kind of finding) ----------------
+test('R56: an entry covers only its axes (why), the same direction of every delta component, and the same container', () => {
+  // probe-r51: an end-aligned card shrank 10px (approved, why w)
+  const tree = { id: 'n', tag: 'div', cls: 'root', kids: [{ id: 'n.0', tag: 'div', cls: 'card', kids: [] }, { id: 'n.1', tag: 'div', cls: 'card', kids: [] }] };
+  const where = { file: 'a.html', screen: 's1', tree };
+  const rep = (roots) => ({ roots, needsApproval: [], crop: [], cropLinked: [], unchecked: [], skipped: [], data: [] });
+  const approved = { id: 'n.0', width: 'A', delta: [10, 0, -10, 0], why: ['w'] };
+  const e = { ...allowlistEntry('root', approved, where), reason: 'ok', approved: true };
+  assert.deepEqual(e.why, ['w']);
+  assert.equal(gate(rep([approved]), [e], where).pass, true);
+  // the same magnitudes with the position sign flipped: a new axis (x) the entry does not cover
+  let g = gate(rep([{ id: 'n.0', width: 'A', delta: [-10, 0, -10, 0], why: ['w', 'x'] }]), [e], where);
+  assert.deepEqual([g.open.roots.length, g.allowed.roots.length], [1, 0]);
+  // grows instead of shrinking (same axis, same magnitudes, opposite signs)
+  g = gate(rep([{ id: 'n.0', width: 'A', delta: [-10, 0, 10, 0], why: ['w'] }]), [e], where);
+  assert.deepEqual([g.open.roots.length, g.allowed.roots.length], [1, 0]);
+  // a component within the slack may have either sign
+  assert.equal(gate(rep([{ id: 'n.0', width: 'A', delta: [10, -0.2, -10, 0.25], why: ['w'] }]), [e], where).pass, true);
+  // an entry without why covers no axis
+  const noWhy = { ...e }; delete noWhy.why;
+  assert.equal(gate(rep([approved]), [noWhy], where).pass, false);
+  // another container with the same tag and class now has that id (n.0 removed, n.1 shifted in): not honoured
+  const tree2 = { id: 'n', tag: 'div', cls: 'root', kids: [{ id: 'n.0', tag: 'div', cls: 'card', kids: [] }] };
+  g = gate(rep([approved]), [e], { ...where, tree: tree2 });
+  assert.equal(g.allowed.roots.length, 0);
+  // a container's fingerprint also holds its child count and the hash of its first text descendant
+  const box = (txt, n = 1) => ({ id: 'n', tag: 'div', cls: 'root', kids: [{ id: 'n.0', tag: 'div', cls: 'card', kids: [...Array(n)].map((_, i) => ({ id: `n.0.${i}`, kind: 'text', tag: 'p', runs: [{ t: i ? 'x' : txt }] })) }, { id: 'n.1', tag: 'div', cls: 'card' }] });
+  const w3 = { ...where, tree: box('Milk') }, e3 = { ...allowlistEntry('root', approved, w3), reason: 'ok', approved: true };
+  assert.equal(gate(rep([approved]), [e3], w3).pass, true);
+  assert.equal(gate(rep([approved]), [e3], { ...where, tree: box('Eggs') }).pass, false);
+  assert.equal(gate(rep([approved]), [e3], { ...where, tree: box('Milk', 2) }).pass, false);
+  // approvals: why and signs are checked the same way
+  const ap = { id: 'n.0', width: 'B', delta: [0, 3, 0, 0], why: ['y'], magnitude: 3, explainedBy: 'figmaModel' };
+  const ea = { ...allowlistEntry('approval', ap, where), reason: 'ok', approved: true };
+  const repA = (a) => ({ ...rep([]), needsApproval: [a] });
+  assert.equal(gate(repA(ap), [ea], where).pass, true);
+  assert.equal(gate(repA({ ...ap, delta: [0, -3, 0, 0] }), [ea], where).pass, false);
+  assert.equal(gate(repA({ ...ap, delta: [0, 3, 0, 1], why: ['y', 'h'] }), [ea], where).pass, false);
+});
+
+test('R56 (M-d): an approved entry with an empty reason is shown as allowed by "approved"', () => {
+  const tree = { id: 'n', tag: 'div', cls: 's', kids: [{ id: 'n.1', tag: 'span', cls: 'badge', runs: [{ t: 'New' }] }] };
+  const where = { file: 'f.html', screen: 's0', tree };
+  const f = { id: 'n.1', width: 'B', delta: [-0.61, 0, 0, 0], why: ['x'] };
+  const e = { ...allowlistEntry('root', f, where), approved: true };
+  const g = gate({ roots: [f], needsApproval: [], crop: [], cropLinked: [], unchecked: [], skipped: [], data: [] }, [e], where);
+  assert.equal(g.pass, true);
+  assert.equal(g.allowed.roots[0].allowedBy, 'approved');
 });

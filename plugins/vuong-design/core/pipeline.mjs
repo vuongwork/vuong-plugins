@@ -15,13 +15,19 @@
 //   (progress callback). Capture launches its own browser; proxies and verify use `browser`.
 // gate(report, allowlist, { file, screen, tree }) -> { pass, open: { roots, approvals, crops }, allowed: { roots, approvals,
 //   crops } }: the screen gate after the allowlist (spec §14 layer 5). Allowlist entries are
-//   { file, screen, node, width, kind: 'root'|'approval'|'crop', delta | ratio + peak, fingerprint, reason, approved };
+//   { file, screen, node, width, kind: 'root'|'approval'|'crop', delta + why | ratio + peak, fingerprint, reason, approved };
 //   ONLY approved === true entries are honoured, and only for unexplained roots, needsApproval entries and crop fails.
 //   R51: an entry also carries what was approved: the magnitude (root / approval: delta [dx, dy, dw, dh]; crop: ratio
 //   and peak) and the node's fingerprint (source tag, class, and its text or icon ref; tree = the screen's source
 //   tree). It is honoured only if the node at that id still has that fingerprint and the finding is no larger than
 //   approved: every |delta component| <= approved + 0.25 px (so a new axis, e.g. a position next to an approved size,
 //   is not covered, R49), ratio <= approved + 0.02 and peak <= approved. An entry without them is never honoured.
+//   R56: a root / approval entry also stores the finding's axes (why); it is honoured only if the finding's why is a
+//   subset of the entry's and every delta component has the approved sign (a component within the 0.25 px slack may
+//   have either) and is no larger than approved + 0.25 px: a shrink approval never covers a growth, nor a position on
+//   a new axis. A container's fingerprint (no text, no icon) also holds its child count (kids), its parent's child
+//   count (sibs: when a sibling is removed the ids shift and another container with the same tag and class takes the
+//   id) and the hash of its first text descendant (th). An approved entry with an empty reason is allowed by 'approved'.
 //   allowlistEntry(kind, finding, where) drafts one (approved: false) for the user to review. R44: report.cropLinked (crops on
 //   an unexplained size root) are allowed only with that root's entry (open.cropsLinked / allowed.cropsLinked). Unchecked nodes, skipped layers
 //   and data findings can never be allowlisted. `file` is the HTML file's path relative to the corpus dir (R51; with
@@ -83,26 +89,52 @@ export async function runFile(browser, htmlPath, opts = {}) {
 }
 
 const SLACK_PX = 0.25, SLACK_RATIO = 0.02, EPS = 1e-6;
-const findNode = (tree, id) => { if (!tree) return null; if (tree.id === id) return tree; for (const k of tree.kids || []) { const r = findNode(k, id); if (r) return r; } return null; };
-// R51: what identifies the source node at an id: tag, class, and its text (whitespace collapsed, 60 chars) or icon
+// [node, parent] at id
+const findNode = (tree, id, parent = null) => {
+  if (!tree) return null;
+  if (tree.id === id) return [tree, parent];
+  for (const k of tree.kids || []) { const r = findNode(k, id, tree); if (r) return r; }
+  return null;
+};
+const textOf = (n) => (n.runs || []).map((r) => (r.br ? ' ' : r.t || '')).join('').replace(/\s+/g, ' ').trim();
+const firstText = (n) => { for (const k of n.kids || []) { const t = textOf(k) || firstText(k); if (t) return t; } return ''; };
+// 32-bit FNV-1a, hex
+const fnv = (str) => { let h = 0x811c9dc5; for (const c of str) { h ^= c.codePointAt(0); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, '0'); };
+// R51: what identifies the source node at an id: tag, class, and its text (whitespace collapsed, 60 chars) or icon;
+// R56: a container (no text, no icon) adds its child count, its parent's child count and the hash of its first text
+// descendant
 export function fingerprint(tree, id) {
-  const n = findNode(tree, id);
-  if (!n) return null;
+  const hit = findNode(tree, id);
+  if (!hit) return null;
+  const [n, parent] = hit;
   const fp = { tag: n.tag || n.kind || '', cls: n.cls || '' };
-  const text = (n.runs || []).map((r) => (r.br ? ' ' : r.t || '')).join('').replace(/\s+/g, ' ').trim().slice(0, 60);
+  const text = textOf(n).slice(0, 60);
   if (text) fp.text = text;
   else if (n.icon) fp.ref = n.icon.ref || (n.icon.glyph != null ? `glyph:${n.icon.glyph}` : n.icon.svg ? 'svg' : '');
+  else {
+    fp.kids = (n.kids || []).length;
+    fp.sibs = parent ? (parent.kids || []).length : 0;
+    const t = firstText(n);
+    if (t) fp.th = fnv(t);
+  }
   return fp;
 }
-const sameFp = (a, b) => !!a && !!b && ['tag', 'cls', 'text', 'ref'].every((k) => (a[k] ?? null) === (b[k] ?? null));
+const sameFp = (a, b) => !!a && !!b && ['tag', 'cls', 'text', 'ref', 'kids', 'sibs', 'th'].every((k) => (a[k] ?? null) === (b[k] ?? null));
+// R56: the finding's axes are a subset of the approved ones, and every delta component keeps the approved sign (or is
+// within the slack) and is no larger than approved + slack
+const sameAxes = (e, x) => Array.isArray(e.why) && (x.why || []).every((w) => e.why.includes(w));
 const notLarger = (kind, e, x) => (kind === 'crop'
   ? typeof e.ratio === 'number' && typeof e.peak === 'number' && x.ratio <= e.ratio + SLACK_RATIO + EPS && (x.peak ?? 0) <= e.peak + EPS
-  : Array.isArray(e.delta) && e.delta.length === 4 && Array.isArray(x.delta) && x.delta.every((v, i) => Math.abs(v) <= Math.abs(Number(e.delta[i])) + SLACK_PX + EPS));
+  : Array.isArray(e.delta) && e.delta.length === 4 && Array.isArray(x.delta) && sameAxes(e, x) && x.delta.every((v, i) => {
+    const a = Number(e.delta[i]);
+    if (Math.abs(v) <= SLACK_PX + EPS) return true;
+    return Math.sign(v) === Math.sign(a) && Math.abs(v) <= Math.abs(a) + SLACK_PX + EPS;
+  }));
 // a draft allowlist entry for an open finding (the user reviews it, writes the reason and sets approved: true)
 export function allowlistEntry(kind, x, where = {}) {
   return {
     file: where.file, screen: where.screen, node: x.id, width: x.width, kind,
-    ...(kind === 'crop' ? { ratio: x.ratio, peak: x.peak ?? 0 } : { delta: x.delta }),
+    ...(kind === 'crop' ? { ratio: x.ratio, peak: x.peak ?? 0 } : { delta: x.delta, why: [...(x.why || [])] }),
     fingerprint: fingerprint(where.tree, x.id), reason: '', approved: false,
   };
 }
@@ -117,7 +149,7 @@ export function gate(report, allowlist = [], where = {}) {
     const open = [], allowed = [];
     for (const x of items) {
       const e = find(kind, x);
-      if (e) allowed.push({ ...x, allowedBy: e.reason }); else open.push(x);
+      if (e) allowed.push({ ...x, allowedBy: (typeof e.reason === 'string' && e.reason.trim()) || 'approved' }); else open.push(x);
     }
     return { open, allowed };
   };

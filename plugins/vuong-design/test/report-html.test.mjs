@@ -126,3 +126,17 @@ test('M1: crop fails linked to an open root are listed as items (with their root
   assert.match(html, /data-kind="crop"/);
   assert.match(html, /caused by the layout error on <code>n\.1<\/code>/);
 });
+
+test('R56 (probe-r52): an entry approved with an empty reason renders as allowed, and the open copy is no repeat of it', async () => {
+  const { gate, allowlistEntry } = await import('../core/pipeline.mjs');
+  const tree = { id: 'n', tag: 'div', cls: 's', kids: [{ id: 'n.1', tag: 'span', cls: 'badge', runs: [{ t: 'New' }] }] };
+  const f = { id: 'n.1', width: 'B', delta: [-0.61, 0, 0, 0], why: ['x'] };
+  const where = { file: 'f.html', screen: 's0', tree };
+  const g = gate({ roots: [f], needsApproval: [], crop: [], cropLinked: [], unchecked: [], skipped: [], data: [] }, [{ ...allowlistEntry('root', f, where), approved: true }], where);
+  const s0 = view({ summary: { screen: 's0', pass: true, allowed: 1 }, items: [root({ allowedBy: g.allowed.roots[0].allowedBy })] });
+  const s1 = view({ summary: { screen: 's1', pass: false, unexplainedRoots: 1 }, items: [root()] });
+  const html = renderReportHtml({ screens: [s0, s1] });
+  assert.equal((html.match(/class="item repeat"/g) || []).length, 0);
+  assert.equal((html.match(/class="item allowed"/g) || []).length, 1);
+  assert.match(html, /allowlisted: approved/);
+});

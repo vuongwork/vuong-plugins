@@ -11,7 +11,8 @@
 // Pipeline: pipeline.mjs runFile (capture with png, font override R10, line-height R14 -> infer -> layout proxy +
 // modelled proxy at A and B with the source pixel origin -> verifyScreenWithImages).
 // Writes: ir.json (captured screens without PNGs), spec-<id>.json (modelled spec, compact JSON: specBytes is its
-//   size), report.json (summary + verify report + gate + mutations per screen), report.html (self-contained).
+//   size), report.json (summary + verify report + gate + allowlistDraft (R51: an entry with magnitude and fingerprint,
+//   approved false, per open root / approval / crop) + mutations per screen), report.html (self-contained).
 //   In corpus mode ir.json and spec-<id>.json go to <out>/<file stem>/; report.json and report.html cover all files.
 // Exit codes: 0 every screen passes (after the allowlist: only `approved: true` entries count), 1 otherwise, 2 usage
 //   or setup error (bad arguments, file or selector not found, no Playwright / Chromium).
@@ -21,7 +22,7 @@ import { parseArgs } from 'node:util';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { basename, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runFile, gate, summarize, loadCorpus, specJson } from './pipeline.mjs';
+import { runFile, gate, summarize, loadCorpus, specJson, allowlistEntry } from './pipeline.mjs';
 
 export class UsageError extends Error {}
 
@@ -140,9 +141,13 @@ export async function main(argv, deps = {}) {
       writeFileSync(join(dir, 'ir.json'), JSON.stringify({ file: job.file, root: job.root, widen: job.widen ?? null, screens: irOf(res.screens.map((e) => e.screen)) }, null, 1));
       for (const e of res.screens) {
         writeFileSync(join(dir, `spec-${safe(e.report.id)}.json`), specJson(e.modelled.spec));
-        const g = gate(e.report, allowlist, { file: job.file, screen: e.report.id });
+        const where = { file: job.file, screen: e.report.id, tree: e.screen.tree };
+        const g = gate(e.report, allowlist, where);
         const summary = summarize(job.file, e, g);
-        screensOut.push({ summary, gate: g, report: e.report, flags: e.report.flags, ...(e.mutations ? { mutations: e.mutations } : {}) });
+        // R51: a draft allowlist entry (magnitude + fingerprint, approved: false) for every open root, approval and crop
+        const allowlistDraft = [...g.open.roots.map((x) => allowlistEntry('root', x, where)), ...g.open.approvals.map((x) => allowlistEntry('approval', x, where)),
+          ...g.open.crops.map((x) => allowlistEntry('crop', x, where))];
+        screensOut.push({ summary, gate: g, report: e.report, flags: e.report.flags, allowlistDraft, ...(e.mutations ? { mutations: e.mutations } : {}) });
         views.push(await screenView(browser, job.file, e, g, summary));
       }
     }

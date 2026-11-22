@@ -1,5 +1,5 @@
 {
-  "about": "Acceptance corpus (plan 1 Task 8). File names are relative to $VD_CORPUS_DIR. allowlist entries: { file, screen, node, width: 'A'|'B', kind: 'root'|'approval'|'crop', reason, approved }; only approved: true entries are honoured, and only the user approves.",
+  "about": "Acceptance corpus (plan 1 Task 8). File names are relative to $VD_CORPUS_DIR. allowlist entries: { file (path relative to $VD_CORPUS_DIR), screen, node, width: 'A'|'B', kind: 'root'|'approval'|'crop', delta | ratio + peak, fingerprint, reason, approved } (R51: copy them from report.json allowlistDraft); only approved: true entries are honoured, and only the user approves.",
   "files": [
     { "file": "planora-ui-screens.html", "root": ".cell .sc", "widen": ".ph" },
     { "file": "2026-11-05-ui-redesign-entry-mockup.html", "root": ".ph" },

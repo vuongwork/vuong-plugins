@@ -27,7 +27,7 @@ before(async () => {
   for (const f of corpus.files) {
     const res = await runFile(browser, f.path, { root: f.root, widen: f.widen, nameOf: f.nameOf, viewport: f.viewport, mutate: MUTATE });
     for (const e of res.screens) {
-      const g = gate(e.report, corpus.allowlist, { file: f.file, screen: e.report.id });
+      const g = gate(e.report, corpus.allowlist, { file: f.file, screen: e.report.id, tree: e.screen.tree });
       rows.push({ s: summarize(f.file, e, g), g, report: e.report, mutations: e.mutations });
     }
   }

@@ -13,16 +13,23 @@
 //   (default defaultFontMap()), verify ({ tolFrame, tolText, tolModel }), mutate (run runMutations too),
 //   mutateSample (with mutate: only n screens of the file, spread evenly: indexes floor(k * N / n)), onScreen(entry)
 //   (progress callback). Capture launches its own browser; proxies and verify use `browser`.
-// gate(report, allowlist, { file, screen }) -> { pass, open: { roots, approvals, crops }, allowed: { roots, approvals,
+// gate(report, allowlist, { file, screen, tree }) -> { pass, open: { roots, approvals, crops }, allowed: { roots, approvals,
 //   crops } }: the screen gate after the allowlist (spec §14 layer 5). Allowlist entries are
-//   { file, screen, node, width, kind: 'root'|'approval'|'crop', reason, approved }; ONLY approved === true entries
-//   are honoured, and only for unexplained roots, needsApproval entries and crop fails. R44: report.cropLinked (crops on
+//   { file, screen, node, width, kind: 'root'|'approval'|'crop', delta | ratio + peak, fingerprint, reason, approved };
+//   ONLY approved === true entries are honoured, and only for unexplained roots, needsApproval entries and crop fails.
+//   R51: an entry also carries what was approved: the magnitude (root / approval: delta [dx, dy, dw, dh]; crop: ratio
+//   and peak) and the node's fingerprint (source tag, class, and its text or icon ref; tree = the screen's source
+//   tree). It is honoured only if the node at that id still has that fingerprint and the finding is no larger than
+//   approved: every |delta component| <= approved + 0.25 px (so a new axis, e.g. a position next to an approved size,
+//   is not covered, R49), ratio <= approved + 0.02 and peak <= approved. An entry without them is never honoured.
+//   allowlistEntry(kind, finding, where) drafts one (approved: false) for the user to review. R44: report.cropLinked (crops on
 //   an unexplained size root) are allowed only with that root's entry (open.cropsLinked / allowed.cropsLinked). Unchecked nodes, skipped layers
-//   and data findings can never be allowlisted. `file` is the HTML file's base name.
+//   and data findings can never be allowlisted. `file` is the HTML file's path relative to the corpus dir (R51; with
+//   --html its base name).
 // summarize(file, entry, g) -> one summary row (report.json, report.html, acceptance table).
 // loadCorpus(corpusPath, dir) -> { files: [{ file, path, root, widen?, nameOf?, viewport? }], allowlist }
 import { readFileSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, join, resolve, posix } from 'node:path';
 import { captureScreens } from './capture.mjs';
 import { inferScreen } from './infer.mjs';
 import { applyFigmaModel } from './figma-model.mjs';
@@ -75,13 +82,41 @@ export async function runFile(browser, htmlPath, opts = {}) {
   return { file: htmlPath, screens: out };
 }
 
+const SLACK_PX = 0.25, SLACK_RATIO = 0.02, EPS = 1e-6;
+const findNode = (tree, id) => { if (!tree) return null; if (tree.id === id) return tree; for (const k of tree.kids || []) { const r = findNode(k, id); if (r) return r; } return null; };
+// R51: what identifies the source node at an id: tag, class, and its text (whitespace collapsed, 60 chars) or icon
+export function fingerprint(tree, id) {
+  const n = findNode(tree, id);
+  if (!n) return null;
+  const fp = { tag: n.tag || n.kind || '', cls: n.cls || '' };
+  const text = (n.runs || []).map((r) => (r.br ? ' ' : r.t || '')).join('').replace(/\s+/g, ' ').trim().slice(0, 60);
+  if (text) fp.text = text;
+  else if (n.icon) fp.ref = n.icon.ref || (n.icon.glyph != null ? `glyph:${n.icon.glyph}` : n.icon.svg ? 'svg' : '');
+  return fp;
+}
+const sameFp = (a, b) => !!a && !!b && ['tag', 'cls', 'text', 'ref'].every((k) => (a[k] ?? null) === (b[k] ?? null));
+const notLarger = (kind, e, x) => (kind === 'crop'
+  ? typeof e.ratio === 'number' && typeof e.peak === 'number' && x.ratio <= e.ratio + SLACK_RATIO + EPS && (x.peak ?? 0) <= e.peak + EPS
+  : Array.isArray(e.delta) && e.delta.length === 4 && Array.isArray(x.delta) && x.delta.every((v, i) => Math.abs(v) <= Math.abs(Number(e.delta[i])) + SLACK_PX + EPS));
+// a draft allowlist entry for an open finding (the user reviews it, writes the reason and sets approved: true)
+export function allowlistEntry(kind, x, where = {}) {
+  return {
+    file: where.file, screen: where.screen, node: x.id, width: x.width, kind,
+    ...(kind === 'crop' ? { ratio: x.ratio, peak: x.peak ?? 0 } : { delta: x.delta }),
+    fingerprint: fingerprint(where.tree, x.id), reason: '', approved: false,
+  };
+}
+
 export function gate(report, allowlist = [], where = {}) {
   const ok = (allowlist || []).filter((e) => e && e.approved === true && e.file === where.file && e.screen === where.screen);
-  const find = (kind, id, width) => ok.find((e) => e.kind === kind && e.node === id && e.width === width);
+  const find = (kind, x) => {
+    const fp = fingerprint(where.tree, x.id);
+    return ok.find((e) => e.kind === kind && e.node === x.id && e.width === x.width && sameFp(e.fingerprint, fp) && notLarger(kind, e, x));
+  };
   const split = (kind, items) => {
     const open = [], allowed = [];
     for (const x of items) {
-      const e = find(kind, x.id, x.width);
+      const e = find(kind, x);
       if (e) allowed.push({ ...x, allowedBy: e.reason }); else open.push(x);
     }
     return { open, allowed };
@@ -124,7 +159,9 @@ export function loadCorpus(corpusPath, dir) {
   const c = JSON.parse(readFileSync(corpusPath, 'utf8'));
   if (!Array.isArray(c.files)) throw new Error(`corpus ${corpusPath}: "files" must be an array`);
   return {
-    files: c.files.map((f) => ({ ...f, path: resolve(join(dir, f.file)), file: basename(f.file) })),
+    // R51: a file is keyed by its path relative to the corpus dir (forward slashes), so two files with the same name in
+    // different folders cannot share allowlist entries
+    files: c.files.map((f) => ({ ...f, path: resolve(join(dir, f.file)), file: posix.normalize(String(f.file).replace(/\\/g, '/')) })),
     allowlist: Array.isArray(c.allowlist) ? c.allowlist : [],
   };
 }

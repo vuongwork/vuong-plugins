@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { mkdtempSync, readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { parseCli, main, UsageError, readAllowlist } from '../core/layout.mjs';
-import { gate, sampleIndexes, summarize, loadCorpus } from '../core/pipeline.mjs';
+import { gate, sampleIndexes, summarize, loadCorpus, allowlistEntry } from '../core/pipeline.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIX = join(HERE, 'fixtures');
@@ -82,10 +82,16 @@ const fakeReport = (over = {}) => ({
   crop: [{ id: 'n.4', width: 'A', ratio: 0.2, diff: 10, peak: 5 }],
   ...over,
 });
-const entry = (where, kind, node, width, approved) => ({ ...where, node, width, kind, reason: 'test', approved });
+// R51: entries carry the finding's magnitude and the node's fingerprint (drafted from the fake report's finding)
+const FAKE_TREE = { id: 'n', tag: 'div', cls: 'scr', kids: ['n.1', 'n.2', 'n.3', 'n.4', 'n.5'].map((id) => ({ id, kind: 'frame', tag: 'div', cls: id.replace('.', '-') })) };
+const entry = (where, kind, node, width, approved, rep = fakeReport()) => {
+  const items = { root: rep.roots, approval: rep.needsApproval, crop: [...rep.crop, ...(rep.cropLinked || [])] }[kind] || [];
+  const x = items.find((i) => i.id === node && i.width === width) || { id: node, width, delta: [0, 0, 0, 0], ratio: 0, peak: 0 };
+  return { ...allowlistEntry(kind, x, where), kind, reason: 'test', approved };
+};
 
 test('gate: only approved allowlist entries are honoured, and only for roots, approvals and crops', () => {
-  const where = { file: 'f.html', screen: 's0' };
+  const where = { file: 'f.html', screen: 's0', tree: FAKE_TREE };
   const r = fakeReport();
   assert.equal(gate(r, [], where).pass, false);
   const all = (approved) => [entry(where, 'root', 'n.1', 'A', approved), entry(where, 'approval', 'n.3', 'B', approved), entry(where, 'crop', 'n.4', 'A', approved)];
@@ -110,14 +116,14 @@ test('gate: only approved allowlist entries are honoured, and only for roots, ap
 });
 
 test('R46: an unsupported-paint finding cannot be allowlisted', () => {
-  const where = { file: 'f.html', screen: 's0' };
+  const where = { file: 'f.html', screen: 's0', tree: FAKE_TREE };
   const r = fakeReport({ roots: [], needsApproval: [], crop: [], data: [{ id: 'n', kind: 'unsupported', prop: 'text-shadow', value: 'rgb(229, 57, 53) 3px 3px 0px' }] });
   const tries = [[], ['unsupported', 'data', 'root', 'crop', 'approval'].map((k) => entry(where, k, 'n', 'A', true)), ['A', 'B'].map((w) => entry(where, 'unsupported', 'n', w, true))];
   for (const list of tries) assert.equal(gate(r, list, where).pass, false, JSON.stringify(list));
 });
 
 test('R44: a crop linked to a root passes or fails with that root, never with its own entry', () => {
-  const where = { file: 'f.html', screen: 's0' };
+  const where = { file: 'f.html', screen: 's0', tree: FAKE_TREE };
   const r = fakeReport({ needsApproval: [], crop: [], cropLinked: [{ id: 'n.1', width: 'A', ratio: 0.2, diff: 10, peak: 5, root: 'n.1' }] });
   assert.equal(gate(r, [], where).pass, false);
   assert.equal(gate(r, [entry(where, 'crop', 'n.1', 'A', true)], where).pass, false);
@@ -127,7 +133,7 @@ test('R44: a crop linked to a root passes or fails with that root, never with it
 });
 
 test('summarize: counts after the gate, specBytes and payloadOver50k', () => {
-  const where = { file: 'f.html', screen: 's0' };
+  const where = { file: 'f.html', screen: 's0', tree: FAKE_TREE };
   const r = fakeReport();
   const g = gate(r, [entry(where, 'crop', 'n.4', 'A', true)], where);
   const small = summarize('f.html', { report: r, modelled: { spec: { id: 'n' } } }, g);
@@ -207,8 +213,11 @@ test('CLI: a crop fail exits 1; an approved allowlist entry lets it pass, an una
   assert.equal(a.code, 1);
   assert.deepEqual(a.rep.screens[0].gate.open.crops.map((c) => [c.id, c.width]), [['n.0', 'A'], ['n.0', 'B']]);
   assert.equal((a.html.match(/<div class="item"[^>]*data-kind="crop"/g) || []).length, 2);
-  const where = { file: 'layout-crop.html', screen: 's0' };
-  const list = (approved) => ['A', 'B'].map((w) => entry(where, 'crop', 'n.0', w, approved));
+  // R51: report.json carries a draft entry (magnitude + fingerprint, approved false) per open finding
+  const drafts = a.rep.screens[0].allowlistDraft;
+  assert.deepEqual(drafts.map((d) => [d.file, d.screen, d.kind, d.node, d.width, d.approved, typeof d.ratio, d.fingerprint && d.fingerprint.tag]),
+    [['layout-crop.html', 's0', 'crop', 'n.0', 'A', false, 'number', 'img'], ['layout-crop.html', 's0', 'crop', 'n.0', 'B', false, 'number', 'img']]);
+  const list = (approved) => drafts.map((d) => ({ ...d, reason: 'test', approved }));
   assert.equal((await run(list(false))).code, 1);
   const c = await run(list(true));
   assert.equal(c.code, 0);
@@ -332,4 +341,44 @@ test('R50 (probe-paint): radius, font, svg and image errors on large nodes fail 
     assert.equal(e.report.pass, false, name);
     assert.ok(e.report.data.some((d) => d.id === want[0] && d.kind === want[1]), `${name}: ${JSON.stringify(e.report.data)}`);
   }
+});
+
+// ---------------- fix round 9: R51 (allowlist entries carry magnitude and fingerprint) ----------------
+test('R51: an entry is honoured only when the node fingerprint matches and the finding is no larger than approved', async () => {
+  const { allowlistEntry } = await import('../core/pipeline.mjs');
+  const tree = { id: 'n', tag: 'div', cls: 'scr', kids: [
+    { id: 'n.1', kind: 'text', tag: 'span', cls: 'badge', runs: [{ t: 'Inbox  3' }] },
+    { id: 'n.3', kind: 'frame', tag: 'div', cls: 'card' }, { id: 'n.4', kind: 'icon', tag: 'svg', cls: 'ic', icon: { ref: 'star' } }] };
+  const where = { file: 'f.html', screen: 's0', tree };
+  const r = fakeReport();
+  const approve = (rep, w = where) => [...rep.roots.filter((x) => !x.explainedBy).map((x) => allowlistEntry('root', x, w)),
+    ...rep.needsApproval.map((x) => allowlistEntry('approval', x, w)), ...rep.crop.map((x) => allowlistEntry('crop', x, w))].map((e) => ({ ...e, reason: 'ok', approved: true }));
+  const list = approve(r);
+  assert.deepEqual(list[0], { file: 'f.html', screen: 's0', node: 'n.1', width: 'A', kind: 'root', delta: [1, 0, 0, 0], fingerprint: { tag: 'span', cls: 'badge', text: 'Inbox 3' }, reason: 'ok', approved: true });
+  assert.deepEqual(list[2].fingerprint, { tag: 'svg', cls: 'ic', ref: 'star' });
+  assert.equal(gate(r, list, where).pass, true);
+  // within the slack (0.25 px per delta component, 0.02 crop ratio): still honoured
+  const near = fakeReport({ roots: [{ id: 'n.1', width: 'A', delta: [1.2, -0.2, 0, 0], why: ['x'] }], needsApproval: [{ id: 'n.3', width: 'B', delta: [0, 0, 3.25, 0], magnitude: 3.25 }], crop: [{ id: 'n.4', width: 'A', ratio: 0.215, diff: 10, peak: 5 }] });
+  assert.equal(gate(near, list, where).pass, true);
+  // larger than approved: not honoured (the root also moved on another axis, R49; the approval grew; the crop got worse)
+  for (const over of [{ roots: [{ id: 'n.1', width: 'A', delta: [1, 0, 0, 0.5], why: ['x', 'h'] }] }, { roots: [{ id: 'n.1', width: 'A', delta: [1.3, 0, 0, 0], why: ['x'] }] },
+    { needsApproval: [{ id: 'n.3', width: 'B', delta: [0, 0, 3.3, 0], magnitude: 3.3 }] }, { crop: [{ id: 'n.4', width: 'A', ratio: 0.23, diff: 10, peak: 5 }] }, { crop: [{ id: 'n.4', width: 'A', ratio: 0.2, diff: 10, peak: 6 }] }]) {
+    assert.equal(gate(fakeReport(over), list, where).pass, false, JSON.stringify(over));
+  }
+  // another node now has that id (text, class or tag changed): not honoured
+  for (const change of [(t) => { t.kids[0].runs = [{ t: 'Outbox 3' }]; }, (t) => { t.kids[0].cls = 'pill'; }, (t) => { t.kids[0].tag = 'b'; }, (t) => { t.kids[2].icon = { ref: 'moon' }; }]) {
+    const t2 = structuredClone(tree); change(t2);
+    assert.equal(gate(r, list, { ...where, tree: t2 }).pass, false, String(change));
+  }
+  // entries without magnitude or fingerprint, or a gate without the tree, are never honoured
+  for (const strip of ['delta', 'fingerprint']) assert.equal(gate(r, list.map((e) => { const c = { ...e }; delete c[strip]; if (strip === 'delta') { delete c.ratio; delete c.peak; } return c; }), where).pass, false, strip);
+  assert.equal(gate(r, list, { file: 'f.html', screen: 's0' }).pass, false);
+});
+
+test('R51: corpus files are keyed by their path relative to the corpus dir', () => {
+  const dir = tmp();
+  writeFileSync(join(dir, 'c.json'), JSON.stringify({ files: [{ file: 'a/x.html', root: '.s' }, { file: ['b', 'x.html'].join(String.fromCharCode(92)), root: '.s' }, { file: 'y.html', root: '.s' }], allowlist: [] }));
+  const c = loadCorpus(join(dir, 'c.json'), '/corpus');
+  assert.deepEqual(c.files.map((f) => f.file), ['a/x.html', 'b/x.html', 'y.html']);
+  rmSync(dir, { recursive: true, force: true });
 });

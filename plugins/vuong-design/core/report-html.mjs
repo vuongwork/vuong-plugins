@@ -300,7 +300,7 @@ const HOWTO = `<details class="howto"><summary><strong>How to read this report</
 <li>A screen fails for three kinds of finding:
 <ul>
 <li><b>Unexplained layout error</b>: the rebuilt layout differs from the page and the plugin cannot say why. This is a plugin bug; nothing for you to approve.</li>
-<li><b>Needs approval</b>: the layout is right, but Figma cannot model it exactly (a Figma limitation, e.g. text-height rounding). You decide: add an allowlist entry with <code>approved: true</code> to accept it.</li>
+<li><b>Needs approval</b>: the layout is right, but Figma cannot model it exactly (a Figma limitation, e.g. text-height rounding). You decide: copy its draft entry from <code>report.json</code> (<code>allowlistDraft</code>: it records the size of the difference and which node it is) into the allowlist and set <code>approved: true</code>. The entry stops counting if the difference grows or the node changes.</li>
 <li><b>Image mismatch (crop fail)</b>: the pixels of a node differ between the page and the rebuild.</li>
 </ul></li>
 <li>Images: the <b>left</b> one is the source page, the <b>right</b> one the rebuilt proxy; the <b>magenta</b> box marks the node.</li>

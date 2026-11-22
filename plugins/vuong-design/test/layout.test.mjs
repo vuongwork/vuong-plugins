@@ -274,8 +274,9 @@ test('report.html: an unexplained root gets source and layout-proxy crops side b
     const imgs = [...it.matchAll(/<img src="data:image\/png;base64,([^"]+)"/g)].map((m) => Buffer.from(m[1], 'base64'));
     assert.equal(imgs.length, 2);
     for (const b of imgs) assert.equal(b.subarray(1, 4).toString(), 'PNG');
-    assert.match(it, /source \(A|source \(B/);
+    assert.match(it, /source page \((A|B)\)/);
     assert.match(it, /layout proxy/);
-    assert.match(it, /layout delta dx/);
+    assert.match(it, /Layout delta \(rebuilt layout proxy vs source page\): (moved|narrower|wider|shorter|taller) [^,;]*px/);
+    assert.match(it, /at width (A|B) \(\d+(\.\d+)? px\)/);
   }
 });

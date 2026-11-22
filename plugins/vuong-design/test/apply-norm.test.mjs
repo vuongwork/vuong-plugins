@@ -202,3 +202,18 @@ test('end to end: inventory -> normalize -> applyNorm; the inventory of the resu
   const after = inventory([{ screen: ir('s1'), spec: r.spec }]).uses.filter((u) => u.prop === 'paddingT').map((u) => u.value);
   assert.deepEqual(after, [12, 12, 12, 12, 12]);
 });
+
+test('R74: SRC_SQUASH on a FILL icon axis restores FIXED at `to`; the record carries szFrom; other codes still throw', () => {
+  const s = spec();
+  find(s, '0.1.1').sz = ['FILL', 'FIXED'];
+  const e = E('icon', 'width', 18, 24, ['0.1.1'], { code: 'SRC_SQUASH', status: 'answered' });
+  const r = applyNorm(s, [e], 's1');
+  const n = find(r.spec, '0.1.1');
+  assert.deepEqual([n.sz, n.w, n.h], [['FIXED', 'FIXED'], 24, 18]);
+  assert.deepEqual(r.applied, [{ entry: e.id, cat: 'icon', code: 'SRC_SQUASH', node: '0.1.1', prop: 'width', from: 18, to: 24, szFrom: 'FILL' }]);
+  assert.deepEqual(find(s, '0.1.1').sz, ['FILL', 'FIXED']); // input untouched
+  assert.throws(() => applyNorm(s, [E('icon', 'width', 18, 20, ['0.1.1'], { id: 'if', code: 'ICON_FRAME', status: 'answered' })], 's1'), /if.*0\.1\.1.*width.*FILL/);
+  // replayed on another spec (pipeline replayApplied): the record's szFrom comes from that spec, the change is the same
+  const again = applyNorm(s, [{ ...e, status: 'auto' }], 's1');
+  assert.equal(find(again.spec, '0.1.1').sz[0], 'FIXED');
+});

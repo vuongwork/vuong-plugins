@@ -77,6 +77,14 @@
 //                  size, so the declared size is taken to be the larger of the two measurements (flex-shrink only
 //                  shrinks; usually B, the wider) -> question `squash|<cat>|<from>|<proposal>` (options declared /
 //                  keep), proposal the larger size at both widths. An icon off 16/20/24 px reaches ICON_FRAME first.
+//                  R74: an icon axis the spec made flexible (infer saw its size change between A and B and made it
+//                  FILL; the Planora `.say` avatar: an svg of width 34 squashed to 26 px at A) is the same case when
+//                  inventory gives it a `natural` size (a flex item that cannot grow, may shrink: capture's flex.n),
+//                  its sizes at A and B differ by more than 0.75 px and the smaller one is more than 0.75 px under
+//                  the natural size: the same question, proposal = the natural size, tried before FLEX (a token
+//                  still wins). Answered, apply-norm restores the axis to FIXED at that size (record szFrom) and
+//                  verify predicts it (the node at `to`, its FILL siblings absorbing the difference). Without a
+//                  natural size, or squashed at both widths, it stays FLEX.
 // R69: a number within 0.05 px of an integer counts as that integer for IN_SCALE, role majorities, GRID4 / ICON_FRAME
 // proposals, options and question keys (11.01 -> grid4|space|11|12; 12.02 is in scale). Entries keep the exact
 // `from` (apply-norm matches it ±0.01); `to` is the grid / frame value; the keep option is the integer. Values
@@ -169,6 +177,12 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
   // ---------- numbers: space, size, radius, border, icon width/height ----------
   const numeric = uses.filter((u) => ['space', 'size', 'radius', 'border'].includes(u.cat) || (u.cat === 'icon' && u.prop !== 'fontSize'));
   const axisOf = (u) => (u.prop === 'width' ? 0 : 1);
+  // R74: the natural size of an icon axis the spec made flexible, when flex-shrink squashed it at one width only
+  const squashedNatural = (u) => {
+    if (typeof u.natural !== 'number' || !Array.isArray(u.sizes)) return null;
+    const a = u.sizes[axisOf(u)], b = u.sizes[axisOf(u) + 2];
+    return Math.abs(a - b) > SQUASH_PX && Math.min(a, b) < u.natural - SQUASH_PX ? u.natural : null;
+  };
   const stable = (u) => !Array.isArray(u.sizes) || Math.abs(u.sizes[axisOf(u)] - u.sizes[axisOf(u) + 2]) <= SQUASH_PX;
   const scaleValue = (u, v) => (u.cat === 'icon' ? inFrames(v) : u.cat === 'radius' ? v <= 2 || onGrid(v) : onGrid(v));
   const inScale = (u) => {
@@ -198,7 +212,12 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     if (u.flex) { keep('FLEX'); continue; }
     if (typeof u.value !== 'number') { unparsed++; continue; }
     if (u.token) { keep('TOKEN'); continue; }
-    if (u.cat === 'icon' && u.fixed === false) { keep('FLEX'); continue; }
+    if (u.cat === 'icon' && u.fixed === false) {
+      const nat = squashedNatural(u); // R74
+      if (nat === null) { keep('FLEX'); continue; }
+      squash(u, nat);
+      continue;
+    }
     if (u.cat === 'radius' && u.pill) { keep('PILL'); continue; } // R70
     const illustration = u.cat === 'icon' && snap(u.box ? Math.max(...u.box) : u.value) > ICON_MAX; // R71
     if (illustration && stable(u)) { keep('ILLUSTRATION'); continue; }
@@ -225,12 +244,16 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
       continue;
     }
     // unstable icon (in frames) or image: SRC_SQUASH (R65)
-    const ax = axisOf(u), p = r2(Math.max(u.sizes[ax], u.sizes[ax + 2]));
-    const sig = nodeSig(u.role);
+    const ax = axisOf(u);
+    squash(u, Math.max(u.sizes[ax], u.sizes[ax + 2]));
+  }
+  function squash(u, declared) {
+    const v = u.value, p = r2(declared), sig = nodeSig(u.role);
+    const fixed = u.fixed === false ? 'a size the spec made flexible' : 'a FIXED size';
     const key = ask(`squash|${u.cat}|${v}|${p}`, u.cat, 'SRC_SQUASH',
-      (q) => `A ${u.cat === 'icon' ? 'icon' : 'image'} ${v} px (${roleSummary(q)}) has a FIXED size but measures differently at widths A and B (flex-shrink): keep its declared ${p} px at both widths?`,
+      (q) => `${u.cat === 'icon' ? 'An icon' : 'An image'} ${v} px (${roleSummary(q)}) has ${fixed} but measures differently at widths A and B (flex-shrink): keep its declared ${p} px at both widths?`,
       ['declared', 'keep'], 'declared');
-    decide({ ...base, code: 'SRC_SQUASH', target: p, qkey: key, rkey: `squash|${sig}`, bulk: BULK.SRC_SQUASH, keepOpt: 'keep', map: () => p });
+    decide({ u, cat: u.cat, role: u.role, prop: u.prop, from: v, node: nodeOf(u, false), code: 'SRC_SQUASH', target: p, qkey: key, rkey: `squash|${sig}`, bulk: BULK.SRC_SQUASH, keepOpt: 'keep', map: () => p });
   }
 
   // ---------- type: font size (TYPE_SCALE), line height (LINE_HEIGHT_INT) ----------

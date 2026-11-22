@@ -279,3 +279,20 @@ test('R70 / R71: radius uses carry the node box at A and pill when radius >= hal
   assert.deepEqual(r, { radiusTL: [[358, 80], true], radiusTR: [[358, 80], undefined], radiusBR: [[358, 80], true], radiusBL: [[358, 80], undefined] });
   assert.ok(of(inv, '0.1.2', 'icon').every((u) => JSON.stringify(u.box) === '[20,20]'));
 });
+
+test('R74: an icon axis the spec made FILL carries the flex item natural size (capture flex.n) when it may only shrink', () => {
+  const fx = fixture();
+  const row = fx.screen.tree.kids[1];
+  // the Planora .say avatar: svg width 34 squashed to 26 at A by flex-shrink, 34 at B
+  Object.assign(row.kids[2], { rA: [0, 0, 26, 34], rB: [0, 0, 34, 34], flex: { g: 0, s: 1, b: 'auto', ax: 'x', n: 34 } });
+  fx.spec.kids[1].kids[2] = { ...fx.spec.kids[1].kids[2], w: 26, h: 34, sz: ['FILL', 'FIXED'] };
+  let inv = inventory([fx]);
+  assert.deepEqual(of(inv, '0.1.2', 'icon').map((u) => [u.prop, u.fixed, u.natural]), [['height', true, undefined], ['width', false, 34]]);
+  // a growing item (flex-grow > 0), a cross axis or a FIXED axis: no natural
+  row.kids[2].flex = { g: 1, s: 1, b: 'auto', ax: 'x', n: 34 };
+  inv = inventory([fx]);
+  assert.equal(of(inv, '0.1.2', 'icon', 'width')[0].natural, undefined);
+  row.kids[2].flex = { g: 0, s: 1, b: 'auto', ax: 'y', n: 34 };
+  inv = inventory([fx]);
+  assert.ok(of(inv, '0.1.2', 'icon').every((u) => u.natural === undefined));
+});

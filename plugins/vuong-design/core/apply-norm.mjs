@@ -6,7 +6,7 @@
 //  - Only entries with status 'auto' or 'answered' and only their nodes whose screen is screenId (compared as strings)
 //    are applied; 'ask' / 'kept' entries and other screens' nodes change nothing.
 //  - applied = one record per (entry, node[, run]) of this screen, in entry order then node order:
-//    { entry (entry id), cat, code, node, run? (text runs), prop, from, to }. cat and code are carried so verify
+//    { entry (entry id), cat, code, node, run? (text runs), prop, from, to, szFrom? (R74, below) }. cat and code are carried so verify
 //    (Task 6) can tell colour / radius / icon / ICON_FRAME / SRC_SQUASH records apart without the entry list.
 //  - Every record must locate its node and find the current value equal to `from`: numbers within 0.01 px, colours
 //    by hex (color.mjs toHex(parseColor(found)) === from, so 'rgb(26, 115, 232)' equals '#1a73e8'). A missing node,
@@ -22,7 +22,9 @@
 //   size   width | height        w | h                         number px; the axis (sz[0] | sz[1]) must be FIXED,
 //   icon   width | height        w | h                           else throws (icons without sz count as FIXED, as in
 //                                                                inventory). HUG parents are not resized: the proxy
-//                                                                recomputes them.
+//                                                                recomputes them. R74: a SRC_SQUASH entry on a FILL /
+//                                                                HUG axis restores it: w | h = to and sz[axis] =
+//                                                                'FIXED'; its records carry szFrom (the old sizing).
 //   icon   fontSize              font.fs                       'Npx'
 //   radius radiusTL|TR|BR|BL     paint.radius[0..3]            'Npx' (a non-px corner never matches: throws)
 //   border borderT|R|B|L         paint.border[0..3].w          number px (stroke width; normalize never emits it)
@@ -95,11 +97,12 @@ export function applyNorm(spec, entries, screenId) {
       const where = (run) => `apply-norm: entry ${e.id} node ${nodeId}${run !== undefined ? ` run ${run}` : ''} prop ${e.prop}`;
       const sn = idx.get(nodeId);
       if (!sn) throw new Error(`${where()}: node not found on screen ${sid}`);
-      applyToNode(e, sn, refs.map((r) => r.run), where);
+      const extra = applyToNode(e, sn, refs.map((r) => r.run), where);
       for (const r of refs) {
         const a = { entry: e.id, cat: e.cat, code: e.code, node: r.node };
         if (r.run !== undefined) a.run = r.run;
         Object.assign(a, { prop: e.prop, from: e.from, to: e.to });
+        if (extra && extra.szFrom) a.szFrom = extra.szFrom;
         applied.push(a);
       }
     }
@@ -141,7 +144,13 @@ function applyToNode(e, sn, runs, where) {
   } else if ((cat === 'size' || cat === 'icon') && (prop === 'width' || prop === 'height')) {
     const ax = prop === 'width' ? 0 : 1;
     const sz = Array.isArray(sn.sz) ? sn.sz[ax] : sn.t === 'V' ? 'FIXED' : undefined;
-    if (sz !== 'FIXED') throw new Error(`${where()}: axis is ${sz ?? 'unsized'}, not FIXED`);
+    if (sz !== 'FIXED') {
+      // R74: a SRC_SQUASH restores the FIXED size the source declared on an axis the spec made FILL / HUG
+      if (e.code !== 'SRC_SQUASH' || !Array.isArray(sn.sz) || (sz !== 'FILL' && sz !== 'HUG')) throw new Error(`${where()}: axis is ${sz ?? 'unsized'}, not FIXED`);
+      one(field(sn, ax === 0 ? 'w' : 'h'));
+      sn.sz[ax] = 'FIXED';
+      return { szFrom: sz };
+    }
     return one(field(sn, ax === 0 ? 'w' : 'h'));
   } else if (cat === 'icon' && prop === 'fontSize') {
     return one(field(need(sn.font, 'font'), 'fs'));

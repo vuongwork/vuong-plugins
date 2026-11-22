@@ -369,3 +369,17 @@ test('R73: a role majority applies only within 4 px; a larger jump asks GRID4 wi
   const i = N([ic(24, 'a'), ic(24, 'b'), ic(24, 'c'), ic(10, 'd')]);
   assert.deepEqual(i.entries.map((e) => [e.code, e.from, e.proposal]), [['ICON_FRAME', 10, 16]]);
 });
+
+test('R74: a squashed icon whose spec axis is FILL asks SRC_SQUASH with the natural size; without it, FLEX', () => {
+  const av = (o = {}) => use('icon', 'width', 26, 'svg|div.say', { fixed: false, sizes: [26, 34, 34, 34], box: [26, 34], natural: 34, node: 'a', ...o });
+  const r = N([av(), av({ screen: 's4', node: 'b', value: 34.5, sizes: [34.5, 40, 40, 40], box: [34.5, 40], natural: 40 })]);
+  assert.deepEqual(only(r, 'SRC_SQUASH').map((e) => [e.screen ?? e.nodes[0].screen, e.from, e.proposal, e.status, e.question]),
+    [['s1', 26, 34, 'ask', 'squash|icon|26|34'], ['s4', 34.5, 40, 'ask', 'squash|icon|34.5|40']]);
+  assert.ok(r.questions.some((q) => q.key === 'project.srcSquash'));
+  // accept-all applies the natural size
+  const a = N([av()], { 'project.srcSquash': 'accept-all' });
+  assert.deepEqual(a.entries.map((e) => [e.code, e.status, e.from, e.to]), [['SRC_SQUASH', 'answered', 26, 34]]);
+  // no natural size, or the same size at A and B (not squashed at one width): a flexible axis, kept
+  assert.equal(N([av({ natural: undefined })]).counts.FLEX, 1);
+  assert.equal(N([av({ sizes: [26, 34, 26, 34], natural: 34 })]).counts.FLEX, 1);
+});

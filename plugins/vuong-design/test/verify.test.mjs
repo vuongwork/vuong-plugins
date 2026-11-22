@@ -1793,3 +1793,117 @@ test('R72: a right / centre aligned text in a wider proxy box is cropped at its 
   const c = await measureCrops(browser, { tree, png: [srcC, srcC] }, { A: { png: prxC, boxes }, B: { png: prxC, boxes } });
   assert.deepEqual(at(c).filter(fails), []);
 });
+
+// ---- R74: SRC_SQUASH restores a FIXED size on a FILL axis (Planora `.say` avatar) ----
+// Row n.0 (H, gap 9) holds the avatar n.0.0 (svg 34 px, flex-shrink squashed to 26 px in the source) and the bubble
+// n.0.1. The spec made both FILL: the modelled and layout proxies split the row equally (135.5 px each), a plan-1 root
+// explained by the shrink flags. The target spec restores the avatar to FIXED 34 px: the norm proxy draws it 34 px wide
+// and the bubble takes the rest (53 .. 290).
+function sayFixture({ applied, normAvatar = [10, 10, 34, 34], normBubble = [53, 10, 237, 34] } = {}) {
+  const inp = fixture();
+  const T = inp.screen.tree;
+  T.kids = [{ id: 'n.0', kind: 'frame', rA: [10, 10, 280, 34], rB: [10, 10, 280, 34], kids: [
+    { id: 'n.0.0', kind: 'icon', rA: [10, 10, 26, 34], rB: [10, 10, 26, 34], icon: { ref: 'avatar' } },
+    { id: 'n.0.1', kind: 'frame', rA: [45, 10, 245, 34], rB: [45, 10, 245, 34], paint: { bg: 'rgb(251, 248, 242)' } },
+  ] }];
+  inp.spec = { id: 'n', t: 'F', sz: ['FIXED', 'FIXED'], lay: { d: 'V' }, model: 'figma', kids: [
+    { id: 'n.0', t: 'F', sz: ['FIXED', 'FIXED'], w: 280, h: 34, lay: { d: 'H', p: [0, 0, 0, 0], g: 9, pa: 'S', ca: 'S' }, kids: [
+      { id: 'n.0.0', t: 'V', sz: ['FILL', 'FIXED'], w: 26, h: 34, icon: { ref: 'avatar' } },
+      { id: 'n.0.1', t: 'F', sz: ['FILL', 'FIXED'], w: 245, h: 34, paint: { bg: 'rgb(251, 248, 242)' } },
+    ] },
+  ] };
+  const dom = {};
+  const v = (n) => { dom[n.id] = { color: 'rgb(0, 0, 0)', bg: (n.paint && n.paint.bg) || 'rgba(0, 0, 0, 0)', ff: 'serif', ...SHOWN(), ...(n.icon ? { icon: n.icon.ref } : {}) }; (n.kids || []).forEach(v); };
+  v(T);
+  const split = () => ({ n: [0, 0, 300, 200], 'n.0': [10, 10, 280, 34], 'n.0.0': [10, 10, 135.5, 34], 'n.0.1': [154.5, 10, 135.5, 34] });
+  for (const M of ['A', 'B']) {
+    inp.proxy[M] = { ...inp.proxy[M], boxes: split(), dom };
+    inp.layout[M] = { ...inp.layout[M], boxes: split() };
+  }
+  inp.proxy.B.boxes.n = [0, 0, 420, 200]; inp.layout.B.boxes.n = [0, 0, 420, 200];
+  inp.flags = [{ id: 'n.0.0', kind: 'shrink' }, { id: 'n.0.1', kind: 'shrink' }];
+  const ns = structuredClone(inp.spec);
+  ns.kids[0].kids[0].sz[0] = 'FIXED'; ns.kids[0].kids[0].w = 34;
+  const nb = (M) => ({ ...inp.proxy[M], boxes: { ...split(), n: inp.proxy[M].boxes.n, 'n.0.0': [...normAvatar], 'n.0.1': [...normBubble] }, dom: structuredClone(dom), mark: 'norm' });
+  inp.norm = { spec: ns, applied: applied ?? [rec('n.0.0', 'icon', 'SRC_SQUASH', 'width', 26, 34, { szFrom: 'FILL' })], proxy: { A: nb('A'), B: nb('B') } };
+  return inp;
+}
+
+test('R74: a SRC_SQUASH record restoring FIXED 34 px on a FILL avatar predicts its size and the bubble that absorbs it', () => {
+  const r = verifyScreen(sayFixture());
+  const nr = normRoots(r);
+  assert.ok(nr.length > 0, JSON.stringify(r.roots));
+  assert.deepEqual(nr.filter((x) => !x.explainedBy), [], JSON.stringify(nr));
+  assert.ok(nr.some((x) => x.id === 'n.0.0' && x.why.includes('w') && x.explainedBy === 'norm'), JSON.stringify(nr));
+  assert.deepEqual(r.data.filter((d) => d.kind === 'norm-spec'), []);
+  assert.deepEqual(r.norm.unexplained, []);
+});
+
+test('R74: the FILL -> FIXED change needs the record to say so (szFrom); a wrong size is a mismatch', () => {
+  // the same target spec with a record that does not carry the sizing change: the sz difference is a norm-spec finding
+  const a = verifyScreen(sayFixture({ applied: [rec('n.0.0', 'icon', 'SRC_SQUASH', 'width', 26, 34)] }));
+  assert.deepEqual(a.data.filter((d) => d.kind === 'norm-spec').map((d) => [d.id, d.path]), [['n.0.0', 'sz.0']]);
+  // a record claiming 40 px while the norm proxy draws 34 px: the avatar does not agree
+  const b = verifyScreen(sayFixture({ applied: [rec('n.0.0', 'icon', 'SRC_SQUASH', 'width', 26, 40, { szFrom: 'FILL' })] }));
+  assert.ok(b.roots.some((x) => x.layer === 'norm' && x.id === 'n.0.0' && !x.explainedBy && x.normMismatch), JSON.stringify(b.roots));
+  assert.equal(b.pass, false);
+});
+
+test('R74/R61: the avatar crop on a size root explained by shrink is explained by its own SRC_SQUASH record only', () => {
+  const bad = { id: 'n.0.0', width: 'A', ratio: 0.8, diff: 300, peak: 200 };
+  const inp = sayFixture();
+  inp.crops = [bad];
+  const r = verifyScreen(inp);
+  assert.ok(r.roots.some((x) => x.id === 'n.0.0' && x.width === 'A' && x.explainedBy === 'shrink'), JSON.stringify(r.roots));
+  assert.deepEqual(r.cropExplained.map((c) => [c.id, c.explainedBy]), [['n.0.0', 'norm']]);
+  assert.deepEqual(r.crop, []);
+  // a record on the bubble only (no record on the avatar itself): the crop stays open (R61)
+  const o = sayFixture({ applied: [rec('n.0.1', 'size', 'GRID4', 'height', 34, 34)] });
+  o.norm.spec = structuredClone(o.spec);
+  o.norm.proxy.A.boxes = { ...o.proxy.A.boxes }; o.norm.proxy.B.boxes = { ...o.proxy.B.boxes };
+  o.crops = [bad];
+  const p = verifyScreen(o);
+  assert.deepEqual(p.crop.map((c) => [c.id, c.sizeExplainedBy]), [['n.0.0', 'shrink']]);
+});
+
+test('R74: weightedFill flags on the avatar and bubble do not block the prediction once the bubble is the only FILL item', () => {
+  const inp = sayFixture();
+  inp.flags.push({ id: 'n.0.0', kind: 'weightedFill' }, { id: 'n.0.1', kind: 'weightedFill' });
+  const r = verifyScreen(inp);
+  assert.deepEqual(normRoots(r).filter((x) => !x.explainedBy), [], JSON.stringify(normRoots(r)));
+});
+
+// the bubble holds a text (FILL x HUG, line height 18 px): 3 lines (54 px) in the modelled proxy, 2 lines (36 px) once
+// the bubble is 101.5 px wider in the norm proxy; the HUG bubble follows
+function sayTextFixture(normTextH = 36) {
+  const inp = sayFixture({ normAvatar: [10, 10, 34, 34], normBubble: [53, 10, 237, normTextH] });
+  const bubble = inp.screen.tree.kids[0].kids[1];
+  bubble.kids = [{ id: 'n.0.1.0', kind: 'text', rA: [45, 10, 245, 36], rB: [45, 10, 245, 36], font: { ...FONT, lh: 18 }, runs: [{ t: 'Inbox chỉ là chỗ chờ' }] }];
+  inp.screen.tree.kids[0].rA[3] = 54; inp.screen.tree.kids[0].rB[3] = 54;
+  for (const s of [inp.spec, inp.norm.spec]) {
+    const b = s.kids[0].kids[1];
+    s.kids[0].h = 54;
+    Object.assign(b, { sz: ['FILL', 'HUG'], h: 54, lay: { d: 'V', p: [0, 0, 0, 0], g: 0, pa: 'S', ca: 'S' },
+      kids: [{ id: 'n.0.1.0', t: 'T', sz: ['FILL', 'HUG'], w: 245, h: 36, font: { ...FONT, lh: 18 }, runs: [{ t: 'Inbox chỉ là chỗ chờ' }] }] });
+  }
+  for (const M of ['A', 'B']) {
+    for (const P of [inp.proxy[M], inp.layout[M]]) { P.boxes['n.0'][3] = 54; P.boxes['n.0.1'][3] = 54; P.boxes['n.0.1.0'] = [154.5, 10, 135.5, 54]; }
+    const nb = inp.norm.proxy[M].boxes;
+    nb['n.0'][3] = 54; nb['n.0.1.0'] = [53, 10, 237, normTextH];
+    const o = { color: FONT.c, bg: 'rgba(0, 0, 0, 0)', ff: `"${FONT.ff}"`, ...SHOWN(), text: 'Inbox chỉ là chỗ chờ', runs: [['Inbox chỉ là chỗ chờ', FONT.fs, FONT.fw, 'normal', 'none', 'none', FONT.ff, FONT.c]] };
+    inp.proxy[M].dom['n.0.1.0'] = o; inp.norm.proxy[M].dom['n.0.1.0'] = structuredClone(o);
+  }
+  return inp;
+}
+
+test('R74: a text that reflows in the wider bubble is predicted by whole lines of its line height; anything else stays open', () => {
+  const r = verifyScreen(sayTextFixture(36));
+  assert.ok(normRoots(r).some((x) => x.id === 'n.0.1.0' && x.why.includes('h') && x.explainedBy === 'norm'), JSON.stringify(normRoots(r)));
+  assert.deepEqual(normRoots(r).filter((x) => !x.explainedBy), [], JSON.stringify(normRoots(r)));
+  // 40 px is not a whole number of 18 px lines
+  const o = verifyScreen(sayTextFixture(40));
+  assert.ok(normRoots(o).some((x) => x.id === 'n.0.1.0' && !x.explainedBy && x.normMismatch), JSON.stringify(normRoots(o)));
+  // a wider text never gains lines (72 px = 4 lines)
+  const g = verifyScreen(sayTextFixture(72));
+  assert.ok(normRoots(g).some((x) => x.id === 'n.0.1.0' && !x.explainedBy && x.normMismatch), JSON.stringify(normRoots(g)));
+});

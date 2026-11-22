@@ -5,7 +5,7 @@
 // inventory(screens: [{ screen: IR screen, spec: modelled SNode root }]) -> { uses: Use[], vars }
 //
 // Use = { screen, node, cat, prop, value, raw, role, token?, tokenMismatch?, tokens?, flex?, unparsed?, noise?, run?,
-//         rawCandidates?, sizes?, fixed?, img?, box?, pill? }
+//         rawCandidates?, sizes?, fixed?, natural?, img?, box?, pill? }
 //  - screen: IR screen id (name when id is missing); node: SNode id (= source INode id unless synthetic).
 //  - cat / prop:
 //      color   bg | borderT|R|B|L (border colour per side) | color (text: node colour and each distinct run colour)
@@ -48,6 +48,10 @@
 //  - sizes (R65 input): [wA, hA, wB, hB] measured at widths A and B (IR rA / rB; rB missing = rA) on icon width /
 //    height uses and image size uses. Capture records no declared CSS size, so none is carried (normalize derives
 //    it, R65). fixed: on icon width / height uses, whether that spec axis is FIXED. img: true on image size uses.
+//  - natural (R74): on an icon width / height use whose spec axis is not FIXED (infer made a squashed item FILL)
+//    and whose IR node is a flex item on that main axis that cannot grow (flex.g 0) but may shrink (flex.s > 0):
+//    capture's flex.n, the item's main size with shrinking disabled (measured at width A), i.e. the size the source
+//    declared before flex-shrink squashed it. normalize turns it into a SRC_SQUASH question.
 //  - box: [w, h] of the node in the modelled spec (width A) on radius uses (R70) and icon width / height uses (R71:
 //    normalize treats an svg whose larger side is over 32 px as an illustration).
 //  - pill (R70): true on a radius use whose value is at least half the node's smaller side (−0.01 px): the corner is
@@ -302,8 +306,11 @@ function screenUses(screen, spec) {
     if (sn.t === 'V') {
       const sz = Array.isArray(sn.sz) ? sn.sz : ['FIXED', 'FIXED'];
       const box = [sn.w, sn.h];
-      addLen('icon', 'width', sn.w, tok.width, { sizes, fixed: sz[0] === 'FIXED', box });
-      addLen('icon', 'height', sn.h, tok.height, { sizes, fixed: sz[1] === 'FIXED', box });
+      // R74: on an axis the spec did not keep FIXED, the flex item's natural size (it may only shrink)
+      const fl = ir && ir.flex;
+      const natural = (ax) => (sz[ax === 'x' ? 0 : 1] !== 'FIXED' && fl && fl.ax === ax && fl.g === 0 && fl.s > 0 && typeof fl.n === 'number' && fl.n > 0 ? fl.n : undefined);
+      addLen('icon', 'width', sn.w, tok.width, { sizes, fixed: sz[0] === 'FIXED', box, natural: natural('x') });
+      addLen('icon', 'height', sn.h, tok.height, { sizes, fixed: sz[1] === 'FIXED', box, natural: natural('y') });
       const ic = sn.icon || {};
       if (ic.svg !== undefined || ic.ref !== undefined || ic.fill !== undefined || ic.stroke !== undefined) {
         if (ic.fill && ic.fill !== 'none' && !svgFillUnused(ic, screen)) addColor('fill', ic.fill, tok.fill);

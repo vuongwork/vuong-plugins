@@ -171,6 +171,17 @@
 //    radius or icon record, an ICON_FRAME / SRC_SQUASH record, or (a text) a TYPE_SCALE / LINE_HEIGHT_INT record; one
 //    on a norm-explained size root only with a box record on the node itself (else it stays in `crop`, sizeExplainedBy
 //    'norm'); R61 holds: an icon / image leaf on an explained size root needs its own ICON_FRAME / SRC_SQUASH record.
+//  - R74 (SRC_SQUASH restoring a FIXED size, the Planora `.say` avatar): a size / icon record with szFrom (apply-norm
+//    turned a FILL / HUG axis into FIXED at `to`) predicts the node's own size as `to` minus its modelled proxy size
+//    (not to - from: the modelled FILL box was never `from` wide); the node no longer counts as a FILL item of its
+//    parent, so its FILL siblings absorb the difference (a weightedFill flag blocks the prediction only while two FILL
+//    items remain) and positions follow the measured sizes as before. The static audit accepts sz[axis] going from
+//    szFrom to FIXED only from such a record. A HUG text whose own width changed beyond tolerance reflows: its height
+//    is predicted as a whole number of lines of its line height (record `to`, else the spec's px value; never more
+//    lines when wider, never fewer when narrower; a font-size record or a non-px line height gives no prediction),
+//    and its scope (b) climbs one level, to what resized its parent. Crops: an icon / image leaf with its own
+//    ICON_FRAME / SRC_SQUASH record is explained 'norm' whatever explained its size root (a layout flag such as
+//    shrink included), since the record is what changes the drawn content.
 //  - 'ask' entries have no records (applyNorm skips them) and a record carrying a status other than auto / answered
 //    is ignored: nothing a question has not answered explains anything.
 //  - report.norm = { applied (records used), explainedRoots, explainedCrops, unexplained (ids of unexplained norm
@@ -799,11 +810,19 @@ export function verifyScreen(input, opts = {}) {
   const sumRec = (id, prop, cats = ['space']) => recsOf(id).filter((a) => cats.includes(a.cat) && a.prop === prop).reduce((x, a) => x + recDv(a), 0);
   const padsOf = (id, ax) => [sumRec(id, ax ? 'paddingT' : 'paddingL'), sumRec(id, ax ? 'paddingB' : 'paddingR')];
   const gapOf = (id) => sumRec(id, 'gap');
+  // R74: a SRC_SQUASH record that restores a FIXED size on an axis the modelled spec had as FILL / HUG (szFrom)
+  const restoreOf = (id, ax) => recsOf(id).find((a) => (a.cat === 'size' || a.cat === 'icon') && a.prop === (ax ? 'height' : 'width') && a.szFrom && a.szFrom !== 'FIXED');
+  const isFillIn = (k, ax) => !!k.sz && k.sz[ax] === 'FILL' && !restoreOf(k.id, ax);
   // predicted change of s's own size on ax at width M ({ v, tol } or null: no prediction)
   const predSize = (M, s, ax, t) => {
     const own = recsOf(s.id), dim = ax ? 'height' : 'width';
     const szA = s.sz ? s.sz[ax] : s.t === 'V' ? 'FIXED' : null;
     const dimR = own.filter((a) => (a.cat === 'size' || a.cat === 'icon') && a.prop === dim);
+    const back = restoreOf(s.id, ax);
+    if (back) { // R74: the axis becomes FIXED at `to`, whatever the modelled proxy measured
+      const mb = proxy[M].boxes[s.id];
+      return mb ? { v: Number(back.to) - mb[ax + 2], tol: t } : null;
+    }
     if (dimR.length) return { v: dimR.reduce((x, a) => x + recDv(a), 0), tol: t };
     const c = specParent.get(s.id);
     if (szA === 'FILL' && c && c.lay && c.lay.d) {
@@ -812,8 +831,9 @@ export function verifyScreen(input, opts = {}) {
       if (!dc) return null;
       const [N, F] = padsOf(c.id, ax);
       if (ax !== mainAx(c)) return { v: dc[ax + 2] - N - F, tol: t };
-      const fk = flowOf(c), fills = fk.filter((k) => k.sz && k.sz[ax] === 'FILL');
-      if (fills.some((k) => (flagsById.get(k.id) || []).includes('weightedFill'))) return null;
+      const fk = flowOf(c), fills = fk.filter((k) => isFillIn(k, ax));
+      // a weighted split needs two FILL items (R74: a restored item no longer shares the space)
+      if (fills.length > 1 && fills.some((k) => (flagsById.get(k.id) || []).includes('weightedFill'))) return null;
       let other = 0;
       for (const k of fk) {
         if (fills.includes(k)) continue;
@@ -825,6 +845,20 @@ export function verifyScreen(input, opts = {}) {
     }
     if (s.t === 'T') {
       const fs = own.filter((a) => a.cat === 'type' && a.prop === 'fontSize'), lh = own.filter((a) => a.cat === 'type' && a.prop === 'lineHeight');
+      // R74: a HUG text whose own width changed (beyond tolerance) reflows: its new height is a whole number of lines
+      // (never more lines when wider, never fewer when narrower) of its line height (the record's `to`, else the
+      // spec's px value); a font-size record or a non-px line height gives no prediction
+      const dw = ax === 1 && szA === 'HUG' ? dn(M, s.id) : null;
+      if (dw && Math.abs(dw[2]) > t + EPS) {
+        if (fs.length) return null;
+        const lhFrom = lh.length ? Number(lh[0].from) : pxNum(s.font && s.font.lh), lhTo = lh.length ? Number(lh[0].to) : lhFrom;
+        const mb = proxy[M].boxes[s.id], nb = NP[M].boxes[s.id];
+        if (!(lhFrom > 0) || !(lhTo > 0) || !mb || !nb) return null;
+        const before = Math.max(1, Math.round(mb[3] / lhFrom));
+        let after = Math.max(1, Math.round(nb[3] / lhTo));
+        if ((dw[2] > 0 && after > before) || (dw[2] < 0 && after < before)) after = before;
+        return { v: after * lhTo - mb[3], tol: t };
+      }
       if (szA !== 'HUG' || (!fs.length && !lh.length)) return { v: 0, tol: t };
       const mb = proxy[M].boxes[s.id];
       if (!mb) return null;
@@ -867,7 +901,7 @@ export function verifyScreen(input, opts = {}) {
     if (!c.lay || !c.lay.d || c.lay.wrap) return null;
     const [N, F] = padsOf(c.id, ax);
     if (ax !== mainAx(c)) {
-      const v = at(s.sz && s.sz[ax] === 'FILL' ? 'X' : c.lay.ca ?? 'S', N, F);
+      const v = at(isFillIn(s, ax) ? 'X' : c.lay.ca ?? 'S', N, F);
       return v === null ? null : { v, tol: t };
     }
     const fk = flowOf(c), i = fk.findIndex((k) => k.id === s.id);
@@ -876,7 +910,7 @@ export function verifyScreen(input, opts = {}) {
     if (dz2.some((v) => v === null)) return null;
     const sum = (xs) => xs.reduce((a, b) => a + b, 0);
     const before = sum(dz2.slice(0, i)), after = sum(dz2.slice(i + 1)), all = sum(dz2), n = fk.length, g = gapOf(c.id);
-    const fill = fk.some((k) => k.sz && k.sz[ax] === 'FILL');
+    const fill = fk.some((k) => isFillIn(k, ax));
     if (c.lay.sb && !fill) return { v: n0 + N + before + (n > 1 ? (i * (dc[ax + 2] - N - F - all)) / (n - 1) : 0), tol: t };
     const pa = fill ? 'S' : c.lay.pa ?? 'S';
     if (pa === 'S') return { v: n0 + N + before + i * g, tol: t };
@@ -891,6 +925,13 @@ export function verifyScreen(input, opts = {}) {
     // its own subtree included (a HUG frame follows its children); the agreement check below does the arithmetic
     let a = specParent.get(root.id);
     while (a && a.syn) a = specParent.get(a.id);
+    // R74: a reflowing text (HUG height, own width changed) answers to what resized its parent: one level up
+    const dwr = s && s.t === 'T' && s.sz && s.sz[1] === 'HUG' ? ND[M].get(root.id) : null;
+    if (a && dwr && Math.abs(dwr[2]) > tolOf(e.n) + EPS) {
+      let up = specParent.get(a.id);
+      while (up && up.syn) up = specParent.get(up.id);
+      if (up) a = up;
+    }
     const scope = [];
     const inScope = (x) => { scope.push(x.id); (x.kids || []).forEach(inScope); };
     if (a || s) inScope(a || s);
@@ -976,6 +1017,13 @@ export function verifyScreen(input, opts = {}) {
         const va = a.get(p), vb = b.get(p);
         if (va === vb) continue;
         if (p === 'font.remeasure' && vb === true && va === undefined && recsOf(id).some((r) => r.cat === 'type' && !recEq('type', r.from, r.to))) continue;
+        const szm = /^sz\.([01])$/.exec(p);
+        if (szm) { // R74: FILL / HUG -> FIXED only from a record that says so
+          const r = restoreOf(id, +szm[1]);
+          if (r && r.szFrom === va && vb === 'FIXED') { used.add(r); continue; }
+          normSpecFindings.push({ id, kind: 'norm-spec', path: p, expected: r ? `FIXED (applied ${r.entry}: ${fmt(r.szFrom)} -> FIXED)` : `${fmt(va)} (no applied record)`, actual: fmt(vb) });
+          continue;
+        }
         const rule = AUDIT.find(([re]) => re.test(p));
         let ok = false, cand = null;
         if (rule) {
@@ -1202,7 +1250,7 @@ export function verifyScreen(input, opts = {}) {
       // drawn content: a size explanation never excuses such a leaf's crop; it stands alone (approval via allowlist).
       // R66: unless the norm resized it on purpose (its own ICON_FRAME / SRC_SQUASH record)
       else if (r && r.explainedBy && leafIcon) {
-        if (r.explainedBy === 'norm' && ownFrame.length) cropExplained.push(byNorm(ownFrame));
+        if (ownFrame.length) cropExplained.push(byNorm(ownFrame));
         else crop.push({ ...c, sizeExplainedBy: r.explainedBy, root: r.id });
       }
       // R66: a norm size root shares its status with its crop only through a record on the node itself

@@ -13,7 +13,8 @@
 //  - strokes never take space (strokesIncludedInLayout = false): solid borders are inset box-shadows, other styles an
 //    absolutely positioned ::before overlay. paint.strokeOverlay (bordered FILL cells) is drawn the same way.
 //  - text: width HUG = nowrap, FIXED/FILL = wraps. HUG sizes already pinned by applyFigmaModel are used as px, except
-//    (a) text with font.sub (its Chrome size was measured in another font) and (b) the HUG height of wrapping text (it
+//    (a) text with font.sub (its Chrome size was measured in another font) or font.remeasure (apply-norm changed its
+//    font size / line height, so its spec box is stale) and (b) the HUG height of wrapping text (it
 //    depends on the width, so a pin taken at width A is wrong at B): those hug naturally in the proxy. On a modelled
 //    page (spec root `model: 'figma'`, set by applyFigmaModel) they are then pinned to figmaTextBox(natural size)
 //    before boxes are read (re-measure-then-pin). R21/R26: an unmodelled spec (inferScreen's, verify's layout proxy)
@@ -118,7 +119,8 @@ export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
     if (n.max) st.push(`max-width:${px(n.max)}`);
     const data = [`data-id="${attr(n.id)}"`];
     const isText = n.t === 'T';
-    const sub = isText && n.font && n.font.sub;
+    // font.remeasure (apply-norm): font size / line height changed after measuring, so the spec box is stale too
+    const sub = isText && n.font && (n.font.sub || n.font.remeasure);
     const [sx, sy] = [sizing(n, 0), sizing(n, 1)];
     const textWrap = isText && sx !== 'HUG';
     // size of one axis that is not decided by the parent (HUG or FIXED); FILL is handled by the caller

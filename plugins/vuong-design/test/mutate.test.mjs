@@ -7,7 +7,7 @@ const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const skip = process.env.VD_PLAYWRIGHT_FROM
   ? (process.platform === 'win32' ? false : 'needs a locally installed Georgia (Windows)')
   : 'set VD_PLAYWRIGHT_FROM to a dir with node_modules/playwright-core';
-const KINDS = ['moveShape', 'moveText', 'swapIcon', 'deleteLeaf', 'hideLeaf', 'thinStrokeSmall', 'thinStroke4000', 'drift', 'gap', 'radiusLarge', 'fontLarge', 'svgLarge', 'imageLarge'];
+const KINDS = ['moveShape', 'moveText', 'swapIcon', 'deleteLeaf', 'hideLeaf', 'thinStrokeSmall', 'thinStroke4000', 'drift', 'gap', 'radiusLarge', 'fontLarge', 'svgLarge', 'imageLarge', 'normSilent', 'normWrongValue'];
 
 // offline stand-in for the Figma families (as in the verify pipeline test): Georgia is installed on Windows
 const available = ['Inter', 'Georgia'];
@@ -39,7 +39,7 @@ test('runMutations on capture-basic: every kind is reported, each caught or skip
   assert.equal(r.baseline.pass, true, JSON.stringify(r.baseline));
   assert.deepEqual(r.results.map((x) => x.kind), KINDS);
   for (const x of r.results) {
-    if (x.skipped) { assert.equal(x.skipped, 'no candidate', JSON.stringify(x)); assert.equal(x.caught, null); continue; }
+    if (x.skipped) { assert.equal(x.skipped, /^norm/.test(x.kind) ? 'no norm' : 'no candidate', JSON.stringify(x)); assert.equal(x.caught, null); continue; }
     assert.ok(typeof x.target === 'string' && Array.isArray(x.by), JSON.stringify(x));
     if (KNOWN_HOLES.has(x.kind)) continue;
     assert.equal(x.caught, true, JSON.stringify(x));
@@ -146,4 +146,42 @@ test('M-f: with no svg / image above 4000 px², svgLarge and imageLarge fall bac
   const im = (await run('layout-crop.html', { kinds: ['imageLarge'] })).results[0];
   assert.ok(im.target, JSON.stringify(im));
   assert.equal(im.caught, true, JSON.stringify(im));
+});
+
+// ---- R66: norm mutations (capture-basic: n.1 a FILL-width HUG row of three FILL boxes, padding 8; n.7 a HUG column
+// with padding-bottom 12 around a pseudo dot) ----
+async function basicNorm() {
+  const { applyFigmaModel } = await import('../core/figma-model.mjs');
+  const { applyNorm } = await import('../core/apply-norm.mjs');
+  const { screen, inferred } = await prepared('capture-basic.html');
+  const modelled = applyFigmaModel(inferred.spec, fm, { rendered: screen.fontsRendered });
+  const entries = [
+    { id: 'p1', cat: 'space', role: 'r1', prop: 'paddingL', nodes: [{ screen: screen.id, node: 'n.1' }], from: 8, to: 12, code: 'GRID4', status: 'answered' },
+    { id: 'p2', cat: 'space', role: 'r2', prop: 'paddingB', nodes: [{ screen: screen.id, node: 'n.7' }], from: 12, to: 8, code: 'ROLE_MAJORITY', status: 'auto' },
+  ];
+  return { screen, inferred, norm: applyNorm(modelled.spec, entries, screen.id) };
+}
+
+test('R66: normSilent and normWrongValue are caught on a screen with a norm; the honest norm explains its roots', { skip }, async () => {
+  const { runMutations } = await import('../core/mutate.mjs');
+  const { screen, inferred, norm } = await basicNorm();
+  assert.equal(norm.applied.length, 2);
+  const r = await runMutations(browser, screen, inferred, fm, { proxy: { webFonts: false }, kinds: ['normSilent', 'normWrongValue'], norm });
+  const nb = r.normBaseline.norm;
+  assert.ok(nb.explainedRoots > 0, JSON.stringify(nb));
+  assert.deepEqual(nb.unexplained, [], JSON.stringify(nb));
+  for (const x of r.results) {
+    assert.equal(x.caught, true, JSON.stringify(x));
+    assert.ok(x.by.includes('root') && x.by.includes('data'), JSON.stringify(x));
+  }
+  assert.equal(r.results[0].target, 'n', 'normSilent prefers a frame without a padding record (the screen column)');
+  assert.deepEqual(r.results[1].record, { entry: 'p1', prop: 'paddingL', from: 8, to: 12 }, 'normWrongValue takes the first space record');
+  assert.equal(r.allCaught, true);
+});
+
+test('R66: without a norm (or with no applied record) the norm mutations are skipped, never missed', { skip }, async () => {
+  const r = await run('mutate-noicon.html', { kinds: ['normSilent', 'normWrongValue', 'moveShape'] });
+  assert.deepEqual(r.results.slice(0, 2).map((x) => [x.kind, x.caught, x.skipped]), [['normSilent', null, 'no norm'], ['normWrongValue', null, 'no norm']]);
+  assert.equal(r.results[2].caught, true);
+  assert.equal(r.allCaught, true);
 });

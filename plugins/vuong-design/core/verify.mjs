@@ -117,10 +117,66 @@
 //   `cropExplained` with the root's flag, or in `cropLinked` ({..., root}) for an unexplained root; any other failure,
 //   inside a root's subtree included, is in `crop`. R61: a crop fail on an icon/image leaf whose size root is explained
 //   stays in `crop` (with sizeExplainedBy): the drawn content does not stretch with the box, so it really moved.
-// pixel (whole screen, modelled proxy) and strict (share of checked nodes within tolerance, modelled) are reference.
+// pixel (whole screen, modelled proxy; the norm proxy with input.norm) and strict (share of checked nodes within
+// tolerance, modelled) are reference.
+//
+// R66, the normalised spec (plan 2 Task 6). input.norm = { spec (applyNorm's target spec), applied (its records
+// { entry, cat, code, node, run?, prop, from, to }), proxy: {A, B} (renderProxy of norm.spec: model 'figma' plus mark
+// 'norm'; a missing / wrong mark, or the modelled proxy passed again, throws) }. Without input.norm nothing below runs
+// and the report has no `norm` key (plan-1 behaviour byte for byte). With it the chain is source -> layout (roots) ->
+// modelled (figmaModel, R18) -> norm, each step explained on its own: the plan's condition (c) "the rest is within
+// tolerance or figmaModel" is the plan-1 verdict on the layout and modelled proxies, unchanged.
+//  - coverage: a node without a norm box at A or B is unchecked.
+//  - layer 2: the norm deltas (norm proxy box minus modelled proxy box, per node) go through the same root / follower
+//    attribution as the R18 model deltas (condition (a)); followers are counted (norm.followers). Each norm root is
+//    listed in `roots` with layer 'norm'; it is explainedBy 'norm' (entry = the entries of the records used) only when
+//    (b) a box record (any category but colour and radius: those never explain a box change) sits in the subtree of
+//    the node's nearest source ancestor (through syn frames), i.e. on the node, its layout parent, a sibling or
+//    anything inside them (padding / gap move the children and resize a HUG parent, a resized sibling pushes it, a HUG
+//    frame follows its children), AND (agreement) on every axis in root.why the measured norm delta equals,
+//    within the node's tolerance, what the records predict for that node:
+//      own size: a FIXED width / height record -> to - from; a HUG auto-layout frame -> its padding records (near +
+//      far) + (flow items - 1) x its gap record + the measured size changes of its flow items (main axis), or the
+//      change of their largest measured size (cross axis); a FILL item -> its parent's measured size change minus the
+//      parent's padding and gap records minus the non-FILL items' measured changes, shared equally (cross axis: minus
+//      the padding records); a HUG text with a line-height record -> lines x (to - from), lines = modelled height /
+//      from; with a font-size record -> modelled size x (to / from - 1) (tolerance 25 % of that, at least the node's;
+//      height 0 when the line height is in px); anything else 0.
+//      position: from the parent's measured box (near / far / middle edge) by the node's alignment there (start, end,
+//      centre, stretch; abs constraints L/R/C/LR), plus the parent's padding records, its gap record x the number of
+//      flow items before (or after) the node and the measured size changes of those items; space-between distributes
+//      the measured free-space change. Wrap, baseline, SCALE and a container without a direction give no prediction.
+//    No prediction or a disagreement -> the root stays unexplained, with normMismatch [{ axis, measured, predicted }]:
+//    a record whose `to` is wrong predicts another delta (padding 13 -> 12 shifts the children by -1 px and shrinks a
+//    HUG parent by 1 px; a record claiming 13 -> 8 predicts -5 px). An unexplained norm root fails the screen and can
+//    never be allowlisted (pipeline gate); `norm` roots need no allowlist.
+//    Record check: every box record is also checked where it acts, root or not, with the same predictions: its node's
+//    own size on the axes it sets (a FIXED width / height, a HUG frame's padding / gap axis, a HUG text's line height
+//    or font size axis) and the position of every flow item of a frame whose padding / gap it sets (a lie smaller than
+//    a root, e.g. line-height 25.3 -> 25 claimed as 29, still predicts 4 px per line). A disagreement is an unexplained
+//    norm root on that node (recordCheck: true, normMismatch); a missing prediction there is not checked.
+//  - static audit (data kind 'norm-spec', never allowlistable): every field that differs between the modelled spec and
+//    the target spec must be covered by a record on that node with the matching category / prop, from = the old value
+//    and to = the new value (numbers within 0.01 px, colours by hex); font.remeasure only with a type record. A record
+//    with to != from that no difference uses, a node added / removed and changed children are findings too.
+//  - layer 3 reads the norm proxy DOM. An expected value (source computed) that equals a record's `from` on that node
+//    (text / run colour, background, border colour and width, icon paint, corner radius, run font size) is replaced by
+//    the record's `to`; any other difference stays a data finding (so a wrong `to` is a finding against the record).
+//  - crops (measured on the norm layout proxy, pipeline; input.cropsOn 'layout' with input.norm = the norm layout
+//    could not be built -> 'norm-crop' skipped): a crop fail is explained 'norm' only when the node itself has a colour,
+//    radius or icon record, an ICON_FRAME / SRC_SQUASH record, or (a text) a TYPE_SCALE / LINE_HEIGHT_INT record; one
+//    on a norm-explained size root only with a box record on the node itself (else it stays in `crop`, sizeExplainedBy
+//    'norm'); R61 holds: an icon / image leaf on an explained size root needs its own ICON_FRAME / SRC_SQUASH record.
+//  - 'ask' entries have no records (applyNorm skips them) and a record carrying a status other than auto / answered
+//    is ignored: nothing a question has not answered explains anything.
+//  - report.norm = { applied (records used), explainedRoots, explainedCrops, unexplained (ids of unexplained norm
+//    roots), unused (records that change nothing measurable: no norm box change > 0.05 px on the node or its
+//    children at A or B and the same DOM observation at A; colour records with ΔE2000 < 1 are exempt; never failing),
+//    followers {A, B} }.
 import { createHash } from 'node:crypto';
 import { firstFamily } from './font-map.mjs';
 import { cropDiffMany, pixelDiff } from './imgdiff.mjs';
+import { parseColor, toHex, deltaE2000 } from './color.mjs';
 
 const TOL_FRAME = 0.5;
 const TOL_TEXT = 1;
@@ -134,6 +190,58 @@ const r2 = (v) => Math.round(v * 100) / 100;
 const r3 = (v) => Math.round(v * 1000) / 1000;
 const SELF_ONLY = new Set(['mixedRunHeight']);
 const NEVER_EXPLAINS = new Set(['fontSubstitution', 'unsafeWiden']);
+
+// ---- R66 helpers ----
+const NORM_APPLY = new Set(['auto', 'answered']);
+const NORM_MOVED = 0.05; // px: a norm box change below this is not a measurable change (unused records)
+const pxNum = (v) => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  const m = /^\s*(-?\d*\.?\d+)(px)?\s*$/.exec(String(v ?? ''));
+  return m ? +m[1] : null;
+};
+const hexOf = (v) => {
+  if (typeof v !== 'string') return null;
+  const c = parseColor(v);
+  return c.unparsed !== undefined ? null : toHex(c);
+};
+const recEq = (cat, a, b) => {
+  if (cat === 'color') { const x = hexOf(a), y = hexOf(b); return x !== null && x === y; }
+  const x = pxNum(a), y = pxNum(b);
+  return x !== null && y !== null && Math.abs(x - y) <= 0.01 + EPS;
+};
+// a record's colour as the proxy DOM computes it
+const rgbOf = (hex) => {
+  const c = parseColor(String(hex));
+  if (c.unparsed !== undefined) return String(hex);
+  const ch = [c.r, c.g, c.b].map((x) => Math.round(x * 255)).join(', ');
+  return normColor(c.a >= 1 ? `rgb(${ch})` : `rgba(${ch}, ${c.a})`);
+};
+// a record that can move or resize a box (colour and radius never do)
+const isBoxRec = (a) => a.cat !== 'color' && a.cat !== 'radius';
+const recDv = (a) => Number(a.to) - Number(a.from);
+// spec field path (static audit) -> [categories, record prop]
+const AUDIT = [
+  [/^lay\.p\.([0-3])$/, (m) => [['space'], ['paddingT', 'paddingR', 'paddingB', 'paddingL'][+m[1]]]],
+  [/^lay\.g$/, () => [['space'], 'gap']], [/^lay\.cg$/, () => [['space'], 'counterGap']],
+  [/^w$/, () => [['size', 'icon'], 'width']], [/^h$/, () => [['size', 'icon'], 'height']],
+  [/^font\.fs$/, () => [['type', 'icon'], 'fontSize']], [/^runs\.\d+\.s\.fs$/, () => [['type'], 'fontSize']],
+  [/^font\.lh$/, () => [['type'], 'lineHeight']],
+  [/^font\.c$/, () => [['color'], 'color']], [/^runs\.\d+\.s\.c$/, () => [['color'], 'color']],
+  [/^icon\.(color|fill|stroke)$/, (m) => [['color'], m[1]]], [/^paint\.bg$/, () => [['color'], 'bg']],
+  [/^paint\.radius\.([0-3])$/, (m) => [['radius'], `radius${['TL', 'TR', 'BR', 'BL'][+m[1]]}`]],
+  [/^paint\.border\.([0-3])\.w$/, (m) => [['border'], `border${'TRBL'[+m[1]]}`]],
+  [/^paint\.border\.([0-3])\.color$/, (m) => [['color'], `border${'TRBL'[+m[1]]}`]],
+];
+// leaf values of a spec node (its kids excluded) by dotted path
+const leafPaths = (s) => {
+  const out = new Map();
+  const v = (x, p) => {
+    if (x !== null && typeof x === 'object') { for (const [k, y] of Object.entries(x)) v(y, p ? `${p}.${k}` : k); return; }
+    out.set(p, x);
+  };
+  for (const [k, y] of Object.entries(s)) if (k !== 'kids') v(y, k);
+  return out;
+};
 
 const isTextSrc = (n) => !n.icon && (n.kind === 'text' || (n.kind === 'pseudo' && !!n.runs));
 const runsText = (runs) => (runs || []).map((r) => (r.br ? '\n' : r.t ?? '')).join('');
@@ -235,10 +343,21 @@ export function verifyScreen(input, opts = {}) {
       throw new Error(`verifyScreen: the model proxy at ${M} is not modelled (model ${JSON.stringify(proxy[M].model)}); render it from applyFigmaModel's spec`);
     }
   }
+  // R66: the norm proxy is rendered from the normalised (modelled) spec and marked 'norm'
+  const norm = input.norm || null;
+  const NP = norm ? norm.proxy || {} : null;
+  for (const M of norm ? W : []) {
+    const P = NP[M];
+    if (!P || P.model !== 'figma' || P.mark !== 'norm' || P === proxy[M]) {
+      throw new Error(`verifyScreen: the norm proxy at ${M} must be renderProxy's result for the normalised spec with mark 'norm' (model ${JSON.stringify(P && P.model)}, mark ${JSON.stringify(P && P.mark)})`);
+    }
+  }
 
   const specById = new Map();
+  const specAll = new Map(); // every spec node, syn frames included (R66 predictions and audit)
   const specParent = new Map(); // spec id -> its spec parent (syn frames included: they are the real containers)
   const indexSpec = (s) => {
+    specAll.set(s.id, s);
     if (!s.syn) specById.set(s.id, s);
     for (const k of s.kids || []) { specParent.set(k.id, s); indexSpec(k); }
   };
@@ -256,6 +375,7 @@ export function verifyScreen(input, opts = {}) {
   // ---- layer 1 + deltas ----
   const MD = { A: new Map(), B: new Map() }; // modelled proxy - source
   const LD = { A: new Map(), B: new Map() }; // layout proxy - source
+  const ND = { A: new Map(), B: new Map() }; // R66: norm proxy - modelled proxy
   const unchecked = []; const uncheckedReasons = {};
   const uncheck = (id, why) => {
     if (!uncheckedReasons[id]) { unchecked.push(id); uncheckedReasons[id] = why; } else uncheckedReasons[id] += `; ${why}`;
@@ -272,6 +392,11 @@ export function verifyScreen(input, opts = {}) {
       if (layout && !l) why.push(`no layout box at ${M}`);
       if (s && p) MD[M].set(n.id, sub(p, s));
       if (s && l) LD[M].set(n.id, sub(l, s));
+      if (norm) {
+        const nb = NP[M] && NP[M].boxes ? NP[M].boxes[n.id] : null;
+        if (!nb) why.push(`no norm box at ${M}`);
+        else if (s && p) ND[M].set(n.id, sub(nb, p));
+      }
     }
     if (why.length) uncheck(n.id, why.join('; '));
   }
@@ -655,14 +780,240 @@ export function verifyScreen(input, opts = {}) {
     needsApproval.push({ ...modelDrift, drift: true, explainedBy: 'figmaModel' });
   }
 
+  // ---- R66: norm deltas (norm proxy minus modelled proxy), attributed like the model deltas ----
+  const recs = norm ? (norm.applied || []).filter((a) => a && (a.status == null || NORM_APPLY.has(a.status))) : [];
+  const recsBy = new Map();
+  for (const a of recs) { const k = String(a.node); if (!recsBy.has(k)) recsBy.set(k, []); recsBy.get(k).push(a); }
+  const recsOf = (id) => recsBy.get(String(id)) || [];
+  const normFollowers = { A: 0, B: 0 };
+  const dn = (M, id) => {
+    const a = NP && NP[M] && NP[M].boxes ? NP[M].boxes[id] : null, b = proxy[M] && proxy[M].boxes ? proxy[M].boxes[id] : null;
+    return a && b ? sub(a, b) : null;
+  };
+  const mainAx = (s) => (!s || !s.lay ? null : s.lay.d === 'H' ? 0 : s.lay.d === 'V' ? 1 : null);
+  const flowOf = (s) => (s.kids || []).filter((k) => !k.abs);
+  const sumRec = (id, prop, cats = ['space']) => recsOf(id).filter((a) => cats.includes(a.cat) && a.prop === prop).reduce((x, a) => x + recDv(a), 0);
+  const padsOf = (id, ax) => [sumRec(id, ax ? 'paddingT' : 'paddingL'), sumRec(id, ax ? 'paddingB' : 'paddingR')];
+  const gapOf = (id) => sumRec(id, 'gap');
+  // predicted change of s's own size on ax at width M ({ v, tol } or null: no prediction)
+  const predSize = (M, s, ax, t) => {
+    const own = recsOf(s.id), dim = ax ? 'height' : 'width';
+    const szA = s.sz ? s.sz[ax] : s.t === 'V' ? 'FIXED' : null;
+    const dimR = own.filter((a) => (a.cat === 'size' || a.cat === 'icon') && a.prop === dim);
+    if (dimR.length) return { v: dimR.reduce((x, a) => x + recDv(a), 0), tol: t };
+    const c = specParent.get(s.id);
+    if (szA === 'FILL' && c && c.lay && c.lay.d) {
+      if (c.lay.wrap) return null;
+      const dc = dn(M, c.id);
+      if (!dc) return null;
+      const [N, F] = padsOf(c.id, ax);
+      if (ax !== mainAx(c)) return { v: dc[ax + 2] - N - F, tol: t };
+      const fk = flowOf(c), fills = fk.filter((k) => k.sz && k.sz[ax] === 'FILL');
+      if (fills.some((k) => (flagsById.get(k.id) || []).includes('weightedFill'))) return null;
+      let other = 0;
+      for (const k of fk) {
+        if (fills.includes(k)) continue;
+        const dk = dn(M, k.id);
+        if (!dk) return null;
+        other += dk[ax + 2];
+      }
+      return { v: (dc[ax + 2] - N - F - (c.lay.sb ? 0 : (fk.length - 1) * gapOf(c.id)) - other) / fills.length, tol: t };
+    }
+    if (s.t === 'T') {
+      const fs = own.filter((a) => a.cat === 'type' && a.prop === 'fontSize'), lh = own.filter((a) => a.cat === 'type' && a.prop === 'lineHeight');
+      if (szA !== 'HUG' || (!fs.length && !lh.length)) return { v: 0, tol: t };
+      const mb = proxy[M].boxes[s.id];
+      if (!mb) return null;
+      if (ax === 1 && lh.length) {
+        const from = Number(lh[0].from);
+        if (!(from > 0)) return null;
+        return { v: Math.max(1, Math.round(mb[3] / from)) * lh.reduce((x, a) => x + recDv(a), 0), tol: t };
+      }
+      if (!fs.length) return { v: 0, tol: t };
+      const k = Number(fs[0].to) / Number(fs[0].from);
+      if (!(k > 0)) return null;
+      if (ax === 1 && pxNum(s.font && s.font.lh) !== null) return { v: 0, tol: t }; // a px line height keeps the line box
+      const v = mb[ax + 2] * (k - 1);
+      return { v, tol: Math.max(t, 0.25 * Math.abs(v)) };
+    }
+    if (szA === 'HUG' && s.lay && s.lay.d) {
+      if (s.lay.wrap) return null;
+      const [N, F] = padsOf(s.id, ax), fk = flowOf(s);
+      if (!fk.length) return { v: N + F, tol: t };
+      const dks = fk.map((k) => dn(M, k.id));
+      if (dks.some((x) => !x)) return null;
+      if (ax === mainAx(s)) return { v: N + F + (s.lay.sb ? 0 : (fk.length - 1) * gapOf(s.id)) + dks.reduce((x, dk) => x + dk[ax + 2], 0), tol: t };
+      const mx = (P) => Math.max(...fk.map((k) => P[M].boxes[k.id][ax + 2]));
+      return { v: N + F + mx(NP) - mx(proxy), tol: t };
+    }
+    return { v: 0, tol: t };
+  };
+  // predicted change of s's near edge on ax at width M, from its parent's measured box and the parent's records
+  const predPos = (M, s, ax, t) => {
+    const c = specParent.get(s.id);
+    if (!c) return { v: 0, tol: t };
+    const dc = dn(M, c.id), de = dn(M, s.id);
+    if (!dc || !de) return null;
+    const n0 = dc[ax], f0 = dc[ax] + dc[ax + 2], dz = de[ax + 2];
+    const at = (al, N, F) => (al === 'S' || al === 'X' ? n0 + N : al === 'E' ? f0 - F - dz : al === 'C' ? (n0 + f0) / 2 + (N - F) / 2 - dz / 2 : null);
+    if (s.abs) {
+      const al = { L: 'S', T: 'S', R: 'E', B: 'E', C: 'C', LR: 'X', TB: 'X' }[ax ? s.abs.cy || 'T' : s.abs.c || 'L'];
+      return al ? { v: at(al, 0, 0), tol: t } : null;
+    }
+    if (!c.lay || !c.lay.d || c.lay.wrap) return null;
+    const [N, F] = padsOf(c.id, ax);
+    if (ax !== mainAx(c)) {
+      const v = at(s.sz && s.sz[ax] === 'FILL' ? 'X' : c.lay.ca ?? 'S', N, F);
+      return v === null ? null : { v, tol: t };
+    }
+    const fk = flowOf(c), i = fk.findIndex((k) => k.id === s.id);
+    if (i < 0) return null;
+    const dz2 = fk.map((k) => { const d = dn(M, k.id); return d ? d[ax + 2] : null; });
+    if (dz2.some((v) => v === null)) return null;
+    const sum = (xs) => xs.reduce((a, b) => a + b, 0);
+    const before = sum(dz2.slice(0, i)), after = sum(dz2.slice(i + 1)), all = sum(dz2), n = fk.length, g = gapOf(c.id);
+    const fill = fk.some((k) => k.sz && k.sz[ax] === 'FILL');
+    if (c.lay.sb && !fill) return { v: n0 + N + before + (n > 1 ? (i * (dc[ax + 2] - N - F - all)) / (n - 1) : 0), tol: t };
+    const pa = fill ? 'S' : c.lay.pa ?? 'S';
+    if (pa === 'S') return { v: n0 + N + before + i * g, tol: t };
+    if (pa === 'E') return { v: f0 - F - after - (n - 1 - i) * g - dz, tol: t };
+    if (pa === 'C') return { v: (n0 + f0) / 2 + (N - F) / 2 - (all + (n - 1) * g) / 2 + before + i * g, tol: t };
+    return null;
+  };
+  const AXW = { x: [0, false], y: [1, false], w: [0, true], h: [1, true] };
+  const normExplain = (M, root) => {
+    const e = byId.get(root.id), s = specAll.get(root.id);
+    // (b) the records that can reach this node: in the subtree of its nearest source ancestor (through syn frames),
+    // its own subtree included (a HUG frame follows its children); the agreement check below does the arithmetic
+    let a = specParent.get(root.id);
+    while (a && a.syn) a = specParent.get(a.id);
+    const scope = [];
+    const inScope = (x) => { scope.push(x.id); (x.kids || []).forEach(inScope); };
+    if (a || s) inScope(a || s);
+    const related = scope.flatMap((id) => recsOf(id)).filter(isBoxRec);
+    if (!s || !related.length) return { normWhy: 'no applied box record on the node, its layout parent or anything inside them' };
+    const d = ND[M].get(root.id), t = tolOf(e.n), mism = [];
+    for (const w of root.why) {
+      const [ax, size] = AXW[w], m = d[ax + (size ? 2 : 0)];
+      const p = size ? predSize(M, s, ax, t) : predPos(M, s, ax, t);
+      if (!p) mism.push({ axis: w, measured: r2(m), predicted: null });
+      else if (Math.abs(m - p.v) > p.tol + EPS) mism.push({ axis: w, measured: r2(m), predicted: r2(p.v) });
+    }
+    if (mism.length) return { normMismatch: mism };
+    return { entry: [...new Set(related.map((a) => a.entry))] };
+  };
+  for (const M of norm && layout ? W : []) {
+    const { mroots, followers } = attribute(M, ND[M], true, (k) => { const b = src(k, M), d = ND[M].get(k.id); return [0, 1, 2, 3].map((i) => b[i] + d[i]); });
+    normFollowers[M] = followers;
+    for (const r of mroots) {
+      const x = normExplain(M, r);
+      const root = { id: r.id, width: M, delta: r.delta, why: r.why, layer: 'norm' };
+      if (x.entry) Object.assign(root, { explainedBy: 'norm', entry: x.entry }); else Object.assign(root, x);
+      roots.push(root);
+    }
+    // R66 record agreement: every box record is checked against the measured norm delta where it acts, root or not
+    // (a record whose `to` is wrong by less than a root shows: line-height 25.3 -> 25 claimed as 29 moves nothing
+    // beyond tolerance, yet predicts 4 px per line): its node's own size on the axes it sets (a FIXED width / height, a
+    // HUG frame's padding / gap axis, a HUG text's line height / font size axis) and the position of every flow item of
+    // a frame whose padding / gap it sets. A disagreement is an unexplained norm root on that node and axis.
+    const checks = new Map(); // id -> Set of axis letters
+    const want = (id, w) => { if (!checks.has(id)) checks.set(id, new Set()); checks.get(id).add(w); };
+    for (const [id, rs] of recsBy) {
+      const sp = specAll.get(id);
+      if (!sp) continue;
+      const hug = (ax) => !!sp.sz && sp.sz[ax] === 'HUG';
+      for (const r of rs.filter(isBoxRec)) {
+        if ((r.cat === 'size' || r.cat === 'icon') && (r.prop === 'width' || r.prop === 'height')) want(id, r.prop === 'width' ? 'w' : 'h');
+        else if (r.cat === 'type' && sp.t === 'T') { if (r.prop === 'lineHeight' && hug(1)) want(id, 'h'); if (r.prop === 'fontSize' && hug(0)) want(id, 'w'); }
+        else if (r.cat === 'space' && sp.lay && sp.lay.d && !sp.lay.wrap) {
+          const ax = /^padding[LR]$/.test(r.prop) ? 0 : /^padding[TB]$/.test(r.prop) ? 1 : r.prop === 'gap' ? mainAx(sp) : null;
+          if (ax === null) continue;
+          if (hug(ax)) want(id, ax ? 'h' : 'w');
+          for (const k of flowOf(sp)) want(k.id, ax ? 'y' : 'x');
+        }
+      }
+    }
+    for (const [id, ws] of checks) {
+      const sp = specAll.get(id), d = dn(M, id);
+      if (!sp || !d) continue;
+      const t = byId.has(id) ? tolOf(byId.get(id).n) : tolFrame;
+      const mism = [];
+      for (const w of ['x', 'y', 'w', 'h'].filter((x) => ws.has(x))) {
+        const [ax, size] = AXW[w], m = d[ax + (size ? 2 : 0)];
+        const pr = size ? predSize(M, sp, ax, t) : predPos(M, sp, ax, t);
+        if (pr && Math.abs(m - pr.v) > pr.tol + EPS) mism.push({ axis: w, measured: r2(m), predicted: r2(pr.v) });
+      }
+      if (!mism.length) continue;
+      const prev = roots.find((r) => r.layer === 'norm' && r.id === id && r.width === M);
+      if (prev) {
+        delete prev.explainedBy; delete prev.entry; delete prev.normWhy;
+        for (const x of mism) if (!prev.why.includes(x.axis)) prev.why.push(x.axis);
+        prev.normMismatch = [...(prev.normMismatch || []), ...mism.filter((x) => !(prev.normMismatch || []).some((y) => y.axis === x.axis))];
+        prev.recordCheck = true;
+      } else roots.push({ id, width: M, delta: d, why: mism.map((x) => x.axis), layer: 'norm', normMismatch: mism, recordCheck: true });
+    }
+  }
+
+  // ---- R66: static audit, every difference between the modelled and the target spec comes from a record ----
+  const normSpecFindings = [];
+  if (norm) {
+    const nAll = new Map();
+    const walkN = (s) => { nAll.set(s.id, s); (s.kids || []).forEach(walkN); };
+    if (norm.spec) walkN(norm.spec);
+    const used = new Set();
+    const fmt = (v) => (v === undefined ? 'unset' : typeof v === 'string' ? v : JSON.stringify(v));
+    const kidIds = (s) => (s.kids || []).map((k) => k.id).join(',');
+    for (const [id, ms] of specAll) {
+      const ns = nAll.get(id);
+      if (!ns) { normSpecFindings.push({ id, kind: 'norm-spec', path: 'node', expected: 'present', actual: 'missing' }); continue; }
+      if (kidIds(ms) !== kidIds(ns)) normSpecFindings.push({ id, kind: 'norm-spec', path: 'kids', expected: kidIds(ms), actual: kidIds(ns) });
+      const a = leafPaths(ms), b = leafPaths(ns);
+      for (const p of new Set([...a.keys(), ...b.keys()])) {
+        const va = a.get(p), vb = b.get(p);
+        if (va === vb) continue;
+        if (p === 'font.remeasure' && vb === true && va === undefined && recsOf(id).some((r) => r.cat === 'type' && !recEq('type', r.from, r.to))) continue;
+        const rule = AUDIT.find(([re]) => re.test(p));
+        let ok = false, cand = null;
+        if (rule) {
+          const [cats, prop] = rule[1](rule[0].exec(p));
+          for (const r of recsOf(id)) {
+            if (!cats.includes(r.cat) || r.prop !== prop) continue;
+            cand = cand || r;
+            if (recEq(r.cat, va, r.from) && recEq(r.cat, vb, r.to)) {
+              ok = true;
+              // the same change listed for several runs of the node: every record of it is used
+              for (const q of recsOf(id)) if (q.cat === r.cat && q.prop === r.prop && recEq(r.cat, q.from, r.from) && recEq(r.cat, q.to, r.to)) used.add(q);
+              break;
+            }
+          }
+        }
+        if (!ok) {
+          normSpecFindings.push({ id, kind: 'norm-spec', path: p, expected: cand ? `${fmt(cand.to)} (applied ${cand.entry}: ${fmt(cand.from)} -> ${fmt(cand.to)})` : `${fmt(va)} (no applied record)`, actual: fmt(vb) });
+        }
+      }
+    }
+    for (const id of nAll.keys()) if (!specAll.has(id)) normSpecFindings.push({ id, kind: 'norm-spec', path: 'node', expected: 'absent', actual: 'added' });
+    for (const r of recs) {
+      if (used.has(r) || recEq(r.cat, r.from, r.to)) continue;
+      normSpecFindings.push({ id: String(r.node), kind: 'norm-spec', path: r.prop, expected: `${fmt(r.to)} (applied ${r.entry}: ${fmt(r.from)} -> ${fmt(r.to)})`, actual: 'not in the target spec' });
+    }
+  }
+  // R66: the expected value of a node property under its records (source value = a record's from -> its to)
+  const tgt = (id, cat, prop, v) => {
+    if (!norm) return v;
+    for (const r of recsOf(id)) if (r.cat === cat && r.prop === prop && recEq(cat, v, r.from)) return cat === 'color' ? rgbOf(r.to) : r.to;
+    return v;
+  };
+
   // ---- layer 3: data (observed in the modelled proxy DOM at A) ----
   const data = [];
   for (const f of screen.fontSubs || []) {
     if (f.reason === 'override-failed') data.push({ id: screen.tree.id, kind: 'font', expected: f.to, actual: `${f.from} (override-failed)` });
   }
-  const dom = proxy.A && proxy.A.dom;
+  const P3 = norm ? NP : proxy; // R66: layer 3 reads the norm proxy when there is one
+  const dom = P3.A && P3.A.dom;
   if (!dom) skipped.push('data');
-  const missing = new Set([...(proxy.A?.fontsMissing || []), ...(proxy.B?.fontsMissing || [])]);
+  const missing = new Set([...(P3.A?.fontsMissing || []), ...(P3.B?.fontsMissing || [])]);
   const eop = new Map(); // source effective opacity: own opacity times the parent's
   for (const e of list) eop.set(e.n.id, (e.parent ? eop.get(e.parent.n.id) : 1) * (e.n.paint && e.n.paint.opacity != null ? e.n.paint.opacity : 1));
   let noVis = false, noStroke = false;
@@ -674,11 +1025,11 @@ export function verifyScreen(input, opts = {}) {
       const expected = normWs(runsText(n.runs)), actual = normWs(d.text);
       if (expected !== actual) data.push({ id: n.id, kind: 'text', expected, actual });
       if (n.font) {
-        const expected = normColor(n.font.c), actual = normColor(d.color);
+        const expected = normColor(tgt(n.id, 'color', 'color', n.font.c)), actual = normColor(d.color);
         if (expected !== actual) data.push({ id: n.id, kind: 'color', expected, actual });
       }
     } else {
-      const expected = normColor(n.paint && n.paint.bg), actual = normColor(d.bg);
+      const expected = normColor(tgt(n.id, 'color', 'bg', n.paint && n.paint.bg)), actual = normColor(d.bg);
       if (expected !== actual) data.push({ id: n.id, kind: 'color', expected, actual });
     }
     if (n.kind === 'icon') {
@@ -705,7 +1056,8 @@ export function verifyScreen(input, opts = {}) {
     else {
       const b = n.paint && Array.isArray(n.paint.border) ? n.paint.border : [];
       SIDE_NAMES.forEach((side, i) => {
-        const x = b[i], expected = x && x.w > 0 ? strokeKey(`${x.w}px ${x.style} ${x.color}`) : 'none', actual = strokeKey(d.stroke[i]);
+        const x = b[i], xw = x ? tgt(n.id, 'border', `border${'TRBL'[i]}`, x.w) : 0;
+        const expected = x && xw > 0 ? strokeKey(`${xw}px ${x.style} ${tgt(n.id, 'color', `border${'TRBL'[i]}`, x.color)}`) : 'none', actual = strokeKey(d.stroke[i]);
         if (expected !== actual) data.push({ id: n.id, kind: 'stroke', side, expected, actual });
       });
       const expected = strokeKey(n.paint && n.paint.outline), actual = strokeKey(d.outline);
@@ -717,7 +1069,7 @@ export function verifyScreen(input, opts = {}) {
 
   // ---- layer 3: R50 paint the crops cannot see on large nodes (any size; source computed vs proxy DOM, never the spec) ----
   const miss = new Set();
-  const faceMiss = Array.isArray(proxy.A && proxy.A.facesMissing) ? [...proxy.A.facesMissing, ...((proxy.B && proxy.B.facesMissing) || [])] : null;
+  const faceMiss = Array.isArray(P3.A && P3.A.facesMissing) ? [...P3.A.facesMissing, ...((P3.B && P3.B.facesMissing) || [])] : null;
   for (const { n } of dom ? list : []) {
     const d = dom[n.id];
     if (!d) continue;
@@ -728,7 +1080,8 @@ export function verifyScreen(input, opts = {}) {
       else {
         const s = (n.paint && n.paint.radius) || [];
         CORNERS.forEach((c, i) => {
-          const expected = normRadius(s[i]), actual = normRadius(d.radius[i]);
+          const rv = tgt(id, 'radius', `radius${['TL', 'TR', 'BR', 'BL'][i]}`, s[i]);
+          const expected = normRadius(typeof rv === 'number' ? `${rv}px` : rv), actual = normRadius(d.radius[i]);
           if (expected !== actual) data.push({ id, kind: 'radius', side: c, expected, actual });
         });
       }
@@ -738,7 +1091,7 @@ export function verifyScreen(input, opts = {}) {
     if (isTextSrc(n) && n.font) {
       if (!Array.isArray(d.runs)) miss.add('font-style');
       else {
-        const src = (n.runs || []).filter((r) => !r.br).map((r) => { const f = { ...n.font, ...(r.s || {}) }; return [r.t, f.fs, f.fw, f.fst, f.td, f.tt, f.ff, f.c]; });
+        const src = (n.runs || []).filter((r) => !r.br).map((r) => { const f = { ...n.font, ...(r.s || {}) }; return [r.t, tgt(id, 'type', 'fontSize', f.fs), f.fw, f.fst, f.td, f.tt, f.ff, tgt(id, 'color', 'color', f.c)]; });
         for (const f of runStyleDiff(src, d.runs)) data.push({ id, kind: 'font-style', ...f });
         // R55: every face a run uses (family, style, weight as rendered) must have loaded in the proxy
         if (!Array.isArray(faceMiss)) miss.add('font-face');
@@ -766,7 +1119,7 @@ export function verifyScreen(input, opts = {}) {
         if (hs !== hp) data.push({ id, kind: 'svg', prop: 'markup', expected: `sha1 ${hs} (${s.markup.length} chars)`, actual: `sha1 ${hp} (${String(d.svg.markup).length} chars)` });
         if (s.own !== (d.svg.own || '')) data.push({ id, kind: 'svg', prop: 'root style', expected: s.own || 'none', actual: d.svg.own || 'none' });
         const ic = n.icon, p = d.svg.paint || [];
-        [['color', ic.color], ['fill', ic.fill], ['stroke', ic.stroke], ['stroke-width', ic.sw]].forEach(([prop, v], i) => {
+        [['color', tgt(id, 'color', 'color', ic.color)], ['fill', tgt(id, 'color', 'fill', ic.fill)], ['stroke', tgt(id, 'color', 'stroke', ic.stroke)], ['stroke-width', ic.sw]].forEach(([prop, v], i) => {
           const norm = prop === 'stroke-width' ? (x) => (x == null ? '1px' : `${r2(parseFloat(x))}px`) : (x) => (x == null ? 'none' : normColor(x));
           if (v != null && norm(v) !== norm(p[i])) data.push({ id, kind: 'svg', prop, expected: norm(v), actual: norm(p[i]) });
         });
@@ -823,21 +1176,63 @@ export function verifyScreen(input, opts = {}) {
   for (const r of roots) {
     if (!r.why.some((w) => w === 'w' || w === 'h')) continue;
     if (!r.why.some((w) => (w === 'w' && Math.abs(r.delta[2]) > cropShift + EPS) || (w === 'h' && Math.abs(r.delta[3]) > cropShift + EPS))) continue;
-    sizeRoot.set(`${r.id}|${r.width}`, r);
+    // R66: a node that is a size root in two layers (layout and norm) shares the status of the unexplained one
+    const k = `${r.id}|${r.width}`, prev = sizeRoot.get(k);
+    if (!prev || (prev.explainedBy && !r.explainedBy)) sizeRoot.set(k, r);
   }
+  if (norm && input.cropsOn === 'layout') skipped.push('norm-crop');
   if (!Array.isArray(crops)) skipped.push('crop');
   else {
     for (const c of crops) {
       if (!(c.ratio > cropRatio || (c.peak ?? 0) >= cropPeak)) continue;
       const e = byId.get(c.id), r = sizeRoot.get(`${c.id}|${c.width}`);
+      const leafIcon = !!e && (e.n.kind === 'icon' || e.n.kind === 'image');
+      // R66: the node's own records that may change its pixels
+      const own = norm ? recsOf(c.id) : [];
+      const ownPaint = own.filter((a) => a.cat === 'color' || a.cat === 'radius' || a.cat === 'icon' || a.code === 'ICON_FRAME' || a.code === 'SRC_SQUASH' ||
+        (!!e && isTextSrc(e.n) && (a.code === 'TYPE_SCALE' || a.code === 'LINE_HEIGHT_INT')));
+      const ownFrame = own.filter((a) => a.code === 'ICON_FRAME' || a.code === 'SRC_SQUASH');
+      const byNorm = (rs) => ({ ...c, explainedBy: 'norm', entry: [...new Set(rs.map((a) => a.entry))], ...(r ? { root: r.id } : {}) });
       if (e && rasterIn(e)) cropExplained.push({ ...c, explainedBy: 'raster' });
       // R61: an icon or image does not stretch with its box (it is drawn centred / fitted), so a resized box moves the
-      // drawn content: a size explanation never excuses such a leaf's crop; it stands alone (approval via allowlist)
-      else if (r && r.explainedBy && e && (e.n.kind === 'icon' || e.n.kind === 'image')) crop.push({ ...c, sizeExplainedBy: r.explainedBy, root: r.id });
+      // drawn content: a size explanation never excuses such a leaf's crop; it stands alone (approval via allowlist).
+      // R66: unless the norm resized it on purpose (its own ICON_FRAME / SRC_SQUASH record)
+      else if (r && r.explainedBy && leafIcon) {
+        if (r.explainedBy === 'norm' && ownFrame.length) cropExplained.push(byNorm(ownFrame));
+        else crop.push({ ...c, sizeExplainedBy: r.explainedBy, root: r.id });
+      }
+      // R66: a norm size root shares its status with its crop only through a record on the node itself
+      else if (r && r.explainedBy === 'norm') {
+        const mine = [...own.filter(isBoxRec), ...ownPaint];
+        if (mine.length) cropExplained.push(byNorm(mine)); else crop.push({ ...c, sizeExplainedBy: 'norm', root: r.id });
+      }
       else if (r && r.explainedBy) cropExplained.push({ ...c, explainedBy: r.explainedBy, root: r.id });
       else if (r) cropLinked.push({ ...c, root: r.id });
+      else if (ownPaint.length) cropExplained.push(byNorm(ownPaint));
       else crop.push(c);
     }
+  }
+
+  // ---- R66: the norm section of the report ----
+  let normOut;
+  if (norm) {
+    for (const f of normSpecFindings) data.push(f);
+    const unused = [];
+    for (const a of recs) {
+      if (a.cat === 'color') { try { if (deltaE2000(String(a.from), String(a.to)) < 1) continue; } catch { /* unparsable: judged below */ } }
+      const id = String(a.node), s = specAll.get(id);
+      const ids = [id, ...((s && s.kids) || []).map((k) => k.id)];
+      const moved = W.some((M) => ids.some((k) => { const d = dn(M, k); return !!d && d.some((v) => Math.abs(v) > NORM_MOVED); }));
+      const dA = proxy.A && proxy.A.dom, dN = NP.A && NP.A.dom;
+      const painted = !!dA && !!dN && JSON.stringify(dA[id] ?? null) !== JSON.stringify(dN[id] ?? null);
+      if (!moved && !painted) unused.push({ entry: a.entry, node: id, ...(a.run !== undefined ? { run: a.run } : {}), prop: a.prop, from: a.from, to: a.to, code: a.code });
+    }
+    const nr = roots.filter((r) => r.layer === 'norm');
+    normOut = {
+      applied: recs.length, explainedRoots: nr.filter((r) => r.explainedBy).length,
+      explainedCrops: cropExplained.filter((c) => c.explainedBy === 'norm').length,
+      unexplained: [...new Set(nr.filter((r) => !r.explainedBy).map((r) => r.id))], unused, followers: normFollowers,
+    };
   }
 
   const checked = list.length - unchecked.length;
@@ -855,6 +1250,7 @@ export function verifyScreen(input, opts = {}) {
     id: screen.id, checked, total: list.length, unchecked, uncheckedReasons, nodes, roots, modelDeltas, modelFollowers, modelDrift, needsApproval,
     crop, cropExplained, cropLinked, cropChecked: Array.isArray(crops) ? crops.length : 0, cropWidths: Array.isArray(crops) ? [...new Set(crops.map((c) => c.width))] : [],
     data, pixel, strict, skipped, pass, flags, tol: { frame: tolFrame, text: tolText, model: tolModel },
+    ...(normOut ? { norm: normOut } : {}),
   };
 }
 
@@ -897,10 +1293,19 @@ export async function measureCrops(browser, screen, proxy, opts = {}) {
 export async function verifyScreenWithImages(browser, input, opts = {}) {
   // crops against the layout proxy: same content as the modelled one (the model only resizes text boxes; fonts are
   // substituted in capture), without the model's sub-pixel glyph shifts, which modelDeltas already report
-  const crops = await measureCrops(browser, input.screen, input.layout, opts);
-  const pixel = [
-    await pixelDiff(browser, input.screen.png[0], input.proxy.A.png),
-    await pixelDiff(browser, input.screen.png[1], input.proxy.B.png),
-  ];
-  return verifyScreen({ ...input, crops, pixel }, opts);
+  if (!input.norm) {
+    const crops = await measureCrops(browser, input.screen, input.layout, opts);
+    const pixel = [
+      await pixelDiff(browser, input.screen.png[0], input.proxy.A.png),
+      await pixelDiff(browser, input.screen.png[1], input.proxy.B.png),
+    ];
+    return verifyScreen({ ...input, crops, pixel }, opts);
+  }
+  // R66: with a target spec, the crops run on the norm layout proxy (the records on the unmodelled spec: the norm's
+  // paint without the model's glyph shifts) and the pixel reference on the norm proxy
+  const cropsOn = input.normLayout ? 'normLayout' : 'layout';
+  const crops = await measureCrops(browser, input.screen, input.normLayout || input.layout, opts);
+  const NPx = input.norm.proxy;
+  const pixel = [await pixelDiff(browser, input.screen.png[0], NPx.A.png), await pixelDiff(browser, input.screen.png[1], NPx.B.png)];
+  return verifyScreen({ ...input, crops, pixel, cropsOn }, opts);
 }

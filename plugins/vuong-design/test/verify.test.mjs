@@ -1546,3 +1546,222 @@ test('R61: an explained size root on an icon leaves its crop open (the drawn ico
   assert.deepEqual(r.crop.map((c) => [c.id, c.width, c.sizeExplainedBy]), [['n.0.1', 'A', 'testFlag']]);
   assert.equal(r.pass, false);
 });
+
+// ---- R66: the normalised spec (norm proxy, a third render) ----
+// normFixture: the card n.0 is a HUG row with padding [10, 20, 10, 13] and gap 10 (source: text at x 23, icon at x 73,
+// card 103 px wide). `norm` = the modelled proxy re-rendered from the target spec (mark 'norm'); nmove() shifts its
+// boxes only, nspec() edits the target spec, rec() builds an applied record (apply-norm's shape).
+function normFixture() {
+  const inp = fixture();
+  const card = inp.screen.tree.kids[0];
+  card.rA = [10, 10, 103, 40]; card.rB = [10, 10, 103, 40];
+  card.kids[0].rA = [23, 20, 40, 20]; card.kids[0].rB = [23, 20, 40, 20];
+  card.kids[1].rA = [73, 20, 20, 20]; card.kids[1].rB = [73, 20, 20, 20];
+  for (const P of ['proxy', 'layout']) for (const M of ['A', 'B']) {
+    const b = inp[P][M].boxes; b['n.0'] = [10, 10, 103, 40]; b['n.0.0'] = [23, 20, 40, 20]; b['n.0.1'] = [73, 20, 20, 20];
+  }
+  const sc = inp.spec.kids[0];
+  sc.lay = { d: 'H', p: [10, 20, 10, 13], g: 10, pa: 'S', ca: 'S' };
+  sc.paint = { bg: 'rgb(238, 238, 238)' };
+  sc.kids[1].w = 20; sc.kids[1].h = 20;
+  inp.spec.model = 'figma';
+  const copy = (P) => ({ ...P, boxes: structuredClone(P.boxes), dom: P.dom ? structuredClone(P.dom) : P.dom, mark: 'norm' });
+  inp.norm = { spec: structuredClone(inp.spec), applied: [], proxy: { A: copy(inp.proxy.A), B: copy(inp.proxy.B) } };
+  return inp;
+}
+const nmove = (inp, id, d, widths = ['A', 'B']) => {
+  for (const M of widths) { const b = inp.norm.proxy[M].boxes[id]; for (let i = 0; i < 4; i++) b[i] += d[i] || 0; }
+};
+const nfind = (s, id) => (s.id === id ? s : (s.kids || []).map((k) => nfind(k, id)).find(Boolean));
+const nspec = (inp, id, f) => f(nfind(inp.norm.spec, id));
+const rec = (node, cat, code, prop, from, to, extra = {}) => ({ entry: `e-${node}-${prop}`, cat, code, node, ...extra, prop, from, to });
+// padding-left 13 -> 12 on the card: the card 1px narrower, the icon 1px left (the text moves 1px too, within tolText)
+const padFixture = (applied) => {
+  const inp = normFixture();
+  nspec(inp, 'n.0', (s) => { s.lay.p[3] = 12; });
+  nmove(inp, 'n.0', [0, 0, -1, 0]); nmove(inp, 'n.0.0', [-1, 0, 0, 0]); nmove(inp, 'n.0.1', [-1, 0, 0, 0]);
+  inp.norm.applied = applied;
+  return inp;
+};
+const normRoots = (r) => r.roots.filter((x) => x.layer === 'norm');
+
+test('R66: without opts.norm the report has no norm section (plan-1 behaviour unchanged)', () => {
+  const r = verifyScreen(fixture());
+  assert.equal('norm' in r, false);
+});
+
+test('R66: padding 13 -> 12 with an applied record: the card and the icon are roots explained by norm; the screen passes', () => {
+  const r = verifyScreen(padFixture([rec('n.0', 'space', 'GRID4', 'paddingL', 13, 12)]));
+  assert.deepEqual(normRoots(r).map((x) => [x.id, x.width, x.why.join(), x.explainedBy]).sort(),
+    [['n.0', 'A', 'w', 'norm'], ['n.0', 'B', 'w', 'norm'], ['n.0.1', 'A', 'x', 'norm'], ['n.0.1', 'B', 'x', 'norm']]);
+  assert.ok(normRoots(r).every((x) => x.entry.includes('e-n.0-paddingL')), JSON.stringify(r.roots));
+  assert.deepEqual(r.data, []);
+  assert.equal(r.norm.applied, 1);
+  assert.equal(r.norm.explainedRoots, 4);
+  assert.deepEqual(r.norm.unexplained, []);
+  assert.deepEqual(r.norm.unused, []);
+  assert.equal(r.pass, true, JSON.stringify({ roots: r.roots, data: r.data, skipped: r.skipped }));
+});
+
+test('R66: the same padding change without an applied record leaves the roots open and is a norm-spec finding (normSilent)', () => {
+  const r = verifyScreen(padFixture([]));
+  assert.deepEqual(normRoots(r).filter((x) => !x.explainedBy).map((x) => [x.id, x.width]).sort(),
+    [['n.0', 'A'], ['n.0', 'B'], ['n.0.1', 'A'], ['n.0.1', 'B']]);
+  assert.deepEqual(r.norm.unexplained, ['n.0', 'n.0.1']);
+  assert.deepEqual(r.data.filter((d) => d.kind === 'norm-spec').map((d) => [d.id, d.path]), [['n.0', 'lay.p.3']]);
+  assert.equal(r.pass, false);
+});
+
+test('R66: an applied record whose `to` is off by 4 px (normWrongValue) does not explain the measured change', () => {
+  const r = verifyScreen(padFixture([rec('n.0', 'space', 'GRID4', 'paddingL', 13, 8)]));
+  const open = normRoots(r).filter((x) => !x.explainedBy);
+  // the text moved only -1 px (within tolText, no root) but the record predicts -5 px: the record check flags it too
+  assert.deepEqual([...new Set(open.map((x) => x.id))].sort(), ['n.0', 'n.0.0', 'n.0.1']);
+  assert.ok(open.some((x) => x.id === 'n.0.0' && x.recordCheck), JSON.stringify(open));
+  // the measured norm-vs-modelled delta disagrees with what the record predicts (card w -5, icon x -5)
+  const card = open.find((x) => x.id === 'n.0' && x.width === 'A');
+  assert.deepEqual(card.normMismatch.map((m) => [m.axis, m.measured, m.predicted]), [['w', -1, -5]]);
+  // the record does not match the target spec either (static audit)
+  assert.ok(r.data.some((d) => d.kind === 'norm-spec' && d.id === 'n.0'), JSON.stringify(r.data));
+  assert.equal(r.pass, false);
+});
+
+test('R66: an ask entry never explains anything (applyNorm gives no record for it)', async () => {
+  const { applyNorm } = await import('../core/apply-norm.mjs');
+  const inp = padFixture([]);
+  const entries = [{ id: 'q1', cat: 'space', role: 'r', prop: 'paddingL', nodes: [{ screen: 's', node: 'n.0' }], from: 13, to: 13, code: 'GRID4', status: 'ask', proposal: 12 }];
+  inp.norm.applied = applyNorm(inp.spec, entries, 's').applied;
+  assert.deepEqual(inp.norm.applied, []);
+  const r = verifyScreen(inp);
+  assert.ok(normRoots(r).length > 0 && normRoots(r).every((x) => !x.explainedBy));
+  assert.equal(r.pass, false);
+});
+
+test('R66: a colour record on the card explains its crop and sets the expected colour; without it both stay open', () => {
+  const bad = (id, width) => ({ id, width, ratio: 0.6, diff: 900, peak: 64 });
+  const make = (applied) => {
+    const inp = normFixture();
+    nspec(inp, 'n.0', (s) => { s.paint.bg = 'rgb(224, 224, 224)'; });
+    inp.norm.proxy.A.dom['n.0'].bg = 'rgb(224, 224, 224)';
+    inp.norm.applied = applied;
+    inp.crops = [bad('n.0', 'A'), bad('n.0', 'B')];
+    return verifyScreen(inp);
+  };
+  const r = make([rec('n.0', 'color', 'COLOR_NEAR', 'bg', '#eeeeee', '#e0e0e0')]);
+  assert.deepEqual(r.cropExplained.map((c) => [c.id, c.width, c.explainedBy]), [['n.0', 'A', 'norm'], ['n.0', 'B', 'norm']]);
+  assert.deepEqual(r.crop, []);
+  assert.deepEqual(r.data, []);
+  assert.equal(r.norm.explainedCrops, 2);
+  assert.equal(r.pass, true, JSON.stringify(r.data));
+  const o = make([]);
+  assert.deepEqual(o.crop.map((c) => [c.id, c.width]), [['n.0', 'A'], ['n.0', 'B']]);
+  assert.deepEqual(o.data.filter((d) => d.kind === 'color').map((d) => [d.id, d.expected, d.actual]), [['n.0', 'rgb(238, 238, 238)', 'rgb(224, 224, 224)']]);
+  assert.equal(o.pass, false);
+  // a colour record with the wrong target (a clearly different colour) is a colour finding against the record
+  const w = make([rec('n.0', 'color', 'COLOR_NEAR', 'bg', '#eeeeee', '#a0e0e0')]);
+  assert.ok(w.data.some((d) => d.kind === 'color' && d.id === 'n.0' && d.expected === 'rgb(160, 224, 224)'), JSON.stringify(w.data));
+  assert.equal(w.pass, false);
+});
+
+test('R66: a colour record never explains a box change', () => {
+  const inp = normFixture();
+  nmove(inp, 'n.0', [0, 0, 3, 0]);
+  inp.norm.applied = [rec('n.0', 'color', 'COLOR_NEAR', 'bg', '#eeeeee', '#eeeeee')];
+  const r = verifyScreen(inp);
+  assert.ok(normRoots(r).some((x) => x.id === 'n.0' && !x.explainedBy), JSON.stringify(r.roots));
+  assert.equal(r.pass, false);
+});
+
+test('R66/R61: icon 20 -> 24 with ICON_FRAME on the icon explains its crop; the same change recorded only on the card leaves it open', () => {
+  const bad = (id, width) => ({ id, width, ratio: 0.8, diff: 300, peak: 200 });
+  const make = (applied) => {
+    const inp = normFixture();
+    nspec(inp, 'n.0.1', (s) => { s.w = 24; s.h = 24; });
+    nmove(inp, 'n.0.1', [0, 0, 4, 4]); nmove(inp, 'n.0', [0, 0, 4, 4]); nmove(inp, 'n.1', [0, 4, 0, 0]);
+    inp.norm.applied = applied;
+    inp.crops = [bad('n.0.1', 'A')];
+    return verifyScreen(inp);
+  };
+  const r = make([rec('n.0.1', 'icon', 'ICON_FRAME', 'width', 20, 24), rec('n.0.1', 'icon', 'ICON_FRAME', 'height', 20, 24)]);
+  assert.deepEqual(normRoots(r).map((x) => [x.id, x.width, x.why.join(), x.explainedBy]).sort(),
+    [['n.0.1', 'A', 'w,h', 'norm'], ['n.0.1', 'B', 'w,h', 'norm']]);
+  assert.deepEqual(r.cropExplained.map((c) => [c.id, c.explainedBy]), [['n.0.1', 'norm']]);
+  assert.equal(r.pass, true, JSON.stringify({ roots: r.roots, data: r.data, crop: r.crop }));
+  const p = make([rec('n.0', 'size', 'GRID4', 'width', 103, 107)]);
+  assert.deepEqual(p.cropExplained, []);
+  assert.deepEqual([...p.crop, ...p.cropLinked].map((c) => c.id), ['n.0.1']);
+  assert.equal(p.pass, false);
+});
+
+test('R66: a font-size record (TYPE_SCALE 14 -> 16) explains the text growing and sets the expected run size', () => {
+  const make = (applied) => {
+    const inp = normFixture();
+    nspec(inp, 'n.0.0', (s) => { s.font = { ...s.font, fs: '16px', remeasure: true }; });
+    const d = inp.norm.proxy.A.dom['n.0.0'];
+    d.runs = d.runs.map((x) => { const y = [...x]; y[1] = '16px'; return y; });
+    nmove(inp, 'n.0.0', [0, 0, 5.71, 0]); nmove(inp, 'n.0', [0, 0, 5.71, 0]); nmove(inp, 'n.0.1', [5.71, 0, 0, 0]);
+    inp.norm.applied = applied;
+    return verifyScreen(inp);
+  };
+  const r = make([rec('n.0.0', 'type', 'TYPE_SCALE', 'fontSize', 14, 16, { run: 0 })]);
+  assert.deepEqual(normRoots(r).map((x) => [x.id, x.width, x.why.join(), x.explainedBy]).sort(),
+    [['n.0.0', 'A', 'w', 'norm'], ['n.0.0', 'B', 'w', 'norm']]);
+  assert.deepEqual(r.data, []);
+  assert.equal(r.pass, true, JSON.stringify({ roots: r.roots, data: r.data }));
+  const o = make([]);
+  assert.ok(o.data.some((d) => d.kind === 'font-style' && d.prop === 'font-size'), JSON.stringify(o.data));
+  assert.ok(normRoots(o).some((x) => x.id === 'n.0.0' && !x.explainedBy));
+  assert.equal(o.pass, false);
+});
+
+test('R66: a record that changes nothing measurable is listed as unused (never failing); a colour within ΔE 1 is exempt', () => {
+  const inp = normFixture();
+  nspec(inp, 'n.0', (s) => { s.paint.bg = 'rgb(239, 239, 239)'; });
+  inp.norm.proxy.A.dom['n.0'].bg = 'rgb(239, 239, 239)';
+  inp.norm.applied = [rec('n.0.1', 'icon', 'SRC_SQUASH', 'width', 20, 20), rec('n.0', 'color', 'COLOR_DE1', 'bg', '#eeeeee', '#efefef')];
+  const r = verifyScreen(inp);
+  assert.deepEqual(r.norm.unused.map((u) => [u.node, u.prop]), [['n.0.1', 'width']]);
+  assert.equal(r.pass, true, JSON.stringify(r.data));
+});
+
+test('R66: the norm proxy must carry its mark (model figma, mark norm); a missing norm box is unchecked', () => {
+  const inp = normFixture(); delete inp.norm.proxy.A.mark;
+  assert.throws(() => verifyScreen(inp), /norm proxy/);
+  const inp2 = normFixture(); inp2.norm.proxy.B.model = 'none';
+  assert.throws(() => verifyScreen(inp2), /norm proxy/);
+  const inp3 = normFixture(); delete inp3.norm.proxy.B.boxes['n.1'];
+  const r = verifyScreen(inp3);
+  assert.ok(r.unchecked.includes('n.1') && /no norm box at B/.test(r.uncheckedReasons['n.1']));
+  assert.equal(r.pass, false);
+});
+
+test('R66 gate: norm-explained roots need no allowlist; an unexplained norm root cannot be allowlisted', async () => {
+  const { gate, allowlistEntry } = await import('../core/pipeline.mjs');
+  const where = { file: 'f.html', screen: 's', tree: padFixture([]).screen.tree };
+  const ok = verifyScreen(padFixture([rec('n.0', 'space', 'GRID4', 'paddingL', 13, 12)]));
+  assert.equal(gate(ok, [], where).pass, true);
+  const bad = verifyScreen(padFixture([rec('n.0', 'space', 'GRID4', 'paddingL', 13, 8)]));
+  const all = normRoots(bad).map((x) => ({ ...allowlistEntry('root', x, where), reason: 'test', approved: true }));
+  const g = gate({ ...bad, data: [] }, all, where);
+  assert.equal(g.pass, false);
+  assert.ok(g.open.roots.length >= 2 && g.allowed.roots.length === 0, JSON.stringify(g));
+});
+
+test('R66 record check: a line-height record that lies (20.25 -> 20 claimed as 24) is caught although nothing moved beyond tolerance', () => {
+  const make = (to) => {
+    const inp = normFixture();
+    inp.spec.kids[0].kids[0].font = { ...FONT, lh: 20.25 };
+    inp.norm.spec.kids[0].kids[0].font = { ...FONT, lh: 20, remeasure: true };
+    nmove(inp, 'n.0.0', [0, 0, 0, -0.25]);
+    inp.norm.applied = [rec('n.0.0', 'type', 'LINE_HEIGHT_INT', 'lineHeight', 20.25, to)];
+    return verifyScreen(inp);
+  };
+  const ok = make(20);
+  assert.deepEqual(normRoots(ok), []);
+  assert.equal(ok.pass, true, JSON.stringify(ok.data));
+  const bad = make(24);
+  const x = normRoots(bad).find((r) => r.id === 'n.0.0' && r.width === 'A');
+  assert.ok(x && !x.explainedBy && x.recordCheck, JSON.stringify(bad.roots));
+  assert.deepEqual(x.normMismatch.map((m) => [m.axis, m.measured, m.predicted]), [['h', -0.25, 3.75]]);
+  assert.equal(bad.pass, false);
+});

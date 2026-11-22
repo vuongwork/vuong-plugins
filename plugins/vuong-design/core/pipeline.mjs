@@ -7,6 +7,10 @@
 //   screen   = captureScreens(..., { png: true }).screens[i]; inferred = { spec, flags } (inferScreen's, or a changed copy)
 //   opts.proxy  = extra buildProxyHtml options (e.g. { webFonts: false }); opts.verify = verifyScreenWithImages options
 //   modelled = applyFigmaModel's { spec, flags } (the modelled spec is what spec-<id>.json holds)
+//   opts.norm = { spec, applied } (applyNorm of the modelled spec, R66): also renders the target spec at A and B (mark
+//   'norm', returned as `norm`) and the records replayed on the inferred spec (replayApplied, unmodelled, mark
+//   'normLayout', returned as `normLayout`; the crops are measured on it; if the replay throws, report.normLayoutError
+//   is set and 'norm-crop' is skipped). Without opts.norm: exactly the plan-1 pipeline.
 // runFile(browser, htmlPath, opts) -> { file: htmlPath, screens: [{ screen, inferred, modelled, report, proxy, layout,
 //   mutations? }] }
 //   opts: root (required), widen, nameOf, widenBy, viewport, webFonts (false = no Google Fonts, R9 opt-out), fontMap
@@ -30,7 +34,8 @@
 //   id) and the hash of its first text descendant (th). An approved entry with an empty reason is allowed by 'approved'.
 //   allowlistEntry(kind, finding, where) drafts one (approved: false) for the user to review. R44: report.cropLinked (crops on
 //   an unexplained size root) are allowed only with that root's entry (open.cropsLinked / allowed.cropsLinked). Unchecked nodes, skipped layers
-//   and data findings can never be allowlisted. `file` is the HTML file's path relative to the corpus dir (R51; with
+//   and data findings can never be allowlisted, nor (R66) an unexplained root of layer 'norm' (a change of the target spec
+//   that no report entry explains). `file` is the HTML file's path relative to the corpus dir (R51; with
 //   --html its base name).
 // summarize(file, entry, g) -> one summary row (report.json, report.html, acceptance table).
 // loadCorpus(corpusPath, dir) -> { files: [{ file, path, root, widen?, nameOf?, viewport? }], allowlist }
@@ -42,6 +47,7 @@ import { applyFigmaModel } from './figma-model.mjs';
 import { buildProxyHtml, renderProxy } from './proxy.mjs';
 import { verifyScreenWithImages } from './verify.mjs';
 import { defaultFontMap } from './font-map.mjs';
+import { applyNorm } from './apply-norm.mjs';
 
 export const PAYLOAD_LIMIT = 50000;
 
@@ -54,8 +60,37 @@ export async function runScreen(browser, screen, inferred, fontMap, opts = {}) {
   const proxy = { A: await at(modelled.spec, 0), B: await at(modelled.spec, 1) };
   const layout = { A: await at(inferred.spec, 0), B: await at(inferred.spec, 1) };
   const flags = [...(inferred.flags || []), ...modelled.flags];
-  const report = await verifyScreenWithImages(browser, { screen, spec: modelled.spec, proxy, layout, flags }, opts.verify || {});
-  return { report, proxy, layout, modelled };
+  if (!opts.norm) {
+    const report = await verifyScreenWithImages(browser, { screen, spec: modelled.spec, proxy, layout, flags }, opts.verify || {});
+    return { report, proxy, layout, modelled };
+  }
+  // R66: the target spec rendered as the third proxy (mark 'norm'), and its records replayed on the inferred spec,
+  // rendered unmodelled (mark 'normLayout'), for the crops
+  const applied = opts.norm.applied || [];
+  const mark = (r, m) => ({ ...r, mark: m });
+  const norm = { A: mark(await at(opts.norm.spec, 0), 'norm'), B: mark(await at(opts.norm.spec, 1), 'norm') };
+  let normLayout = null, normLayoutError = null;
+  try {
+    const ls = replayApplied(inferred.spec, applied);
+    normLayout = { A: mark(await at(ls, 0), 'normLayout'), B: mark(await at(ls, 1), 'normLayout') };
+  } catch (err) { normLayoutError = err.message; }
+  const report = await verifyScreenWithImages(browser, {
+    screen, spec: modelled.spec, proxy, layout, flags, norm: { spec: opts.norm.spec, applied, proxy: norm }, normLayout,
+  }, opts.verify || {});
+  if (normLayoutError) report.normLayoutError = normLayoutError;
+  return { report, proxy, layout, modelled, norm, normLayout };
+}
+
+// R66: apply-norm records written again (as auto entries) on another spec of the same screen (the inferred one): the
+// norm layout proxy. Throws like applyNorm when a record's `from` is not found.
+export function replayApplied(spec, applied) {
+  const byEntry = new Map();
+  for (const a of applied || []) {
+    const k = `${a.entry}|${a.cat}|${a.prop}|${JSON.stringify(a.from)}|${JSON.stringify(a.to)}`;
+    if (!byEntry.has(k)) byEntry.set(k, { id: a.entry, cat: a.cat, code: a.code, prop: a.prop, from: a.from, to: a.to, status: 'auto', nodes: [] });
+    byEntry.get(k).nodes.push({ screen: '_', node: a.node, ...(a.run !== undefined ? { run: a.run } : {}) });
+  }
+  return applyNorm(spec, [...byEntry.values()], '_').spec;
 }
 
 export function sampleIndexes(N, n) {
@@ -153,7 +188,9 @@ export function gate(report, allowlist = [], where = {}) {
     }
     return { open, allowed };
   };
-  const roots = split('root', report.roots.filter((r) => !r.explainedBy));
+  // R66: a norm root is explained by its report entry or not at all: an unexplained one is never allowlisted
+  const roots = split('root', report.roots.filter((r) => !r.explainedBy && r.layer !== 'norm'));
+  roots.open.push(...report.roots.filter((r) => !r.explainedBy && r.layer === 'norm'));
   const approvals = split('approval', report.needsApproval);
   const crops = split('crop', report.crop);
   // R44: a crop attached to an unexplained root passes or fails with that root's allowlist entry, never its own

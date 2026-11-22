@@ -1483,3 +1483,21 @@ test('R57 (probe-r49fill): a FILL item judged by the edge its row packs from; sh
   r = probe(tree3, both((b) => { b['n.0.0'][1] += 4; b['n.0.0'][3] -= 4; }), [{ id: 'n.0.0', kind: 'mixedRunHeight' }], spec3);
   assert.ok(!r.roots.some((x) => x.why.includes('y')), JSON.stringify(r.roots));
 });
+
+test('R57: in a space-between row the first FILL item is judged by its near edge, the last by its far edge', () => {
+  // sb row 300: a FILL 140 | b FILL 150 (source: 10px of free space between them)
+  const Fl = (id, sz, d, kids, sb) => ({ id, t: 'F', sz, lay: { d, pa: 'S', ca: 'S', p: [0, 0, 0, 0], ...(sb ? { sb: 1 } : { g: 0 }) }, kids });
+  const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 300, 40], rB: [0, 0, 300, 40], kids: [
+    { id: 'n.0.0', kind: 'frame', rA: [0, 0, 140, 40], rB: [0, 0, 140, 40] }, { id: 'n.0.1', kind: 'frame', rA: [150, 0, 150, 40], rB: [150, 0, 150, 40] }] }]);
+  const spec = Fl('n', ['FIXED', 'FIXED'], 'V', [Fl('n.0', ['FIXED', 'FIXED'], 'H', [F('n.0.0', ['FILL', 'FIXED']), F('n.0.1', ['FILL', 'FIXED'])], true)]);
+  const fl = [{ id: 'n.0.0', kind: 'shrink' }];
+  const x = (r, id) => r.roots.filter((q) => q.id === id && q.why.includes('x'));
+  // legit (corpus planora s11): a squeezed 40px, the spacing gone, b starts 50px earlier and keeps its far edge
+  let r = probe(tree, both((b) => { b['n.0.0'][2] -= 40; b['n.0.1'][0] -= 50; b['n.0.1'][2] += 50; }), fl, spec);
+  assert.deepEqual([...x(r, 'n.0.0'), ...x(r, 'n.0.1')], [], JSON.stringify(r.roots));
+  // a padding-left error absorbed by the first item, a padding-right error absorbed by the last: position roots
+  r = probe(tree, both((b) => { b['n.0.0'][0] += 10; b['n.0.0'][2] -= 10; }), fl, spec);
+  assert.ok(x(r, 'n.0.0').length && !x(r, 'n.0.0')[0].explainedBy, JSON.stringify(r.roots));
+  r = probe(tree, both((b) => { b['n.0.1'][2] -= 10; }), [{ id: 'n.0.1', kind: 'shrink' }], spec);
+  assert.ok(x(r, 'n.0.1').length && !x(r, 'n.0.1')[0].explainedBy, JSON.stringify(r.roots));
+});

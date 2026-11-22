@@ -57,8 +57,9 @@
 //   tol is a root. root.why lists the axes: x/y position, w/h size. R49: position and size are judged separately
 //   on each axis (a node off in size is still examined for position by its aligned edge), and a flag or an
 //   allowlist entry that covers a size never covers a position. R57: a FILL item on its flow container's main axis
-//   is aligned by that container's packing (start, space-between or none: near edge; end: far edge; centre:
-//   middle), not "stretched" (near or far): a padding error the FILL item absorbs moves its packed edge.
+//   is aligned by that container's packing (start or none: near edge; end: far edge; centre: middle; space-between:
+//   first item near, last item far, others near or far), not "stretched" (near or far): a padding error the FILL item
+//   absorbs moves its packed edge.
 //   Flags (R12, R17, R20, R22-R24): a flag explains only deviations it can cause, axis by axis (every axis in root.why
 //   must be covered). shrink: the item's own size on its container's main axis. weightedFill: main-axis SIZE of the
 //   FILL items of that container (never a position), only when the container's main size is ok or it is an explained
@@ -309,15 +310,21 @@ export function verifyScreen(input, opts = {}) {
       return al === 'S' || al === 'E' || al === 'C' ? al : null;
     };
     // R57: a stretched (FILL) item on its flow container's main axis is placed by the packing of that row / column:
-    // start-packed (or space-between, or no packing given) by its near edge, end-packed by its far edge, centred by its
-    // middle; never "near or far" (a padding error the FILL item absorbs moves its packed edge). Its own shrink /
+    // start-packed (or no packing given) by its near edge, end-packed by its far edge, centred by its middle, in
+    // space-between the first item by its near and the last by its far edge; never "near or far" (a padding error the FILL item absorbs moves its packed edge). Its own shrink /
     // weightedFill flag still explains only its size. Cross-axis stretch and absolute LR / TB pins stay 'X'.
     const posAlign = (id, ax) => {
       const al = alignOf(id, ax);
       if (al !== 'X') return al;
       const s = specById.get(id), c = specParent.get(id);
       if (!s || s.abs || !c || !c.lay || mainOf(c) !== ax) return al;
-      const pa = c.lay.sb ? 'S' : c.lay.pa;
+      if (c.lay.sb) {
+        // space-between places its first item at the start and its last at the end; the spacing between items
+        // legitimately changes (R28), so an item in the middle stays near-or-far
+        const ks = flowKids(c), i = ks.findIndex((k) => k.id === id);
+        return i === 0 ? 'S' : i === ks.length - 1 ? 'E' : al;
+      }
+      const pa = c.lay.pa;
       return pa === 'E' || pa === 'C' ? pa : 'S';
     };
     const posOK = (e, ax, withParentFar, strict = false) => {

@@ -54,7 +54,9 @@
 //      cross axis, only with unknown alignment, a later sibling without a size change there that sits only on the
 //      previous one's edges). The node's own size change counts the same way (by size, never by position).
 //   Small offsets cannot add up unseen: the first node whose offset exceeds tol while its references stayed within
-//   tol is a root. root.why lists the axes: x/y position, w/h size.
+//   tol is a root. root.why lists the axes: x/y position, w/h size. R49: position and size are judged separately
+//   on each axis (a node off in size is still examined for position by its aligned edge), and a flag or an
+//   allowlist entry that covers a size never covers a position.
 //   Flags (R12, R17, R20, R22-R24): a flag explains only deviations it can cause, axis by axis (every axis in root.why
 //   must be covered). shrink: the item's own size on its container's main axis. weightedFill: main-axis SIZE of the
 //   FILL items of that container (never a position), only when the container's main size is ok or it is an explained
@@ -513,9 +515,11 @@ export function verifyScreen(input, opts = {}) {
     for (const e of list) {
       if (!D.has(e.n.id) || !outside(e.n.id)) continue;
       const why = [];
+      // R49: position is checked per axis independently of size (by the aligned edge, R34/R35), so a size change,
+      // explained or not, never hides a displacement on that axis; both are listed when both fail
       for (const ax of [0, 1]) {
         if (!sizeOK(e, ax)) why.push(ax ? 'h' : 'w');
-        else if (!posOK(e, ax, true)) why.push(ax ? 'y' : 'x');
+        if (!posOK(e, ax, true)) why.push(ax ? 'y' : 'x');
       }
       if (!why.length) { followers++; continue; }
       const root = { id: e.n.id, width: M, delta: D.get(e.n.id), why };

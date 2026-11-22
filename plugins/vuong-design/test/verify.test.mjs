@@ -1272,3 +1272,41 @@ test('R43: many sub-tolModel model steps that add up beyond tolModel need approv
   // within tolModel 4 the same drift passes
   assert.deepEqual(probe(tree, (P) => { for (const M of ['A', 'B']) for (let i = 0; i < 10; i++) { P[M].boxes[`n.${i}`][1] += 0.4 * i; P[M].boxes[`n.${i}`][3] += 0.4; } }, [], spec, { tolModel: 4 }).needsApproval, []);
 });
+
+// ---- fix round 9: R49 (position is checked per axis independently of size) ----
+test('R49: a size-explained item also displaced on that axis is a position root (a size excuse never covers position)', () => {
+  // row 300 at x 0, padding-left 10: a FIXED 100 (shrink: source squeezed to 100, proxy 120) | gap 10 | b FIXED 60
+  const Fl = (id, sz, d, kids) => ({ id, t: 'F', sz, lay: { d, pa: 'S', ca: 'S', p: [0, 0, 0, 10], g: 10 }, kids });
+  const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 300, 40], rB: [0, 0, 300, 40], kids: [
+    { id: 'n.0.0', kind: 'frame', rA: [10, 0, 100, 40], rB: [10, 0, 100, 40] }, { id: 'n.0.1', kind: 'frame', rA: [120, 0, 60, 40], rB: [120, 0, 60, 40] }] }]);
+  const spec = Fl('n', ['FIXED', 'FIXED'], 'V', [Fl('n.0', ['FIXED', 'FIXED'], 'H', [F('n.0.0', ['FIXED', 'FIXED']), F('n.0.1', ['FIXED', 'FIXED'])])]);
+  const fl = [{ id: 'n.0.0', kind: 'shrink' }];
+  // legit: +20 wide, the next item pushed along
+  let r = probe(tree, both((b) => { b['n.0.0'][2] += 20; b['n.0.1'][0] += 20; }), fl, spec);
+  assert.equal(r.pass, true, JSON.stringify(r.roots));
+  // the same plus a padding-left error +10: the item's x is off on its own (start edge), not covered by shrink
+  r = probe(tree, both((b) => { b['n.0.0'][0] += 10; b['n.0.0'][2] += 20; b['n.0.1'][0] += 30; }), fl, spec);
+  const a = r.roots.find((x) => x.id === 'n.0.0' && x.width === 'A');
+  assert.ok(a && a.why.includes('w') && a.why.includes('x'), JSON.stringify(r.roots));
+  assert.ok(!a.explainedBy, JSON.stringify(a));
+  assert.equal(r.pass, false);
+  // control: the padding error alone
+  r = probe(tree, both((b) => { b['n.0.0'][0] += 10; b['n.0.1'][0] += 10; }), fl, spec);
+  assert.equal(r.pass, false);
+});
+
+test('R49: an absolute text whose width is off and that also moved 2px is a root on both w and x', () => {
+  // abs child L-constrained at x 50: width +5 (a text-size error) and x +2 (a constraint error)
+  const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 300, 40], rB: [0, 0, 300, 40], kids: [
+    { id: 'n.0.0', kind: 'text', rA: [50, 10, 20, 12], rB: [50, 10, 20, 12] }] }]);
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', [{ id: 'n.0', t: 'F', sz: ['FIXED', 'FIXED'], kids: [
+    { id: 'n.0.0', t: 'T', sz: ['HUG', 'HUG'], abs: { x: 50, y: 10, c: 'L' } }] }]);
+  let r = probe(tree, both((b) => { b['n.0.0'][2] += 5; }), [], spec);
+  assert.deepEqual(r.roots.map((x) => x.why.join(',')), ['w', 'w'], JSON.stringify(r.roots));
+  r = probe(tree, both((b) => { b['n.0.0'][0] += 2; b['n.0.0'][2] += 5; }), [], spec);
+  assert.deepEqual(r.roots.map((x) => x.why.join(',')), ['w,x', 'w,x'], JSON.stringify(r.roots));
+  // an R-constrained one keeps its far edge: growing leftwards is no position error
+  spec.kids[0].kids[0].abs.c = 'R';
+  r = probe(tree, both((b) => { b['n.0.0'][0] -= 5; b['n.0.0'][2] += 5; }), [], spec);
+  assert.deepEqual(r.roots.map((x) => x.why.join(',')), ['w', 'w'], JSON.stringify(r.roots));
+});

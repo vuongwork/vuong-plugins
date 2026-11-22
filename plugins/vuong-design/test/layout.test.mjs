@@ -280,3 +280,20 @@ test('report.html: an unexplained root gets source and layout-proxy crops side b
     assert.match(it, /at width (A|B) \(\d+(\.\d+)? px\)/);
   }
 });
+
+test('R49 (probe-r47): a moved % anchor is a position root on its child even when the child\'s width is off too', { skip }, async () => {
+  const { captureScreens } = await import('../core/capture.mjs');
+  const { inferScreen } = await import('../core/infer.mjs');
+  const { runScreen } = await import('../core/pipeline.mjs');
+  const screen = (await captureScreens(join(FIX, 'infer-percent.html'), { root: '.scr', fontMap: fm, webFonts: false, png: true })).screens[0];
+  const inf = inferScreen(screen);
+  const find = (s, id) => (s.id === id ? s : (s.kids || []).map((k) => find(k, id)).find(Boolean));
+  const anchor = find(inf.spec, 'n.7.g0'), badge = find(inf.spec, 'n.7.0');
+  assert.equal(anchor.syn, 'anchor');
+  // two planted errors: the anchor 2px right (constraint error) and the badge's right padding 3px larger (its own width is off)
+  anchor.abs.x += 2;
+  badge.lay = { ...badge.lay, p: badge.lay.p.map((v, i) => (i === 1 ? v + 3 : v)) };
+  const { report } = await runScreen(browser, screen, inf, fm, { proxy: { webFonts: false } });
+  const r = report.roots.filter((x) => x.id === 'n.7.0' && !x.explainedBy);
+  assert.ok(r.length && r.every((x) => x.why.includes('w') && x.why.includes('x')), JSON.stringify(report.roots));
+});

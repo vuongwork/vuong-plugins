@@ -5,7 +5,7 @@
 // inventory(screens: [{ screen: IR screen, spec: modelled SNode root }]) -> { uses: Use[], vars }
 //
 // Use = { screen, node, cat, prop, value, raw, role, token?, tokenMismatch?, tokens?, flex?, unparsed?, noise?, run?,
-//         rawCandidates?, sizes?, fixed?, img? }
+//         rawCandidates?, sizes?, fixed?, img?, box?, pill? }
 //  - screen: IR screen id (name when id is missing); node: SNode id (= source INode id unless synthetic).
 //  - cat / prop:
 //      color   bg | borderT|R|B|L (border colour per side) | color (text: node colour and each distinct run colour)
@@ -48,6 +48,11 @@
 //  - sizes (R65 input): [wA, hA, wB, hB] measured at widths A and B (IR rA / rB; rB missing = rA) on icon width /
 //    height uses and image size uses. Capture records no declared CSS size, so none is carried (normalize derives
 //    it, R65). fixed: on icon width / height uses, whether that spec axis is FIXED. img: true on image size uses.
+//  - box: [w, h] of the node in the modelled spec (width A) on radius uses (R70) and icon width / height uses (R71:
+//    normalize treats an svg whose larger side is over 32 px as an illustration).
+//  - pill (R70): true on a radius use whose value is at least half the node's smaller side (−0.01 px): the corner is
+//    a full round end, whatever the authored number (999px, 50%-like 14px on a 28px box). normalize keeps it (PILL),
+//    tokens put it under radius.full.
 //
 // role = `${cat}|${prop}|${sig(node)}|${sig(parent)}`, sig = tag + sorted classes joined with '.', state classes
 // dropped (is-*, active, selected, disabled, on). The parent is the source (DOM) parent from the IR, never a
@@ -270,7 +275,9 @@ function screenUses(screen, spec) {
       if (r === '0px' || r == null) return;
       const ok = /^-?[\d.]+px$/.test(String(r).trim());
       if (ok && num(r) === 0) return;
-      add('radius', 'radius' + CORNER[i], ok ? { value: num(r), raw: r } : { value: null, raw: r }, { token: tok.radius, unparsed: ok ? undefined : true });
+      const box = typeof sn.w === 'number' && typeof sn.h === 'number' ? [sn.w, sn.h] : undefined;
+      const pill = ok && box && num(r) >= Math.min(box[0], box[1]) / 2 - 0.01 ? true : undefined;
+      add('radius', 'radius' + CORNER[i], ok ? { value: num(r), raw: r } : { value: null, raw: r }, { token: tok.radius, unparsed: ok ? undefined : true, box, pill });
     });
     if (p.shadow) add('shadow', 'shadow', { value: p.shadow, raw: p.shadow }, { token: tok.shadow });
     if (typeof p.opacity === 'number') add('opacity', 'opacity', { value: p.opacity, raw: String(p.opacity) }, { token: tok.opacity });
@@ -294,8 +301,9 @@ function screenUses(screen, spec) {
     // ---- icons ----
     if (sn.t === 'V') {
       const sz = Array.isArray(sn.sz) ? sn.sz : ['FIXED', 'FIXED'];
-      addLen('icon', 'width', sn.w, tok.width, { sizes, fixed: sz[0] === 'FIXED' });
-      addLen('icon', 'height', sn.h, tok.height, { sizes, fixed: sz[1] === 'FIXED' });
+      const box = [sn.w, sn.h];
+      addLen('icon', 'width', sn.w, tok.width, { sizes, fixed: sz[0] === 'FIXED', box });
+      addLen('icon', 'height', sn.h, tok.height, { sizes, fixed: sz[1] === 'FIXED', box });
       const ic = sn.icon || {};
       if (ic.svg !== undefined || ic.ref !== undefined || ic.fill !== undefined || ic.stroke !== undefined) {
         if (ic.fill && ic.fill !== 'none' && !svgFillUnused(ic, screen)) addColor('fill', ic.fill, tok.fill);

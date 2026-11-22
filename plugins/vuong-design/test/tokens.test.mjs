@@ -229,3 +229,16 @@ test('R67: geometry noise (inventory noise: true) gets no primitive and no map e
   assert.equal(tokens.primitive.radius, undefined);
   assert.equal(map['s1|n1|space|paddingR'], undefined);
 });
+
+test('R70: pill radii share one primitive radius.full (9999 px) with a note', () => {
+  const inv = { vars: {}, uses: [use('radius', 'radiusTL', 99, 'span.chip|div.p', { node: 'p1', pill: true }), use('radius', 'radiusTL', 14, 'div.c|div.p', { node: 'p2', pill: true }),
+    use('radius', 'radiusTL', 8, 'div.d|div.p', { node: 'p3' })] };
+  const { tokens, map, css } = buildTokens(inv, []);
+  assert.deepEqual(Object.keys(tokens.primitive.radius), ['8', 'full']);
+  const f = tokens.primitive.radius.full;
+  assert.deepEqual(f.$value, { value: 9999, unit: 'px' });
+  assert.equal(f.$extensions['vuong-design'].uses, 2);
+  assert.equal(f.$extensions['vuong-design'].note, 'pill: ≥ half the smaller side');
+  assert.equal(map['s1|p1|radius|radiusTL'], 'primitive.radius.full');
+  assert.match(css, /--radius-full: 9999px;/);
+});

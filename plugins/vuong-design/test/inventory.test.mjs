@@ -270,3 +270,12 @@ test('M2-a: an svg root fill that is the initial black and reaches no shape give
   // a root fill that is not the initial black is always listed
   assert.deepEqual(mk({ ...black, fill: 'rgb(37, 99, 235)', svg: '<svg><g fill="none"><path d="M1 1"></path></g></svg>' }), [['fill', '#2563eb'], ['stroke', '#26335c']]);
 });
+
+test('R70 / R71: radius uses carry the node box at A and pill when radius >= half the smaller side; icon uses carry the box', () => {
+  const fx = fixture();
+  fx.spec.kids[0].paint = { ...fx.spec.kids[0].paint, radius: ['40px', '39.9px', '99px', '8px'] }; // card 358 x 80
+  const inv = inventory([fx]);
+  const r = Object.fromEntries(of(inv, '0.0', 'radius').map((u) => [u.prop, [u.box, u.pill]]));
+  assert.deepEqual(r, { radiusTL: [[358, 80], true], radiusTR: [[358, 80], undefined], radiusBR: [[358, 80], true], radiusBL: [[358, 80], undefined] });
+  assert.ok(of(inv, '0.1.2', 'icon').every((u) => JSON.stringify(u.box) === '[20,20]'));
+});

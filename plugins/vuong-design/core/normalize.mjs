@@ -74,6 +74,15 @@
 //                  size, so the declared size is taken to be the larger of the two measurements (flex-shrink only
 //                  shrinks; usually B, the wider) -> question `squash|<cat>|<from>|<proposal>` (options declared /
 //                  keep), proposal the larger size at both widths. An icon off 16/20/24 px reaches ICON_FRAME first.
+// R69: a number within 0.05 px of an integer counts as that integer for IN_SCALE, role majorities, GRID4 / ICON_FRAME
+// proposals, options and question keys (11.01 -> grid4|space|11|12; 12.02 is in scale). Entries keep the exact
+// `from` (apply-norm matches it ±0.01); `to` is the grid / frame value; the keep option is the integer. Values
+// further from an integer (131.14) are untouched by this rule. Per-role keys keep the exact value.
+// R70: a radius use marked `pill` by inventory (radius ≥ half the node's smaller side at A) is in scale, counted
+// PILL, never GRID4 or ROLE_MAJORITY; no entry (tokens give it radius.full).
+// R71: ICON_FRAME and icon ROLE_MAJORITY apply only to icons whose larger side (inventory box, else the value) is at
+// most 32 px. A larger svg is an illustration: kept, counted ILLUSTRATION, no question; SRC_SQUASH still applies
+// when its size differs between widths A and B.
 // Before every code: R67, a use marked `noise` by inventory (space / size / radius under 0.5 px, a rounding residue
 // of the measured geometry) is skipped and counted as NOISE; it never takes part in a role majority.
 // Not normalised in plan 2: shadow, opacity, icon glyph font size, type family / weight / style / letter spacing /
@@ -84,6 +93,9 @@ import { cmpNodeId } from './inventory.mjs';
 const EPS = 0.01;
 const SQUASH_PX = 0.75;
 const FRAMES = [16, 20, 24];
+const SNAP = 0.05; // R69
+const ICON_MAX = 32; // R71
+const snap = (v) => (Math.abs(v - Math.round(v)) <= SNAP + 1e-9 ? Math.round(v) : v);
 const GRID_CATS = new Set(['space', 'size', 'radius']);
 const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const r2 = (v) => Math.round(v * 100) / 100;
@@ -156,7 +168,7 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
   const stable = (u) => !Array.isArray(u.sizes) || Math.abs(u.sizes[axisOf(u)] - u.sizes[axisOf(u) + 2]) <= SQUASH_PX;
   const scaleValue = (u, v) => (u.cat === 'icon' ? inFrames(v) : u.cat === 'radius' ? v <= 2 || onGrid(v) : onGrid(v));
   const inScale = (u) => {
-    const v = u.value;
+    const v = snap(u.value);
     if (u.cat === 'border') return true;
     if (u.cat === 'radius' && v <= 2) return true;
     if (u.cat === 'size' && u.img) return stable(u);
@@ -166,7 +178,8 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
   const byRole = new Map();
   for (const u of numeric) if (typeof u.value === 'number' && !u.noise) {
     const m = byRole.get(u.role) || new Map();
-    m.set(u.value, (m.get(u.value) || 0) + 1);
+    const sv = snap(u.value);
+    m.set(sv, (m.get(sv) || 0) + 1);
     byRole.set(u.role, m);
   }
   const majorityOf = (role) => {
@@ -182,26 +195,29 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     if (typeof u.value !== 'number') { unparsed++; continue; }
     if (u.token) { keep('TOKEN'); continue; }
     if (u.cat === 'icon' && u.fixed === false) { keep('FLEX'); continue; }
-    if (inScale(u)) { keep('IN_SCALE'); continue; }
-    const v = u.value;
+    if (u.cat === 'radius' && u.pill) { keep('PILL'); continue; } // R70
+    const illustration = u.cat === 'icon' && snap(u.box ? Math.max(...u.box) : u.value) > ICON_MAX; // R71
+    if (illustration && stable(u)) { keep('ILLUSTRATION'); continue; }
+    if (!illustration && inScale(u)) { keep('IN_SCALE'); continue; }
+    const v = u.value, sv = snap(v);
     const base = { u, cat: u.cat, role: u.role, prop: u.prop, from: v, node: nodeOf(u, false) };
-    const majorityCat = GRID_CATS.has(u.cat) ? !(u.cat === 'size' && u.img) : u.cat === 'icon';
+    const majorityCat = GRID_CATS.has(u.cat) ? !(u.cat === 'size' && u.img) : u.cat === 'icon' && !illustration;
     if (majorityCat) {
       const maj = majorityOf(u.role);
-      if (maj !== null && Math.abs(maj - v) > EPS && scaleValue(u, maj)) { decide({ ...base, code: 'ROLE_MAJORITY', target: maj, auto: true }); continue; }
+      if (maj !== null && Math.abs(maj - sv) > EPS && scaleValue(u, maj)) { decide({ ...base, code: 'ROLE_MAJORITY', target: maj, auto: true }); continue; }
     }
     if (GRID_CATS.has(u.cat) && !(u.cat === 'size' && u.img)) {
-      const nb = grid4Of(v), p = nearest(v, nb);
-      const key = ask(`grid4|${u.cat}|${v}|${p}`, u.cat, 'GRID4',
-        (q) => `${u.cat} ${v} px (${roleSummary(q)}) is off the 4 px grid with no majority value in its role: use ${p} px?`,
-        [...nb, v], p);
-      decide({ ...base, code: 'GRID4', target: p, qkey: key, rkey: `grid4|${u.role}|${v}`, bulk: BULK.GRID4, keepOpt: v, map: (a) => Number(a) });
+      const nb = grid4Of(sv), p = nearest(sv, nb);
+      const key = ask(`grid4|${u.cat}|${sv}|${p}`, u.cat, 'GRID4',
+        (q) => `${u.cat} ${sv} px (${roleSummary(q)}) is off the 4 px grid with no majority value in its role: use ${p} px?`,
+        [...nb, sv], p);
+      decide({ ...base, code: 'GRID4', target: p, qkey: key, rkey: `grid4|${u.role}|${v}`, bulk: BULK.GRID4, keepOpt: sv, map: (a) => Number(a) });
       continue;
     }
-    if (u.cat === 'icon' && !inFrames(v)) {
-      const p = nearest(v, FRAMES);
-      const key = ask(`icon|${v}`, 'icon', 'ICON_FRAME', `Icons drawn at ${v} px are not on a 16, 20 or 24 px frame: use ${p} px?`, [...FRAMES, v], p);
-      decide({ ...base, code: 'ICON_FRAME', target: p, qkey: key, bulk: BULK.ICON_FRAME, keepOpt: v, map: (a) => Number(a) });
+    if (u.cat === 'icon' && !illustration && !inFrames(sv)) {
+      const p = nearest(sv, FRAMES);
+      const key = ask(`icon|${sv}`, 'icon', 'ICON_FRAME', `Icons drawn at ${sv} px are not on a 16, 20 or 24 px frame: use ${p} px?`, [...FRAMES, sv], p);
+      decide({ ...base, code: 'ICON_FRAME', target: p, qkey: key, bulk: BULK.ICON_FRAME, keepOpt: sv, map: (a) => Number(a) });
       continue;
     }
     // unstable icon (in frames) or image: SRC_SQUASH (R65)

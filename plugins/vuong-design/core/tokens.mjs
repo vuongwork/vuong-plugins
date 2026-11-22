@@ -12,7 +12,8 @@
 //    primitive: color.cNN (by uses, descending, then hex), space.N, size.N (FIXED frame / image sizes and icon
 //      width / height), radius.N, border.N (stroke widths), shadow.sNN, opacity.N (percent), font.family.<name>,
 //      font.size.N (text and glyph-icon sizes), font.weight.N, font.lineHeight.N (px), font.letterSpacing.N (px),
-//      typography.t<size>-<weight> (composite). N = the px number, '.' written '_' and '-' written 'm' (11.5 -> 11_5).
+//      typography.t<size>-<weight> (composite). R70: every pill radius (inventory `pill`) goes to one primitive
+//      radius.full ($value 9999 px, $extensions note 'pill: ≥ half the smaller side'), whatever its authored value. N = the px number, '.' written '_' and '-' written 'm' (11.5 -> 11_5).
 //      Name collisions (two families or typography styles with the same name) get -2, -3 ... in sorted order (uses
 //      descending, then value).
 //      $type: color ($value { colorSpace: 'srgb', components, alpha?, hex }), dimension ({ value, unit: 'px' }),
@@ -46,6 +47,7 @@ const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const r2 = (v) => Math.round(v * 100) / 100;
 const r4 = (v) => Math.round(v * 10000) / 10000;
 const VD = 'vuong-design';
+const PILL_PX = 9999; // R70: radius.full
 
 export const numName = (v) => String(r2(v)).replace('-', 'm').replace('.', '_');
 export const useKey = (u) => `${u.screen}|${u.node}|${u.cat}|${u.prop}${u.run !== undefined ? `|${u.run}` : ''}`;
@@ -189,6 +191,7 @@ export function buildTokens(inv, entries = [], names = {}) {
     const { value, by } = normValue(u, idx);
     let k = null;
     if (u.cat === 'color' && typeof value === 'string') k = addPrim('color', value, u);
+    else if (u.cat === 'radius' && u.pill) k = addPrim('radius', PILL_PX, u, { pill: true }); // R70
     else if ((u.cat === 'space' || u.cat === 'size' || u.cat === 'radius' || u.cat === 'border') && typeof value === 'number') k = addPrim(u.cat, value, u);
     else if (u.cat === 'icon' && typeof value === 'number') k = addPrim(u.prop === 'fontSize' ? 'font.size' : 'size', value, u);
     else if (u.cat === 'opacity' && typeof value === 'number') k = addPrim('opacity', value, u);
@@ -231,7 +234,7 @@ export function buildTokens(inv, entries = [], names = {}) {
       }
     } else {
       list.sort((a, b) => a.value - b.value);
-      list.forEach((p) => { p.path = `primitive.${cat}.${numName(cat === 'opacity' ? p.value * 100 : p.value)}`; });
+      list.forEach((p) => { p.path = `primitive.${cat}.${p.pill ? 'full' : numName(cat === 'opacity' ? p.value * 100 : p.value)}`; });
     }
     order.push(...list);
   }
@@ -292,6 +295,7 @@ export function buildTokens(inv, entries = [], names = {}) {
     const ext = { uses: p.uses.length, nodes: ns.nodes, screens: ns.screens };
     const merged = [...p.merged.values()].sort((a, b) => cmpStr(JSON.stringify(a.from), JSON.stringify(b.from)) || cmpStr(a.code, b.code));
     if (merged.length) ext.merged = merged;
+    if (p.pill) ext.note = 'pill: ≥ half the smaller side';
     const t = { path: p.path, named: false, ext, $description: describe(p.uses) };
     const v = p.value;
     switch (p.cat) {

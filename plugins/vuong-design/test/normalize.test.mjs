@@ -317,3 +317,42 @@ test('R68: icon frames group by size across roles; project.iconFrame accept-all 
   assert.deepEqual([...new Set(only(r, 'ICON_FRAME').map((e) => `${e.from}->${e.to}:${e.status}`))], ['18->20:answered']);
   assert.equal(r.counts.ICON_FRAME, 2);
 });
+
+test('R69: a value within 0.05 px of an integer counts as that integer for scale, majority and grouping; from stays exact', () => {
+  const r = N([pad(11.01, { node: 'a' }), pad(11, { node: 'b' }), use('space', 'gap', 10.98, 'div.y|div.p', { node: 'c' }), pad(12.02, { node: 'd' }),
+    pad(131.14, { node: 'e' }), pad(13.03, { node: 'f', role: 'space|paddingT|div.z|div.p' })]);
+  assert.equal(r.counts.IN_SCALE, 1); // 12.02
+  const q11 = r.questions.find((q) => q.key === 'grid4|space|11|12');
+  assert.deepEqual([q11.affects, q11.options], [3, [8, 12, 11]]);
+  assert.ok(r.questions.some((q) => q.key === 'grid4|space|131.14|132'));
+  assert.ok(r.questions.some((q) => q.key === 'grid4|space|13|12'));
+  assert.deepEqual(only(r, 'GRID4').filter((e) => e.question === 'grid4|space|11|12').map((e) => e.from).sort(), [10.98, 11, 11.01]);
+  // answered: the exact from is kept, to is the grid value; answering the integer itself keeps
+  let a = N([pad(11.01, { node: 'a' })], { 'grid4|space|11|12': 12 });
+  assert.deepEqual(a.entries.map((e) => [e.from, e.to, e.status]), [[11.01, 12, 'answered']]);
+  a = N([pad(11.01, { node: 'a' })], { 'grid4|space|11|12': 11 });
+  assert.deepEqual([a.entries.length, a.counts.GRID4], [0, 1]);
+  // majority: 12, 12.01, 11.99 and 13 in one role -> 13 moves to 12; the near-integers are in scale
+  const m = N([pad(12, { node: 'a' }), pad(12.01, { node: 'b' }), pad(11.99, { node: 'c' }), pad(13, { node: 'd' })]);
+  assert.deepEqual(m.entries.map((e) => [e.code, e.from, e.to]), [['ROLE_MAJORITY', 13, 12]]);
+  assert.equal(m.counts.IN_SCALE, 3);
+});
+
+test('R70: a pill radius (inventory pill) is in scale, counted PILL, never GRID4', () => {
+  const r = N([use('radius', 'radiusTL', 99, 'span.chip|div.p', { pill: true, box: [60, 24] }), use('radius', 'radiusTL', 14, 'div.c|div.p', { pill: true, box: [28, 28] }),
+    use('radius', 'radiusTL', 14, 'div.d|div.p', { box: [100, 40] })]);
+  assert.equal(r.counts.PILL, 2);
+  assert.deepEqual(r.entries.map((e) => [e.code, e.from, e.role]), [['GRID4', 14, 'radius|radiusTL|div.d|div.p']]);
+});
+
+test('R71: svgs larger than 32 px are illustrations: no ICON_FRAME, no majority, counted ILLUSTRATION; SRC_SQUASH still applies', () => {
+  const ic = (prop, v, o = {}) => use('icon', prop, v, 'svg.art|div.p', { fixed: true, ...o });
+  const r = N([ic('width', 200, { box: [200, 180], node: 'a' }), ic('height', 180, { box: [200, 180], node: 'a' }),
+    ic('width', 33, { box: [33, 20], node: 'b' }), ic('height', 20, { box: [33, 20], node: 'b' }),
+    ic('width', 21, { box: [21, 21], node: 'c', role: 'icon|width|svg.i|div.p' }),
+    ic('width', 90, { box: [90, 90], node: 'd', sizes: [80, 80, 90, 90] })]);
+  assert.equal(r.counts.ILLUSTRATION, 4); // 200 x 180 and 33 x 20: the node is an illustration, both axes
+  assert.equal(r.counts.IN_SCALE, undefined);
+  assert.deepEqual(r.entries.map((e) => [e.code, e.from, e.proposal]).sort(), [['ICON_FRAME', 21, 20], ['SRC_SQUASH', 90, 90]]);
+  assert.ok(!r.questions.some((q) => q.key === 'icon|200' || q.key === 'icon|33'));
+});

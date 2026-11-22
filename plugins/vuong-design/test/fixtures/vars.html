@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>vars</title>
+<style>
+  /* colours as hex, rgb() and a named keyword; lengths in px and rem */
+  :root { --bg: #FAFAFA; --fg: rgb(17,24,39); --accent: royalblue; --line: #e5e7eb; --s: 0.75rem; --r: 8px; --pad: 12px; --gap: 6px; --fw: bold; --same: royalblue; }
+  body { margin: 0; font-family: Arial, sans-serif; }
+  .scr { width: 300px; height: 500px; background: var(--bg); color: var(--fg); padding: var(--pad); }
+  .card { background-color: var(--accent); border: 1px solid var(--line); border-radius: var(--r); padding: var(--s) 4px; }
+  .dark { --fg: #ffffff; color: var(--fg); background: #111111; }
+  .t { margin: 0; font-weight: var(--fw); }
+  .over { color: var(--accent); }
+  .scr .over { color: #ff0000; }
+  .calc { padding: calc(var(--s) * 2); }
+  .row { display: flex; gap: var(--gap); }
+  .row > i { display: block; width: 10px; height: 10px; background: var(--same); }
+  .row > i.k { background: var(--accent); }
+  .ico { display: block; width: 16px; height: 16px; fill: var(--accent); }
+</style>
+</head>
+<body>
+<div class="scr">
+  <div class="card">Card</div>
+  <div class="dark"><p class="t">Dark</p></div>
+  <div class="over">Over</div>
+  <div class="calc">Calc</div>
+  <div class="row"><i></i><i class="k"></i></div>
+  <svg class="ico" viewBox="0 0 16 16"><path d="M0 0h16v16H0z"/></svg>
+</div>
+</body>
+</html>

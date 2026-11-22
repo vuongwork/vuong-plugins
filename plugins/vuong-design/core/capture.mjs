@@ -16,6 +16,19 @@
 // opts.lineHeightOverride (default true, R14): text-bearing elements with line-height 'normal' get an explicit px
 //   line-height equal to their measured single-line height before measuring (Figma has no 'normal', and glyphs sit
 //   differently under 'normal' than under the same explicit value). screen.norm = { lineHeight: elements changed }.
+// R62 (CSS custom properties, read at width A only): screen.vars = { '--name': { value, uses } } for every custom
+//   property the page's readable CSS declares (rules, @property, inline style attributes; never the browser's),
+//   value = computed at :root (trimmed, '' when only declared lower down), uses = token props in this screen's IR
+//   naming it. INode.tok = { [prop]: '--name' }, prop ∈ bg, color, borderT|R|B|L (colour), radius (all four corners),
+//   shadow, fontSize, fontFamily, fontWeight, lineHeight, letterSpacing, paddingT|R|B|L, gap (row or column), width,
+//   height, opacity, fill, stroke. Set only when a var() declaration (longhand or shorthand; media must match now)
+//   applies to the element and the var's value there, normalised on a probe (isolated shadow root, the element's
+//   font-size and color) as that computed property, equals the element's computed value; the cascade winner
+//   (important, inline, specificity, order) among passing names is used. Inherited props (text, fill, stroke) take
+//   the parent's token when the computed value is the parent's. Frames carry box tokens; text nodes also text
+//   tokens; icons also color/fill/stroke/fontSize. var() inside a function or a fallback → no token, counted in
+//   screen.varsComplex (declarations hit in the screen); unreadable non-font sheets → screen.varsUnreadable.
+//   Pseudo-element rules (::before/::after) and nested style rules are not read (a pseudo inherits its host's).
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -77,7 +90,7 @@ export function chooseWiden(W, bps, requested = 120) {
 
 // ---------------- in-page measurement (serialised into the page; must be self-contained) ----------------
 
-function measurePage({ rootSel, widenSel, extras, nameOf }) {
+function measurePage({ rootSel, widenSel, extras, nameOf, vars: wantVars }) {
   let roots;
   try { roots = [...document.querySelectorAll(rootSel)]; } catch (e) { return { badSelector: String(e.message || e) }; }
   if (!roots.length) return { count: 0 };
@@ -88,26 +101,119 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
   const FONT_HOST = /^https?:\/\/(fonts\.googleapis\.com|fonts\.bunny\.net|use\.typekit\.net|fonts\.cdnfonts\.com|api\.fontshare\.com)\//;
   const fontCss = { links: [], faces: [] };
   const fontLink = (href) => { if (href && FONT_HOST.test(href) && !fontCss.links.includes(href)) fontCss.links.push(href); };
-  const scanRules = (rules, base) => {
+  // R62: custom properties declared by the page (varNames) and var() declarations of token props (varRules), read
+  // in the same CSSOM walk; style rules under a media query that does not match now are skipped
+  const varNames = new Set(); const varRules = []; let varsUnreadable = 0;
+  const matchesMedia = (m) => !m || !m.mediaText || matchMedia(m.mediaText).matches;
+  const scanRules = (rules, base, live = true) => {
     for (const r of rules) {
       if (r instanceof CSSMediaRule) mediaTexts.push(r.media.mediaText);
       if (r instanceof CSSImportRule) {
         if (r.media) mediaTexts.push(r.media.mediaText);
         fontLink(new URL(r.href, base).href);
-        if (r.styleSheet) readSheet(r.styleSheet);
+        if (r.styleSheet) readSheet(r.styleSheet, live && matchesMedia(r.media));
       }
       if (r instanceof CSSFontFaceRule) {
         fontCss.faces.push(r.cssText.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/g, (m, q, u) => `url("${new URL(u, base).href}")`));
       }
-      if (r.cssRules) scanRules(r.cssRules, base);
+      if (wantVars) {
+        if (r instanceof CSSStyleRule) varDecls(r.style, r.selectorText, live, varRules.length);
+        else if (typeof CSSPropertyRule !== 'undefined' && r instanceof CSSPropertyRule) varNames.add(r.name);
+      }
+      // nested style rules (relative selectors) are not read for var() uses
+      if (r.cssRules) scanRules(r.cssRules, base, live && !(r instanceof CSSStyleRule) && (!(r instanceof CSSMediaRule) || matchesMedia(r.media)));
     }
   };
-  const readSheet = (s) => {
+  const readSheet = (s, live = true) => {
     if (s.media && s.media.mediaText) mediaTexts.push(s.media.mediaText);
     fontLink(s.href);
-    try { scanRules(s.cssRules, s.href || document.baseURI); } catch { unreadable.push(s.href || '(inline)'); }
+    try { scanRules(s.cssRules, s.href || document.baseURI, live && !s.disabled && matchesMedia(s.media)); } catch {
+      unreadable.push(s.href || '(inline)');
+      if (!(s.href && FONT_HOST.test(s.href))) varsUnreadable++;
+    }
   };
+  // R62 token props: IR key -> [computed longhand(s) compared, declared properties (longhand or shorthand) whose
+  // var() can set it]. Physical sides assume horizontal-tb ltr.
+  const TOK = {
+    bg: [['background-color'], ['background-color', 'background']], color: [['color'], ['color']],
+    borderT: [['border-top-color'], ['border-top-color', 'border-color', 'border-top', 'border-block-start', 'border-block', 'border']],
+    borderR: [['border-right-color'], ['border-right-color', 'border-color', 'border-right', 'border-inline-end', 'border-inline', 'border']],
+    borderB: [['border-bottom-color'], ['border-bottom-color', 'border-color', 'border-bottom', 'border-block-end', 'border-block', 'border']],
+    borderL: [['border-left-color'], ['border-left-color', 'border-color', 'border-left', 'border-inline-start', 'border-inline', 'border']],
+    radius: [['border-top-left-radius', 'border-top-right-radius', 'border-bottom-right-radius', 'border-bottom-left-radius'], ['border-radius']],
+    shadow: [['box-shadow'], ['box-shadow']],
+    fontSize: [['font-size'], ['font-size', 'font']], fontFamily: [['font-family'], ['font-family', 'font']],
+    fontWeight: [['font-weight'], ['font-weight', 'font']], lineHeight: [['line-height'], ['line-height', 'font']],
+    letterSpacing: [['letter-spacing'], ['letter-spacing']],
+    paddingT: [['padding-top'], ['padding-top', 'padding-block-start', 'padding-block', 'padding']],
+    paddingR: [['padding-right'], ['padding-right', 'padding-inline-end', 'padding-inline', 'padding']],
+    paddingB: [['padding-bottom'], ['padding-bottom', 'padding-block-end', 'padding-block', 'padding']],
+    paddingL: [['padding-left'], ['padding-left', 'padding-inline-start', 'padding-inline', 'padding']],
+    gap: [['column-gap', 'row-gap'], ['gap', 'column-gap', 'row-gap']],
+    width: [['width'], ['width']], height: [['height'], ['height']], opacity: [['opacity'], ['opacity']],
+    fill: [['fill'], ['fill']], stroke: [['stroke'], ['stroke']],
+  };
+  const TOK_DECL = [...new Set(Object.values(TOK).flatMap((t) => t[1]))];
+  const ANY_OF = new Set(['gap']); // equal to any one computed longhand (the others: to all of them)
+  const TEXT_TOK = ['color', 'fontSize', 'fontFamily', 'fontWeight', 'lineHeight', 'letterSpacing'];
+  const ICON_TOK = ['color', 'fill', 'stroke', 'fontSize'];
+  const INHERITED_TOK = new Set([...TEXT_TOK, 'fill', 'stroke']);
+  const BOX_TOK = Object.keys(TOK).filter((k) => !INHERITED_TOK.has(k));
+  // var() uses in a declared value: simple names, or complex (a var inside a function, or nested in a fallback)
+  const varsIn = (v) => {
+    const names = []; let complex = false; const stack = [];
+    for (let i = 0; i < v.length; i++) {
+      const ch = v[i];
+      if (ch === '(') {
+        const fn = (/([\w-]*)$/.exec(v.slice(0, i)) || ['', ''])[1].toLowerCase();
+        if (fn === 'var' && !stack.length) {
+          let d = 1, j = i + 1;
+          for (; j < v.length && d; j++) { if (v[j] === '(') d++; else if (v[j] === ')') d--; }
+          const inner = v.slice(i + 1, j - 1); const c = inner.indexOf(',');
+          if (c >= 0 && /var\(/i.test(inner.slice(c))) complex = true;
+          names.push((c >= 0 ? inner.slice(0, c) : inner).trim());
+          i = j - 1; continue;
+        }
+        if (fn === 'var') complex = true;
+        stack.push(fn);
+      } else if (ch === ')') stack.pop();
+    }
+    return { names, complex };
+  };
+  // specificity of a selector (approximate: :is/:not/:has count as one pseudo-class)
+  const splitTop = (s) => {
+    const out = []; let d = 0, st = 0;
+    for (let i = 0; i < s.length; i++) { const c = s[i]; if (c === '(' || c === '[') d++; else if (c === ')' || c === ']') d--; else if (c === ',' && !d) { out.push(s.slice(st, i)); st = i + 1; } }
+    out.push(s.slice(st)); return out.map((x) => x.trim()).filter(Boolean);
+  };
+  const specOf = (s) => {
+    s = s.replace(/:where\([^)]*\)/g, '');
+    const a = (s.match(/#[\w-]+/g) || []).length;
+    const b = (s.match(/\.[\w-]+|\[[^\]]*\]|:[\w-]+/g) || []).length;
+    const c = (s.replace(/\[[^\]]*\]|\([^)]*\)/g, '').match(/(^|[\s>+~])[a-zA-Z][\w-]*/g) || []).length;
+    return a * 1e6 + b * 1e3 + c;
+  };
+  function varDecls(style, sel, live, order, inlineEl = null) {
+    for (let i = 0; i < style.length; i++) if (style[i].startsWith('--')) varNames.add(style[i]);
+    if (!live) return;
+    const decls = [];
+    for (const p of TOK_DECL) {
+      const v = style.getPropertyValue(p);
+      if (!v || !/var\(/i.test(v)) continue;
+      decls.push({ p, ...varsIn(v), imp: style.getPropertyPriority(p) === 'important' });
+    }
+    if (decls.length) varRules.push({ sel, decls, order, inlineEl, parts: sel ? splitTop(sel) : null });
+  }
+
   for (const s of document.styleSheets) readSheet(s);
+  if (wantVars) {
+    // inline style attributes of the screens and their ancestors (read before any capture edit adds inline styles)
+    const seen = new Set();
+    for (const r of roots) {
+      for (let a = r.parentElement; a; a = a.parentElement) if (!seen.has(a)) { seen.add(a); if (a.getAttribute('style')) varDecls(a.style, null, true, Infinity, a); }
+      for (const el of [r, ...r.querySelectorAll('[style]')]) if (!seen.has(el) && el.getAttribute('style')) { seen.add(el); varDecls(el.style, null, true, Infinity, el); }
+    }
+  }
 
   // 1. widen (second pass only)
   const targets = roots.map((r) => (widenSel ? r.closest(widenSel) : r));
@@ -427,6 +533,105 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
   const seg = (ch, i) => (ch.dataset?.pseudo ? (ch.dataset.pseudo === 'before' ? 'b' : 'a') : (origIdx.get(ch) ?? i));
   const clsOf = (el) => String(el.className?.baseVal ?? el.className ?? '').replace(/__pz[ab]/g, '').trim();
 
+  // R62: which var() declarations apply to which element (screens and their ancestors only), with cascade rank
+  // [important, inline, specificity, source order]; complex declarations are only counted
+  const tokCands = new Map(); const complexHits = [];
+  if (wantVars && varRules.length) {
+    const anc = new Set();
+    for (const r of roots) for (let a = r.parentElement; a; a = a.parentElement) anc.add(a);
+    const inScope = (el) => anc.has(el) || roots.some((r) => r.contains(el));
+    for (const vr of varRules) {
+      let hits = [];
+      if (vr.inlineEl) { if (inScope(vr.inlineEl)) hits = [[vr.inlineEl, 0]]; } else {
+        const found = new Set();
+        for (const r of roots) {
+          try { for (const el of r.querySelectorAll(vr.sel)) found.add(el); if (r.matches(vr.sel)) found.add(r); } catch { /* unsupported selector */ }
+        }
+        for (const a of anc) { try { if (a.matches(vr.sel)) found.add(a); } catch { /* unsupported selector */ } }
+        for (const el of found) {
+          let best = -1;
+          for (const part of vr.parts) { try { if (el.matches(part)) best = Math.max(best, specOf(part)); } catch { /* skip */ } }
+          if (best >= 0) hits.push([el, best]);
+        }
+      }
+      for (const d of vr.decls) {
+        if (d.complex) { for (const [el] of hits) complexHits.push([d, el]); continue; }
+        const keys = Object.keys(TOK).filter((k) => TOK[k][1].includes(d.p));
+        for (const [el, spec] of hits) {
+          let m = tokCands.get(el); if (!m) tokCands.set(el, m = {});
+          const rank = [d.imp ? 1 : 0, vr.inlineEl ? 1 : 0, spec, vr.order];
+          for (const k of keys) for (const name of d.names) (m[k] ||= []).push({ name, rank });
+        }
+      }
+    }
+  }
+  // a var's value normalised as a computed value of prop: set on a probe in an isolated shadow root (no page CSS)
+  // with the element's font-size (em) and color (currentColor), read back computed
+  const normCache = new Map();
+  const normVal = (prop, value, cs) => {
+    const key = `${prop}|${value}|${cs.fontSize}|${cs.color}`;
+    if (normCache.has(key)) return normCache.get(key);
+    const host = document.createElement('div');
+    host.style.cssText = 'all:initial;position:absolute;left:-99999px;top:0';
+    document.documentElement.appendChild(host);
+    const pr = document.createElement('div');
+    host.attachShadow({ mode: 'open' }).appendChild(pr);
+    pr.style.cssText = `position:absolute;font-size:${cs.fontSize};color:${cs.color}`;
+    pr.style.setProperty(prop, value);
+    const out = pr.style.getPropertyValue(prop) === '' ? null : getComputedStyle(pr).getPropertyValue(prop);
+    host.remove();
+    normCache.set(key, out);
+    return out;
+  };
+  const tokMatch = (k, name, cs) => {
+    const raw = cs.getPropertyValue(name).trim();
+    if (!raw) return false;
+    const longs = TOK[k][0];
+    const nv = normVal(longs[0], raw, cs);
+    if (nv == null) return false;
+    const vals = longs.map((p) => cs.getPropertyValue(p));
+    return ANY_OF.has(k) ? vals.includes(nv) : vals.every((v) => v === nv);
+  };
+  const cmpRank = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return b[i] - a[i]; return 0; };
+  // every token prop of an element: its own winning var() whose value equals the computed value, else (inherited
+  // props) the parent's token when the computed value is the parent's
+  const tokCache = new Map();
+  const tokOf = (el) => {
+    if (!el || el.nodeType !== 1) return null;
+    if (tokCache.has(el)) return tokCache.get(el);
+    const cs = getComputedStyle(el); const out = {};
+    const m = tokCands.get(el);
+    if (m) for (const k of Object.keys(m)) {
+      const list = [...m[k]].sort((a, b) => cmpRank(a.rank, b.rank));
+      const hit = list.find((c) => tokMatch(k, c.name, cs));
+      if (hit) out[k] = hit.name;
+    }
+    const pt = tokOf(el.parentElement);
+    if (pt) {
+      const pcs = getComputedStyle(el.parentElement);
+      for (const k of INHERITED_TOK) {
+        if (!out[k] && pt[k] && TOK[k][0].every((p) => cs.getPropertyValue(p) === pcs.getPropertyValue(p))) out[k] = pt[k];
+      }
+    }
+    const res = Object.keys(out).length ? out : null;
+    tokCache.set(el, res);
+    return res;
+  };
+  const pickTok = (t, keys) => {
+    if (!t) return null;
+    const o = {}; for (const k of keys) if (t[k]) o[k] = t[k];
+    return Object.keys(o).length ? o : null;
+  };
+  // frames carry box tokens, text nodes also text tokens, icons also paint tokens; a frame's own text child ('.t')
+  // gets the text tokens
+  const attachTok = (n, el) => {
+    const t = tokOf(el); if (!t) return;
+    const own = pickTok(t, [...BOX_TOK, ...(n.runs ? TEXT_TOK : n.kind === 'icon' ? ICON_TOK : [])]);
+    if (own) n.tok = own;
+    const k0 = n.kids && n.kids[0];
+    if (k0 && k0.id === n.id + '.t') { const tt = pickTok(t, TEXT_TOK); if (tt) k0.tok = tt; }
+  };
+
   const screens = roots.map((root) => {
     const R = root.getBoundingClientRect();
     const rel = (b) => [rnd(b.left - R.left), rnd(b.top - R.top), rnd(b.width), rnd(b.height)];
@@ -525,6 +730,7 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
       const res = walkEl(el, id, clip, inHidden);
       if (res && !Array.isArray(res) && flexItem.has(el)) res.flex = flexItem.get(el);
       if (res && !Array.isArray(res)) { const pc = authoredPct(el); if (pc) res.pct = pc; }
+      if (wantVars && res && !Array.isArray(res)) attachTok(res, el);
       return res;
     };
     const walkEl = (el, id, clip, inHidden) => {
@@ -616,7 +822,9 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
           const rb = rangeBox(ch, cs); if (!rb) return;
           const f = useFont(font(cs));
           const t = /pre/.test(cs.whiteSpace) ? ch.textContent : ch.textContent.replace(/\s+/g, ' ').trim();
-          out.push({ ...base(cid, 'text', '#text', '', rb.box, {}), font: f, runs: [{ t }], lines: rb.lines, tw: rb.tw });
+          const tn = { ...base(cid, 'text', '#text', '', rb.box, {}), font: f, runs: [{ t }], lines: rb.lines, tw: rb.tw };
+          const tt = wantVars && pickTok(tokOf(el), TEXT_TOK); if (tt) tn.tok = tt;
+          out.push(tn);
         } else if (ch.nodeType === 1) {
           if (ch.tagName === 'BR' || ch.tagName === 'STYLE' || ch.tagName === 'SCRIPT' || ch.tagName === 'TEMPLATE' || ch.tagName === 'HEAD') return;
           const ccs = getComputedStyle(ch);
@@ -655,9 +863,16 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
     // markup of every <symbol> (or other element) an icon of this screen references, for the proxy's sprite
     const svgDefs = {};
     for (const ref of iconRefs) { const d = document.getElementById(ref); if (d) svgDefs[ref] = d.outerHTML; }
-    return { W: rnd(R.width), H: rnd(R.height), tree, excluded, fonts: [...fonts], fontsRendered, name, svgDefs };
+    const cx = new Set(); for (const [d, el] of complexHits) if (root.contains(el)) cx.add(d);
+    return { W: rnd(R.width), H: rnd(R.height), tree, excluded, fonts: [...fonts], fontsRendered, name, svgDefs, varsComplex: cx.size };
   });
-  return { count: roots.length, screens, mediaTexts, unreadable, fontCss };
+  const out = { count: roots.length, screens, mediaTexts, unreadable, fontCss };
+  if (wantVars) {
+    const rcs = getComputedStyle(document.documentElement);
+    out.vars = Object.fromEntries([...varNames].map((k) => [k, rcs.getPropertyValue(k).trim()]));
+    out.varsUnreadable = varsUnreadable;
+  }
+  return out;
 }
 
 // ---------------- node side ----------------
@@ -987,6 +1202,7 @@ function mergeNode(a, mapB) {
   if (a.flex) n.flex = a.flex;
   if (a.pct) n.pct = a.pct;
   if (a.flexBox) n.flexBox = a.flexBox;
+  if (a.tok) n.tok = a.tok;
   if (a.kids) n.kids = a.kids.map((k) => mergeNode(k, mapB));
   return n;
 }
@@ -1001,7 +1217,7 @@ export async function captureScreens(htmlPath, opts = {}) {
   const abs = resolve(htmlPath);
   if (!existsSync(abs)) throw new Error(`không đọc được file HTML: ${abs}`);
   const url = pathToFileURL(abs).href;
-  const args = { rootSel: root, widenSel: widen || null, nameOf: nameOf || null, extras: null };
+  const args = { rootSel: root, widenSel: widen || null, nameOf: nameOf || null, extras: null, vars: true };
 
   const browser = await launchBrowser();
   try {
@@ -1032,7 +1248,7 @@ export async function captureScreens(htmlPath, opts = {}) {
     });
     const anyBound = bound.some(Boolean), anyFree = bound.some((b) => !b);
     const passB = async (forBound) => {
-      const res = await measure(browser, url, { ...args, extras: widens.map((w, i) => (bound[i] === forBound && !forBound ? w.by : 0)) },
+      const res = await measure(browser, url, { ...args, vars: false, extras: widens.map((w, i) => (bound[i] === forBound && !forBound ? w.by : 0)) },
         forBound ? viewport + boundWiden.by : viewport, png, fo, lho);
       if (res.count !== A.count) throw new Error(`số màn khác nhau giữa hai lần đo (${A.count} và ${res.count}) với selector "${root}"`);
       return res;
@@ -1072,9 +1288,17 @@ export async function captureScreens(htmlPath, opts = {}) {
         (n.kids || []).forEach(onlyB);
       };
       onlyB(sB.tree);
+      // R62: vars declared by the page, value at :root, uses = token props in this screen's IR naming it
+      const tree = mergeNode(sA.tree, mapB);
+      const uses = {};
+      const countTok = (n) => { for (const v of Object.values(n.tok || {})) uses[v] = (uses[v] || 0) + 1; (n.kids || []).forEach(countTok); };
+      countTok(tree);
+      const declared = A.vars || {};
+      const vars = Object.fromEntries([...new Set([...Object.keys(declared), ...Object.keys(uses)])].sort()
+        .map((k) => [k, { value: declared[k] ?? '', uses: uses[k] || 0 }]));
       return {
         id, name: sA.name || id, W: [r2(sA.W), r2(sB.W)], H: [r2(sA.H), r2(sB.H)], widen: widens[i],
-        tree: mergeNode(sA.tree, mapB), excluded, fonts: [...new Set([...sA.fonts, ...sB.fonts])], fontsRendered: { ...sA.fontsRendered, ...sB.fontsRendered },
+        tree, vars, varsComplex: sA.varsComplex || 0, varsUnreadable: A.varsUnreadable || 0, excluded, fonts: [...new Set([...sA.fonts, ...sB.fonts])], fontsRendered: { ...sA.fontsRendered, ...sB.fontsRendered },
         svgDefs: { ...sA.svgDefs, ...sB.svgDefs }, fontCss: A.fontCss,
         ...(png ? { png: [A.png[i], pngB(i)], origin: [A.origin[i], (bound[i] ? Bbound : Bfree).origin[i]] } : {}),
         ...(fo ? { fontSubs: subsOf(i) } : {}),

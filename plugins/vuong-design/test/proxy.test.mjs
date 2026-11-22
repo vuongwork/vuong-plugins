@@ -264,3 +264,22 @@ test('M7: renderProxy leaves no temp dir behind when the page cannot be opened',
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('R58 (probe-r55): an installed family without a bold / italic face is listed in facesMissing (Chrome would synthesise it)',
+  { skip: skip || (process.platform !== 'win32' && 'needs the Windows fonts Impact, Gabriola, Georgia, Arial, Courier New') }, async () => {
+    const run = async (fam, fw, fst) => {
+      const spec = structuredClone(CASES.baseline.spec);
+      const t = spec.kids[0];
+      t.font = { ...t.font, ff: fam, fw, fst };
+      const r = await renderProxy(browser, buildProxyHtml(spec, {}, defaultFontMap([fam]), OFFLINE), 300);
+      return r.facesMissing.filter((k) => k.startsWith(`${fam}|`));
+    };
+    // single-face families: the requested italic / bold face does not exist
+    assert.deepEqual(await run('Impact', '400', 'italic'), ['Impact|1|400']);
+    assert.deepEqual(await run('Impact', '700', 'normal'), ['Impact|0|700']);
+    assert.deepEqual(await run('Gabriola', '700', 'italic'), ['Gabriola|1|700']);
+    // real faces, including ones with the regular face's advance widths (Arial italic, monospace bold / italic)
+    for (const [fam, fw, fst] of [['Georgia', '700', 'italic'], ['Arial', '400', 'italic'], ['Arial', '700', 'normal'], ['Courier New', '700', 'italic']]) {
+      assert.deepEqual(await run(fam, fw, fst), [], `${fam} ${fw} ${fst}`);
+    }
+  });

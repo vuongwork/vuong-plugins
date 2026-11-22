@@ -261,6 +261,54 @@ export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
 
 const NO_TRANSFORM = '[data-id]{transform:none!important;translate:none!important;rotate:none!important;scale:none!important}';
 
+// R58: an installed family answers document.fonts.check and the width probe for any style, and Chrome synthesises a
+// missing bold / italic face. Each bold (>= 600) or italic face used is drawn with font-synthesis: none next to the
+// same text without that trait (italic: upright at the same weight; bold: weight 400 in the same style). A real face
+// changes the advance widths, or else (Arial italic, monospace bold / italic keep the regular widths) the pixels;
+// identical width and pixels mean Chrome fell back to the face without the trait: the face is missing. Runs after the
+// page screenshot, on a probe box that is removed again.
+async function synthesisedFaces(page, installed) {
+  if (!installed || !installed.length) return [];
+  const tests = await page.evaluate((list) => {
+    const box = document.createElement('div');
+    box.id = '__vd_fp';
+    box.style.cssText = 'position:absolute;left:0;top:0;z-index:2147483647;background:#fff;padding:4px;white-space:nowrap';
+    document.body.appendChild(box);
+    const out = [];
+    let k = 0;
+    const mk = (fam, st, wt) => {
+      const s = document.createElement('div');
+      s.id = `__vd_fp${k++}`;
+      s.style.cssText = `display:block;width:max-content;font-family:"${fam.replace(/["\\]/g, '\\$&')}",monospace;font-size:40px;line-height:56px;` +
+        `font-style:${st};font-weight:${wt};font-synthesis:none;font-kerning:none;color:#000;background:#fff`;
+      s.textContent = 'HamburgefonstivQ 0123';
+      box.appendChild(s);
+      return [s.id, s.getBoundingClientRect().width];
+    };
+    for (const [key, fam, ital, wt] of list) {
+      const req = mk(fam, ital ? 'italic' : 'normal', wt);
+      const without = [];
+      if (ital) without.push(mk(fam, 'normal', wt));
+      if (wt >= 600) without.push(mk(fam, ital ? 'italic' : 'normal', 400));
+      out.push([key, req, without]);
+    }
+    return out;
+  }, installed);
+  const shot = (id) => page.locator(`#${id}`).screenshot({ animations: 'disabled' });
+  const missing = [];
+  try {
+    for (const [key, [rid, rw], without] of tests) {
+      for (const [id, w] of without) {
+        if (Math.abs(rw - w) > 0.01) continue;
+        if (Buffer.compare(await shot(rid), await shot(id)) === 0) { missing.push(key); break; }
+      }
+    }
+  } finally {
+    await page.evaluate(() => document.getElementById('__vd_fp').remove());
+  }
+  return missing;
+}
+
 // opts.origin = [fx, fy] (screen.origin[i] from capture): the root is placed at that fractional page offset, as in
 // the source screenshot. Glyphs snap to the pixel grid in page coordinates, so without it text lands up to ~1.5px
 // off in the PNG. Boxes stay relative to the root and are unaffected.
@@ -320,13 +368,16 @@ export async function renderProxy(browser, html, width, opts = {}) {
         return w >= lo && w <= hi && (ital ? /italic|oblique/.test(f.style) : !/italic|oblique/.test(f.style));
       };
       const probeSt = (st, fam, fb) => { ctx.font = `${st} 72px "${fam}", ${fb}`; const a = ctx.measureText('mmmmmmmmmmlli1WÀỆ').width; ctx.font = `${st} 72px ${fb}`; return a !== ctx.measureText('mmmmmmmmmmlli1WÀỆ').width; };
+      const installed = []; // R58: installed-family bold / italic faces to test for synthesis after the screenshot
       const facesMissing = (document.querySelector('meta[name="vd-faces"]').content || '').split(';').filter(Boolean).filter((key) => {
         const [fam, i, w] = key.split('|'), ital = i === '1', wt = Number(w);
         if (fontsMissing.includes(fam)) return false;
         const own = faces.filter((x) => x.family.replace(/^["']|["']$/g, '') === fam);
         if (own.length) return !own.some((x) => x.status === 'loaded' && covers(x, ital, wt));
         const st = `${ital ? 'italic ' : ''}${wt}`;
-        return !(document.fonts.check(`${st} 16px "${fam}"`) && (probeSt(st, fam, 'monospace') || probeSt(st, fam, 'serif')));
+        const miss = !(document.fonts.check(`${st} 16px "${fam}"`) && (probeSt(st, fam, 'monospace') || probeSt(st, fam, 'serif')));
+        if (!miss && (ital || wt >= 600)) installed.push([key, fam, ital, wt]);
+        return miss;
       });
       // what the page really rendered, per node (verify layer 3): text of leaves (runs, <br> = space), icon reference,
       // computed colour / background colour / first font family
@@ -398,10 +449,11 @@ export async function renderProxy(browser, html, width, opts = {}) {
         dom[el.dataset.id] = o;
       }
       document.getElementById('__vd_nt').remove();
-      return { boxes, fontsMissing, facesMissing, dom };
+      return { boxes, fontsMissing, facesMissing, dom, installed };
     });
     const png = await page.locator('[data-root]').screenshot({ animations: 'disabled' });
-    return { boxes: res.boxes, png, fontsMissing: res.fontsMissing, facesMissing: res.facesMissing, dom: res.dom, model };
+    const facesMissing = [...res.facesMissing, ...(await synthesisedFaces(page, res.installed))];
+    return { boxes: res.boxes, png, fontsMissing: res.fontsMissing, facesMissing, dom: res.dom, model };
   } finally {
     await page.close();
     if (dir) rmSync(dir, { recursive: true, force: true });

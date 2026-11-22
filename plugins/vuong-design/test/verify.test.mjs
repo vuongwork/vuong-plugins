@@ -1501,3 +1501,34 @@ test('R57: in a space-between row the first FILL item is judged by its near edge
   r = probe(tree, both((b) => { b['n.0.1'][2] -= 10; }), [{ id: 'n.0.1', kind: 'shrink' }], spec);
   assert.ok(x(r, 'n.0.1').length && !x(r, 'n.0.1')[0].explainedBy, JSON.stringify(r.roots));
 });
+
+// ---------------- R60 (a row with a FILL main-axis item: packing is irrelevant) ----------------
+test('R60 (probe-r60): FILL items are judged like space-between whatever the packing; last by far edge, sole by both', () => {
+  const Fl = (id, sz, d, kids) => ({ id, t: 'F', sz, lay: { d, pa: 'S', ca: 'S', p: [10, 10, 10, 10], g: 10 }, kids });
+  const pos = (r, id, a) => r.roots.filter((q) => q.id === id && q.why.includes(a) && !q.explainedBy);
+  // horizontal, start-packed row 300 (padding 10): b FIXED 60 | gap 10 | a FILL 210 (flagged shrink)
+  const tree = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 300, 60], rB: [0, 0, 300, 60], kids: [
+    { id: 'n.0.0', kind: 'frame', rA: [10, 10, 60, 40], rB: [10, 10, 60, 40] }, { id: 'n.0.1', kind: 'frame', rA: [80, 10, 210, 40], rB: [80, 10, 210, 40] }] }]);
+  const spec = Fl('n', ['FIXED', 'FIXED'], 'V', [Fl('n.0', ['FIXED', 'FIXED'], 'H', [F('n.0.0', ['FIXED', 'FIXED']), F('n.0.1', ['FILL', 'FIXED'])])]);
+  // planted: padding-right 20 instead of 10, absorbed by the last FILL item (far edge -10)
+  let r = probe(tree, both((b) => { b['n.0.1'][2] -= 10; }), [{ id: 'n.0.1', kind: 'shrink' }], spec);
+  assert.equal(r.pass, false, JSON.stringify(r.roots));
+  assert.ok(pos(r, 'n.0.1', 'x').length, JSON.stringify(r.roots));
+  // vertical, start-packed column 100 (padding 10): b FIXED 20 | gap 10 | a FILL 50 (flagged shrink); padding-bottom 20
+  const treeV = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 60, 100], rB: [0, 0, 60, 100], kids: [
+    { id: 'n.0.0', kind: 'frame', rA: [10, 10, 40, 20], rB: [10, 10, 40, 20] }, { id: 'n.0.1', kind: 'frame', rA: [10, 40, 40, 50], rB: [10, 40, 40, 50] }] }]);
+  const specV = Fl('n', ['FIXED', 'FIXED'], 'H', [Fl('n.0', ['FIXED', 'FIXED'], 'V', [F('n.0.0', ['FIXED', 'FIXED']), F('n.0.1', ['FIXED', 'FILL'])])]);
+  r = probe(treeV, both((b) => { b['n.0.1'][3] -= 10; }), [{ id: 'n.0.1', kind: 'shrink' }], specV);
+  assert.equal(r.pass, false, JSON.stringify(r.roots));
+  assert.ok(pos(r, 'n.0.1', 'y').length, JSON.stringify(r.roots));
+  // a sole FILL item is judged by both edges: a padding-right error (far edge) and a padding-left error (near edge)
+  const tree1 = flat([{ id: 'n.0', kind: 'frame', rA: [0, 0, 300, 60], rB: [0, 0, 300, 60], kids: [{ id: 'n.0.0', kind: 'frame', rA: [10, 10, 280, 40], rB: [10, 10, 280, 40] }] }]);
+  const spec1 = Fl('n', ['FIXED', 'FIXED'], 'V', [Fl('n.0', ['FIXED', 'FIXED'], 'H', [F('n.0.0', ['FILL', 'FIXED'])])]);
+  for (const mut of [(b) => { b['n.0.0'][2] -= 10; }, (b) => { b['n.0.0'][0] += 10; b['n.0.0'][2] -= 10; }]) {
+    r = probe(tree1, both(mut), [{ id: 'n.0.0', kind: 'shrink' }], spec1);
+    assert.ok(pos(r, 'n.0.0', 'x').length, JSON.stringify(r.roots));
+  }
+  // legit: the sole FILL item follows its row resized by 20 at the far edge (no position root of its own)
+  r = probe(tree1, both((b) => { b['n.0'][2] += 20; b['n.0.0'][2] += 20; }), [], spec1);
+  assert.deepEqual(pos(r, 'n.0.0', 'x'), [], JSON.stringify(r.roots));
+});

@@ -429,7 +429,7 @@ export async function renderProxy(browser, html, width, opts = {}) {
           const runs = [];
           const rec = (x) => {
             for (const c of x.childNodes) {
-              if (c.nodeType === 3) { const s = getComputedStyle(c.parentElement); runs.push([c.textContent, s.fontSize, s.fontWeight, s.fontStyle, s.textDecorationLine, s.textTransform, s.fontFamily]); }
+              if (c.nodeType === 3) { const s = getComputedStyle(c.parentElement); runs.push([c.textContent, s.fontSize, s.fontWeight, s.fontStyle, s.textDecorationLine, s.textTransform, s.fontFamily, s.color]); }
               else if (c.nodeType === 1 && c.tagName !== 'BR') rec(c);
             }
           };

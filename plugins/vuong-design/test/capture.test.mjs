@@ -392,3 +392,14 @@ test('R59: an image fit or position Figma cannot reproduce (fit none / scale-dow
     ['none', 'image fit/position: object-fit none'], ['sd', 'image fit/position: object-fit scale-down'],
     ['tl', 'image fit/position: object-position 0px 0px'], ['right', 'image fit/position: object-position 100% 50%']]);
 });
+
+test('M-e: page CSS on inlined sprite targets is carried (paint) or reported (transform); inherited paint stays', { skip }, async () => {
+  const s = (await captureScreens(join(FIX, 'capture-svg-defs.html'), { root: '.scr', fontOverride: false })).screens[0];
+  const by = (cls) => walk(s.tree).find((n) => n.cls === cls);
+  const mixed = by('mixed'), tw = by('tw');
+  const sym = (svg, id) => (new RegExp(`<symbol[^>]*id="${id}"[^>]*>(.*?)</symbol>`, 's').exec(svg) || [])[1] || '';
+  assert.match(sym(mixed.icon.svg, 'red'), /<path[^>]*style="[^"]*fill: rgb\(229, 57, 53\)/, mixed.icon.svg);
+  assert.doesNotMatch(sym(mixed.icon.svg, 'plain'), /style=/, 'a target that inherits through the <use> keeps inheriting');
+  assert.equal(mixed.paint.unsupported, undefined, JSON.stringify(mixed.paint.unsupported));
+  assert.deepEqual((tw.paint.unsupported || []).map((u) => u.prop), ['svg rect transform']);
+});

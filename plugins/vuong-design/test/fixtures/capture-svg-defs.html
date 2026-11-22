@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><title>capture-svg-defs</title>
+<!-- M-e (R48 + R54): an inline svg serialised whole inlines the page sprite targets of its <use> as a leading <defs>.
+     Page CSS on those targets must be carried (fill) or reported (transform) like page CSS inside the svg itself;
+     a target that only inherits its paint through the <use> stays as it is. -->
+<style>body{margin:0;font-family:Georgia,serif}.scr{width:200px;background:#fff;display:flex;gap:8px;padding:8px}
+svg{width:40px;height:40px;display:block}
+#red path{fill:#e53935}
+#turn rect{transform:rotate(10deg)}
+.mixed{color:#1e88e5;fill:currentColor}</style></head><body>
+<svg style="display:none"><symbol id="red" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/></symbol>
+<symbol id="plain" viewBox="0 0 24 24"><path d="M2 2h8v8H2z"/></symbol>
+<symbol id="turn" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12"/></symbol></svg>
+<div class="scr">
+<svg class="mixed" viewBox="0 0 40 40"><use href="#red" width="20" height="20"/><use href="#plain" x="20" width="20" height="20"/><circle cx="30" cy="30" r="8"/></svg>
+<svg class="tw" viewBox="0 0 40 40"><use href="#turn" width="20" height="20"/><circle cx="30" cy="30" r="8" fill="#e53935"/></svg>
+</div></body></html>

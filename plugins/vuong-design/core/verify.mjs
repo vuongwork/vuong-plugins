@@ -92,7 +92,7 @@
 //   without these observations puts 'visibility' / 'stroke' in `skipped`.
 //   R50, any node size, always source computed style (capture) vs what the proxy page rendered (never the spec, so a
 //   spec or proxy error is caught): radius (non-text nodes, per corner), font-style (text with a source font: font
-//   size, weight, style, text-decoration line and text-transform of every non-blank character, from the source runs
+//   size, weight, style, text-decoration line, text-transform, first family and colour (M-b) of every non-blank character, from the source runs
 //   vs the proxy DOM `runs`; skipped when the texts differ, which the text check reports), svg (inline svg: sha1 of the
 //   serialised markup without the root style attribute, the root's inlined declarations, and the root color / fill /
 //   stroke / stroke-width), image (object-fit, object-position, src; `img: null` = the proxy drew no image). A DOM
@@ -178,14 +178,17 @@ export function splitSvgRoot(svg) {
   const markup = String(svg).replace(/^(<svg\b[^>]*?)\sstyle="([^"]*)"/, (_, a, v) => { own = decls(unent(v)); return a; });
   return { markup, own };
 }
-const RUN_PROPS = ['font-size', 'font-weight', 'font-style', 'text-decoration', 'text-transform'];
-const runNorm = [(v) => `${r2(parseFloat(v))}px`, (v) => String(v ?? '400'), (v) => String(v || 'normal'), (v) => String(v || 'none'), (v) => String(v || 'none')];
-// runs [[text, fs, fw, fst, td, tt]] of the source and of the proxy DOM, compared per non-blank character; one finding
-// per property (its first differing character). Texts that differ are not compared here (the text check reports them).
+// M-b: also each run's first font family and colour (a run styled apart from its text node: a coloured <b>, a <code>)
+const RUN_PROPS = ['font-size', 'font-weight', 'font-style', 'text-decoration', 'text-transform', 'font-family', 'color'];
+const runNorm = [(v) => `${r2(parseFloat(v))}px`, (v) => String(v ?? '400'), (v) => String(v || 'normal'), (v) => String(v || 'none'), (v) => String(v || 'none'),
+  (v) => firstFamily(v ?? ''), (v) => normColor(v)];
+// runs [[text, fs, fw, fst, td, tt, ff, colour]] of the source and of the proxy DOM, compared per non-blank character;
+// one finding per property (its first differing character). Texts that differ are not compared here (the text check
+// reports them).
 function runStyleDiff(src, dom) {
   const chars = (runs) => {
     const out = [];
-    for (const r of runs) for (const ch of String(r[0] ?? '')) if (/\S/.test(ch)) out.push([ch, ...r.slice(1, 6).map((v, i) => runNorm[i](v))]);
+    for (const r of runs) for (const ch of String(r[0] ?? '')) if (/\S/.test(ch)) out.push([ch, ...r.slice(1, 8).map((v, i) => runNorm[i](v))]);
     return out;
   };
   const a = chars(src), b = chars(dom);
@@ -735,7 +738,7 @@ export function verifyScreen(input, opts = {}) {
     if (isTextSrc(n) && n.font) {
       if (!Array.isArray(d.runs)) miss.add('font-style');
       else {
-        const src = (n.runs || []).filter((r) => !r.br).map((r) => { const f = { ...n.font, ...(r.s || {}) }; return [r.t, f.fs, f.fw, f.fst, f.td, f.tt]; });
+        const src = (n.runs || []).filter((r) => !r.br).map((r) => { const f = { ...n.font, ...(r.s || {}) }; return [r.t, f.fs, f.fw, f.fst, f.td, f.tt, f.ff, f.c]; });
         for (const f of runStyleDiff(src, d.runs)) data.push({ id, kind: 'font-style', ...f });
         // R55: every face a run uses (family, style, weight as rendered) must have loaded in the proxy
         if (!Array.isArray(faceMiss)) miss.add('font-face');

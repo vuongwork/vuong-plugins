@@ -39,6 +39,7 @@
 //  - fontLarge: the first text leaf with visible text switches weight (>= 600 -> 400, else 700) on all its runs.
 //  - svgLarge: the first inline svg icon gets a small magenta square drawn first inside it (markup changed).
 //  - imageLarge: the first image switches object-fit (cover -> contain, anything else -> cover).
+//  M-f: svgLarge / imageLarge take the first candidate above 4000px², else the largest one of any size.
 // No candidate -> { kind, target: null, caught: null, by: [], skipped: 'no candidate' }; runMutations never throws for
 // that.
 //
@@ -82,6 +83,7 @@ function luminance(c) {
 
 // ---------------- target choice (stable: first eligible in tree order) ----------------
 
+const firstLargeOrLargest = (cands, areaA) => cands.find((e) => areaA(e.n) > SMALL) || cands.reduce((b, e) => (!b || areaA(e.n) > areaA(b.n) ? e : b), null);
 function choose(kind, spec, src) {
   const all = walk(spec).filter((e) => e.parent); // never the root itself as a leaf target
   const srcOf = (n) => src.get(n.id);
@@ -145,10 +147,11 @@ function choose(kind, spec, src) {
     }
     case 'fontLarge':
       return leaves.find((e) => e.n.t === 'T' && e.n.font && textOf(e.n).trim() !== '' && areaA(e.n) > SMALL) || null;
+    // M-f: the first one above SMALL, else the largest one (a screen with only small svgs / images still tests them)
     case 'svgLarge':
-      return leaves.find((e) => e.n.t === 'V' && e.n.icon && e.n.icon.svg && areaA(e.n) > SMALL) || null;
+      return firstLargeOrLargest(leaves.filter((e) => e.n.t === 'V' && e.n.icon && e.n.icon.svg), areaA);
     case 'imageLarge':
-      return leaves.find((e) => e.n.t === 'I' && e.n.src && areaA(e.n) > SMALL) || null;
+      return firstLargeOrLargest(leaves.filter((e) => e.n.t === 'I' && e.n.src), areaA);
     default:
       throw new Error(`runMutations: unknown kind ${kind}`);
   }
@@ -304,7 +307,7 @@ export async function runMutations(browser, screen, inferred, fontMap, opts = {}
     const pick = opts.targets && opts.targets[kind] ? pickId(kind, inferred.spec, opts.targets[kind]) : choose(kind, inferred.spec, src);
     if (!pick) { results.push({ kind, target: null, caught: null, by: [], skipped: 'no candidate' }); continue; }
     const spec = clone(inferred.spec);
-    mutate(kind, spec, pick, base.layout)
+    mutate(kind, spec, pick, base.layout);
     const run = await pipeline(browser, screen, spec, flags, fontMap, opts);
     const hit = touched(inferred.spec, pick.n.id, base, run);
     const fresh = failures(run.report).filter((f) => !before.has(f.key));

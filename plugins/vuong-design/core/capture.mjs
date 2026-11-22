@@ -285,6 +285,10 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
   const SVG_ROOT = new Set(['fill', 'fill-opacity', 'fill-rule', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-linecap', 'stroke-linejoin',
     'stroke-dasharray', 'stroke-dashoffset', 'stroke-miterlimit', 'clip-rule', 'paint-order', 'shape-rendering', 'color']);
   const SVG_TEXT_TAGS = /^(text|tspan|textPath)$/;
+  const SVG_INHERITED = new Set(['fill', 'fill-opacity', 'fill-rule', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-linecap', 'stroke-linejoin',
+    'stroke-dasharray', 'stroke-dashoffset', 'stroke-miterlimit', 'clip-rule', 'paint-order', 'shape-rendering', 'visibility', 'color',
+    'font-family', 'font-size', 'font-weight', 'font-style', 'font-stretch', 'font-variant', 'letter-spacing', 'word-spacing', 'text-anchor',
+    'dominant-baseline', 'white-space', 'writing-mode', 'direction']);
   const serialiseSvg = (el, icon) => {
     const notfEl = document.getElementById('__vd_notf');
     if (notfEl) notfEl.disabled = true;
@@ -335,9 +339,38 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
       if (el.querySelector(`[id="${CSS.escape(id)}"]`)) continue;
       const t = document.getElementById(id);
       if (!t) { un.push({ prop: 'svg use', value: `#${id} not found` }); continue; }
-      const c = t.cloneNode(true); defs.push(c); todo.push(...c.querySelectorAll('use'));
+      const c = t.cloneNode(true); defs.push([t, c]); todo.push(...c.querySelectorAll('use'));
     }
-    if (defs.length) { const d = document.createElementNS('http://www.w3.org/2000/svg', 'defs'); defs.forEach((x) => d.appendChild(x)); clone.insertBefore(d, clone.firstChild); }
+    if (defs.length) { const d = document.createElementNS('http://www.w3.org/2000/svg', 'defs'); defs.forEach(([, x]) => d.appendChild(x)); clone.insertBefore(d, clone.firstChild); }
+    // M-e: page CSS on an inlined target is carried / reported like page CSS inside the svg. A <use> instance inherits
+    // from the <use>, not from where the target sits in the page, so an inherited property counts only where the page
+    // sets it on that element itself (its value differs from its page parent's); otherwise it keeps inheriting
+    // a sprite usually sits in a display:none svg, whose elements report no transform: shown offscreen while compared
+    const unhid = [];
+    for (const [t] of defs) {
+      for (let a = t.parentElement; a; a = a.parentElement) {
+        if (getComputedStyle(a).display !== 'none') continue;
+        unhid.push([a, a.getAttribute('style')]);
+        for (const [k, v] of [['display', 'block'], ['position', 'absolute'], ['left', '-99999px'], ['top', '0']]) a.style.setProperty(k, v, 'important');
+      }
+    }
+    for (const [t, c] of defs) {
+      const O2 = [t, ...t.querySelectorAll('*')], C2 = [c, ...c.querySelectorAll('*')];
+      if (O2.length !== C2.length) { un.push({ prop: 'svg markup', value: `#${t.id}: clone differs from the page` }); continue; }
+      const props = (x, check) => [...SVG_CARRY, ...(SVG_TEXT_TAGS.test(x.tagName) ? SVG_TEXT : []), ...(check ? SVG_ONLY_CHECK : [])];
+      const own = (x, oc, k) => !SVG_INHERITED.has(k) || !x.parentElement || getComputedStyle(x.parentElement).getPropertyValue(k) !== oc.getPropertyValue(k);
+      for (const check of [false, true]) {
+        for (let i = 0; i < O2.length; i++) {
+          const oc = getComputedStyle(O2[i]), cc = getComputedStyle(C2[i]);
+          for (const k of props(O2[i], check)) {
+            const v = oc.getPropertyValue(k);
+            if (v === cc.getPropertyValue(k) || !own(O2[i], oc, k)) continue;
+            if (check) un.push({ prop: `svg ${O2[i].tagName} ${k}`, value: v }); else C2[i].style.setProperty(k, v);
+          }
+        }
+      }
+    }
+    for (const [a, st] of unhid.reverse()) { if (st === null) a.removeAttribute('style'); else a.setAttribute('style', st); }
     const svg = clone.outerHTML;
     host.remove();
     if (notfEl) notfEl.disabled = false;

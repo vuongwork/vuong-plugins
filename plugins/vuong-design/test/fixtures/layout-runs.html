@@ -1,0 +1,13 @@
+<!doctype html><html><head><meta charset="utf-8"><title>layout-runs</title>
+<!-- M-b (rr9 probe-paint2): a large paragraph (> 4000 px²) with a coloured bold run and a monospace run. The page
+     itself must pass; a run colour or a run font family planted wrong in the spec must be a data finding
+     (font-style color / font-family), not only a crop. -->
+<style>
+body{margin:0;font-family:Georgia,serif}
+.scr{width:360px;background:#fff;display:flex;flex-direction:column;padding:10px}
+.para{font-size:14px;line-height:20px;color:#222}
+.para b{color:#c62828}
+.para code{font-family:"Courier New",monospace}
+</style></head><body><div class="scr">
+<div class="para">Lorem ipsum dolor sit amet, consectetur adipiscing elit, <b>sed do eiusmod</b> tempor incididunt ut labore et dolore magna aliqua. Ut enim ad <code>minim veniam</code>, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor.</div>
+</div></body></html>

@@ -134,7 +134,16 @@ test('R50: runMutations on layout-paint: radius, font, svg and image errors on l
   assert.equal(r.allCaught, true);
 });
 
-test('R50: the large-node kinds skip when the screen has no node above 4000 px² of that type', { skip }, async () => {
+test('R50 (M-f): svgLarge and imageLarge skip only when the screen has no inline svg / image at all', { skip }, async () => {
   const r = await basicRun();
   for (const k of ['svgLarge', 'imageLarge']) assert.equal(r.results.find((x) => x.kind === k).skipped, 'no candidate', k);
+});
+
+test('M-f: with no svg / image above 4000 px², svgLarge and imageLarge fall back to the largest one (caught)', { skip }, async () => {
+  const sv = (await run('capture-sprite-mixed.html', { kinds: ['svgLarge'] })).results[0];
+  assert.ok(sv.target && sv.found.includes(`data|${sv.target}|svg`), JSON.stringify(sv));
+  assert.equal(sv.caught, true, JSON.stringify(sv));
+  const im = (await run('layout-crop.html', { kinds: ['imageLarge'] })).results[0];
+  assert.ok(im.target, JSON.stringify(im));
+  assert.equal(im.caught, true, JSON.stringify(im));
 });

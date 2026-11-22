@@ -474,3 +474,29 @@ test('R56 (M-d): an approved entry with an empty reason is shown as allowed by "
   assert.equal(g.pass, true);
   assert.equal(g.allowed.roots[0].allowedBy, 'approved');
 });
+
+// ---------------- fix round 10: minors ----------------
+test('M-b (probe-paint2): a run colour or run font family planted in the spec is a data finding; the page passes', { skip }, async () => {
+  const { captureScreens } = await import('../core/capture.mjs');
+  const { inferScreen } = await import('../core/infer.mjs');
+  const { runScreen } = await import('../core/pipeline.mjs');
+  const { defaultFontMap } = await import('../core/font-map.mjs');
+  const fm2 = defaultFontMap(['Georgia', 'Courier New']);
+  const screen = (await captureScreens(join(FIX, 'layout-runs.html'), { root: '.scr', fontMap: fm2, webFonts: false, png: true })).screens[0];
+  const base = inferScreen(screen);
+  const find = (s, pred) => (pred(s) ? s : (s.kids || []).map((k) => find(k, pred)).find(Boolean));
+  const para = (n) => n.t === 'T' && (n.runs || []).length > 2;
+  const plants = {
+    baseline: () => null,
+    runColour: (sp) => { const n = find(sp, para); n.runs.find((r) => r.s && r.s.c).s.c = 'rgb(34, 34, 34)'; return [n.id, 'color']; },
+    runColourNear: (sp) => { const n = find(sp, para); n.runs.find((r) => r.s && r.s.c).s.c = 'rgb(140, 40, 40)'; return [n.id, 'color']; },
+    runFamily: (sp) => { const n = find(sp, para); delete n.runs.find((r) => r.s && r.s.ff).s.ff; return [n.id, 'font-family']; },
+  };
+  for (const [name, plant] of Object.entries(plants)) {
+    const inf = structuredClone(base);
+    const want = plant(inf.spec);
+    const e = await runScreen(browser, screen, inf, fm2, { proxy: { webFonts: false } });
+    if (!want) { assert.equal(e.report.pass, true, `${name}: ${JSON.stringify({ data: e.report.data, crop: e.report.crop, roots: e.report.roots })}`); continue; }
+    assert.ok(e.report.data.some((d) => d.id === want[0] && d.kind === 'font-style' && d.prop === want[1]), `${name}: ${JSON.stringify(e.report.data)}`);
+  }
+});

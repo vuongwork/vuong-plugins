@@ -18,7 +18,7 @@ const skip = process.env.VD_PLAYWRIGHT_FROM
 // what the proxy DOM reports for a shown node without strokes (R30/R31 observations)
 const SHOWN = () => ({ op: 1, vis: 'visible', disp: 'block', stroke: ['none', 'none', 'none', 'none'], shadow: 'none', bgImage: 'none', radius: ['0px', '0px', '0px', '0px'] });
 // R50: the per-run font observation of a text as the proxy DOM reports it ([text, size, weight, style, decoration, transform])
-const domRuns = (n) => (n.runs || []).filter((r) => !r.br).map((r) => { const f = { ...n.font, ...(r.s || {}) }; return [r.t, f.fs, f.fw, f.fst || 'normal', f.td || 'none', f.tt || 'none']; });
+const domRuns = (n) => (n.runs || []).filter((r) => !r.br).map((r) => { const f = { ...n.font, ...(r.s || {}) }; return [r.t, f.fs, f.fw, f.fst || 'normal', f.td || 'none', f.tt || 'none', f.ff, f.c]; }); // as renderProxy (M-b: ff, colour)
 const FONT = { ff: 'Inter', fs: '14px', fw: '400', lh: 20, c: 'rgb(34, 34, 34)' };
 function fixture() {
   const screen = {
@@ -1353,17 +1353,17 @@ test('R50: font size, weight, style, decoration and transform are compared per r
   let r = verifyScreen(base());
   assert.deepEqual(r.data, []);
   assert.equal(r.pass, true);
-  for (const [i, prop, v] of [[2, 'font-weight', '400'], [1, 'font-size', '19px'], [3, 'font-style', 'italic'], [4, 'text-decoration', 'underline'], [5, 'text-transform', 'uppercase']]) {
+  for (const [i, prop, v] of [[2, 'font-weight', '400'], [1, 'font-size', '19px'], [3, 'font-style', 'italic'], [4, 'text-decoration', 'underline'], [5, 'text-transform', 'uppercase'], [6, 'font-family', 'Georgia'], [7, 'color', 'rgb(198, 40, 40)']]) {
     const inp = base(); inp.proxy.A.dom['n.0.0'].runs[1][i] = v;
     r = verifyScreen(inp);
     assert.deepEqual(dataOf(r, 'font-style').map((d) => [d.id, d.prop, d.actual]), [['n.0.0', prop, v]], `${prop}: ${JSON.stringify(r.data)}`);
     assert.equal(r.pass, false);
   }
   // the proxy split the text into runs differently but with the same styles per character: fine
-  const s = base(); s.proxy.A.dom['n.0.0'].runs = [['I', '14px', '400', 'normal', 'none', 'none'], ['n', '14px', '400', 'normal', 'none', 'none'], ['box', '14px', '700', 'normal', 'none', 'none']];
+  const s = base(); s.proxy.A.dom['n.0.0'].runs = [['I', '14px', '400', 'normal', 'none', 'none', 'Inter', 'rgb(34, 34, 34)'], ['n', '14px', '400', 'normal', 'none', 'none', 'Inter', 'rgb(34, 34, 34)'], ['box', '14px', '700', 'normal', 'none', 'none', 'Inter', 'rgb(34, 34, 34)']];
   assert.deepEqual(verifyScreen(s).data, []);
   // the bold run moved one character to the left: a weight mismatch
-  const m = base(); m.proxy.A.dom['n.0.0'].runs = [['I', '14px', '400', 'normal', 'none', 'none'], ['nbox', '14px', '700', 'normal', 'none', 'none']];
+  const m = base(); m.proxy.A.dom['n.0.0'].runs = [['I', '14px', '400', 'normal', 'none', 'none', 'Inter', 'rgb(34, 34, 34)'], ['nbox', '14px', '700', 'normal', 'none', 'none', 'Inter', 'rgb(34, 34, 34)']];
   assert.deepEqual(dataOf(verifyScreen(m), 'font-style').map((d) => d.prop), ['font-weight']);
   // no run observation: never a silent pass
   const k = base(); delete k.proxy.A.dom['n.0.0'].runs;

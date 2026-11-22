@@ -225,7 +225,14 @@ function renderItem(v, it, g) {
 // one plain sentence on what a screen needs (counts from the summary: the gate's open findings)
 export function verdictLine(v) {
   const s = v.summary;
-  if (s.pass) return s.allowed ? `Matches (${plural(s.allowed, 'item', 'items')} allowlisted).` : 'Matches.';
+  // R53: a planted error the verifier missed makes any verdict on this screen untrustworthy
+  const miss = s.mutation && s.mutation.missed && s.mutation.missed.length ? s.mutation.missed : [];
+  const missNote = miss.length ? ` But the mutation check missed ${plural(miss.length, 'planted error', 'planted errors')} (${miss.join(', ')}): the verifier cannot be trusted on this screen.` : '';
+  if (s.pass) return (s.allowed ? `Matches (${plural(s.allowed, 'item', 'items')} allowlisted).` : 'Matches.') + missNote;
+  return verdictFail(v, s) + missNote;
+}
+
+function verdictFail(v, s) {
   const parts = [];
   if (s.unexplainedRoots) {
     const names = [...new Set(v.items.filter((i) => i.kind === 'root' && !i.allowedBy).map((i) => shortNode(i.node)).filter(Boolean))];

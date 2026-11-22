@@ -99,3 +99,10 @@ test('R52: an open finding is never shown as a repeat of an allowlisted one, nor
   html = renderReportHtml({ screens: [s1, s3] });
   assert.equal((html.match(/class="item repeat"/g) || []).length, 1);
 });
+
+test('R53: a mutation the verifier missed is in the verdict line, even on a passing screen', () => {
+  const m = { allCaught: false, caught: 10, missed: ['gap', 'drift'], skipped: 1 };
+  assert.match(verdictLine(view({ summary: { pass: true, mutation: m } })), /^Matches\. But the mutation check missed 2 planted errors \(gap, drift\): the verifier cannot be trusted on this screen\.$/);
+  assert.match(verdictLine(view({ summary: { pass: false, unexplainedRoots: 1, mutation: { ...m, missed: ['gap'] } }, items: [root()] })), /missed 1 planted error \(gap\)/);
+  assert.equal(verdictLine(view({ summary: { pass: true, mutation: { allCaught: true, caught: 12, missed: [], skipped: 1 } } })), 'Matches.');
+});

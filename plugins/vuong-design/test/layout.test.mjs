@@ -382,3 +382,26 @@ test('R51: corpus files are keyed by their path relative to the corpus dir', () 
   assert.deepEqual(c.files.map((f) => f.file), ['a/x.html', 'b/x.html', 'y.html']);
   rmSync(dir, { recursive: true, force: true });
 });
+
+// ---------------- fix round 9: R53 (--mutate: a missed mutation fails the run) ----------------
+test('R53: runVerdict fails the run when a mutation was not caught, even if every screen passes', async () => {
+  const { runVerdict } = await import('../core/layout.mjs');
+  const s = (pass, results) => ({ summary: { pass }, ...(results ? { mutations: { results } } : {}) });
+  assert.deepEqual(runVerdict([s(true), s(true, [{ kind: 'gap', caught: true }, { kind: 'swapIcon', caught: null }])]), { pass: true, missed: [] });
+  assert.deepEqual(runVerdict([s(true, [{ kind: 'gap', caught: false }]), s(true, [{ kind: 'drift', caught: false }])]), { pass: false, missed: ['gap', 'drift'] });
+  assert.deepEqual(runVerdict([s(false)]), { pass: false, missed: [] });
+});
+
+test('R53: CLI --mutate with a verifier too loose to catch a planted error exits 1 and says so', { skip }, async () => {
+  const out = tmp(), q = quiet();
+  const code = await main(['--html', join(FIX, 'mutate-mini.html'), '--root', '.scr', '--no-webfonts', '--out', out, '--mutate',
+    '--tol-frame', '100', '--tol-text', '100', '--tol-model', '100'], { fontMap: fm, browser, log: q.log });
+  const rep = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'));
+  const html = readFileSync(join(out, 'report.html'), 'utf8');
+  rmSync(out, { recursive: true, force: true });
+  const missed = rep.screens[0].mutations.results.filter((r) => r.caught === false).map((r) => r.kind);
+  assert.ok(missed.length > 0, JSON.stringify(rep.screens[0].mutations.results));
+  assert.equal(code, 1);
+  assert.match(q.lines.join('\n'), /mutation check missed/);
+  assert.match(html, /the mutation check missed/);
+});

@@ -14,7 +14,8 @@
 //   size), report.json (summary + verify report + gate + allowlistDraft (R51: an entry with magnitude and fingerprint,
 //   approved false, per open root / approval / crop) + mutations per screen), report.html (self-contained).
 //   In corpus mode ir.json and spec-<id>.json go to <out>/<file stem>/; report.json and report.html cover all files.
-// Exit codes: 0 every screen passes (after the allowlist: only `approved: true` entries count), 1 otherwise, 2 usage
+// Exit codes: 0 every screen passes (after the allowlist: only `approved: true` entries count) and, with --mutate, every
+//   mutation that ran was caught (R53: one missed planted error fails the run), 1 otherwise, 2 usage
 //   or setup error (bad arguments, file or selector not found, no Playwright / Chromium).
 // --no-webfonts: no Google Fonts are fetched (R9 opt-out); families that do not render are then reported.
 // --mutate: also runs the mutation check (spec §14 layer 4, ≈30 s per screen); --mutate-sample n: n screens per file.
@@ -85,6 +86,13 @@ export function readAllowlist(path) {
   return list;
 }
 
+// R53: the run passes only if every screen passes and no mutation that ran went uncaught (a verifier that misses a
+// planted error cannot vouch for the screens it passed)
+export function runVerdict(screensOut) {
+  const missed = screensOut.flatMap((s) => (s.mutations ? s.mutations.results.filter((r) => r.caught === false).map((r) => r.kind) : []));
+  return { pass: screensOut.every((s) => s.summary.pass) && missed.length === 0, missed };
+}
+
 const stem = (f) => basename(f, extname(f));
 const safe = (s) => String(s).replace(/[^A-Za-z0-9._-]/g, '_');
 const irOf = (screens) => screens.map(({ png, pngOriginal, ...rest }) => rest);
@@ -151,13 +159,14 @@ export async function main(argv, deps = {}) {
         views.push(await screenView(browser, job.file, e, g, summary));
       }
     }
-    const pass = screensOut.every((s) => s.summary.pass);
+    const { pass, missed } = runVerdict(screensOut);
     const seconds = Math.round((Date.now() - t0) / 100) / 10;
     const args = { ...(o.corpus ? { corpus: o.corpus } : { html: o.html, root: o.root }), ...(o.widen ? { widen: o.widen } : {}), webFonts: o.webFonts, tol: o.verify, mutate: o.mutate, allowlistApproved: allowlist.filter((e) => e && e.approved === true).length };
-    writeFileSync(join(o.out, 'report.json'), JSON.stringify({ generated: new Date().toISOString(), seconds, args, pass, screens: screensOut }, null, 1));
+    writeFileSync(join(o.out, 'report.json'), JSON.stringify({ generated: new Date().toISOString(), seconds, args, pass, ...(o.mutate ? { mutationsMissed: missed } : {}), screens: screensOut }, null, 1));
     writeFileSync(join(o.out, 'report.html'), renderReportHtml({ generated: `${new Date().toISOString()} · ${seconds} s`, args, screens: views }));
     const failed = screensOut.filter((s) => !s.summary.pass).length;
     log(`${screensOut.length - failed}/${screensOut.length} screens pass in ${seconds} s; report: ${join(o.out, 'report.html')}`);
+    if (missed.length) log(`the mutation check missed ${missed.length} planted error${missed.length === 1 ? '' : 's'} (${missed.join(', ')}): the verifier cannot be trusted; exit 1`);
     return pass ? 0 : 1;
   } finally {
     if (own && browser) await browser.close();

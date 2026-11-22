@@ -50,7 +50,10 @@
 //                  A and B. Font size: a size of the type scale (below). Line height: an integer px (±0.01).
 //                  Colour: no more frequent colour within ΔE2000 3 of the same alpha.
 //  ROLE_MAJORITY   off-scale space / frame size / radius / icon value whose role (all screens) has one value used by
-//                  strictly more than half its uses, that value in scale -> that value, auto.
+//                  strictly more than half its uses, that value in scale -> that value, auto. R73: only when the
+//                  majority is at most 4 px (one grid step) from the value (both after R69 snapping); a larger jump
+//                  (an icon height 10 in a role of 24s) is not a typo of the majority: it falls through to GRID4
+//                  (space / size / radius) or ICON_FRAME (icons), a question with the nearest grid / frame proposal.
 //  GRID4           off-grid space / frame size / radius with no majority -> question `grid4|<cat>|<from>|<proposal>`
 //                  (R68), options the two neighbouring multiples of 4 and the value itself, proposal the nearest
 //                  (tie -> larger).
@@ -95,6 +98,7 @@ const SQUASH_PX = 0.75;
 const FRAMES = [16, 20, 24];
 const SNAP = 0.05; // R69
 const ICON_MAX = 32; // R71
+const MAJORITY_PX = 4; // R73
 const snap = (v) => (Math.abs(v - Math.round(v)) <= SNAP + 1e-9 ? Math.round(v) : v);
 const GRID_CATS = new Set(['space', 'size', 'radius']);
 const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -204,7 +208,7 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     const majorityCat = GRID_CATS.has(u.cat) ? !(u.cat === 'size' && u.img) : u.cat === 'icon' && !illustration;
     if (majorityCat) {
       const maj = majorityOf(u.role);
-      if (maj !== null && Math.abs(maj - sv) > EPS && scaleValue(u, maj)) { decide({ ...base, code: 'ROLE_MAJORITY', target: maj, auto: true }); continue; }
+      if (maj !== null && Math.abs(maj - sv) > EPS && Math.abs(maj - sv) <= MAJORITY_PX + EPS && scaleValue(u, maj)) { decide({ ...base, code: 'ROLE_MAJORITY', target: maj, auto: true }); continue; }
     }
     if (GRID_CATS.has(u.cat) && !(u.cat === 'size' && u.img)) {
       const nb = grid4Of(sv), p = nearest(sv, nb);

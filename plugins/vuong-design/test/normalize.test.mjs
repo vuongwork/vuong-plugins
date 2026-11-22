@@ -356,3 +356,16 @@ test('R71: svgs larger than 32 px are illustrations: no ICON_FRAME, no majority,
   assert.deepEqual(r.entries.map((e) => [e.code, e.from, e.proposal]).sort(), [['ICON_FRAME', 21, 20], ['SRC_SQUASH', 90, 90]]);
   assert.ok(!r.questions.some((q) => q.key === 'icon|200' || q.key === 'icon|33'));
 });
+
+test('R73: a role majority applies only within 4 px; a larger jump asks GRID4 with the nearest grid value', () => {
+  const r = N([pad(24), pad(24), pad(24), pad(24), pad(10, { node: '7.0' }), pad(21, { node: '7.1' })]);
+  const odd = r.entries.find((e) => e.from === 10);
+  assert.deepEqual([odd.code, odd.status, odd.to, odd.proposal, odd.question], ['GRID4', 'ask', 10, 12, 'grid4|space|10|12']);
+  // 21 is 3 px from the majority 24: still auto
+  const near = r.entries.find((e) => e.from === 21);
+  assert.deepEqual([near.code, near.status, near.to], ['ROLE_MAJORITY', 'auto', 24]);
+  // icons: 10 px in a role whose majority is 24 asks ICON_FRAME, never jumps to 24 automatically
+  const ic = (v, node) => use('icon', 'height', v, 'svg.i|div.r', { fixed: true, node, box: [v, v] });
+  const i = N([ic(24, 'a'), ic(24, 'b'), ic(24, 'c'), ic(10, 'd')]);
+  assert.deepEqual(i.entries.map((e) => [e.code, e.from, e.proposal]), [['ICON_FRAME', 10, 16]]);
+});

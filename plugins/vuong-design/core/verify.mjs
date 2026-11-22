@@ -167,10 +167,19 @@
 //    (text / run colour, background, border colour and width, icon paint, corner radius, run font size) is replaced by
 //    the record's `to`; any other difference stays a data finding (so a wrong `to` is a finding against the record).
 //  - crops (measured on the norm layout proxy, pipeline; input.cropsOn 'layout' with input.norm = the norm layout
-//    could not be built -> 'norm-crop' skipped): a crop fail is explained 'norm' only when the node itself has a colour,
-//    radius or icon record, an ICON_FRAME / SRC_SQUASH record, or (a text) a TYPE_SCALE / LINE_HEIGHT_INT record; one
-//    on a norm-explained size root only with a box record on the node itself (else it stays in `crop`, sizeExplainedBy
-//    'norm'); R61 holds: an icon / image leaf on an explained size root needs its own ICON_FRAME / SRC_SQUASH record.
+//    could not be built -> 'norm-crop' skipped): a crop fail may be explained 'norm' only when the node itself has a
+//    colour, radius or icon record, an ICON_FRAME / SRC_SQUASH record, or (a text) a TYPE_SCALE / LINE_HEIGHT_INT
+//    record (on a norm-explained size root too, else it stays in `crop`, sizeExplainedBy 'norm'); R61 holds: an icon /
+//    image leaf on an explained size root needs its own ICON_FRAME / SRC_SQUASH record.
+//    R77 (whole-branch review C1: any record excused any crop, an invisible ΔE < 1 colour record a 90 % crop fail):
+//    such a record explains the crop only when the change comes from it: (i) the same node's crop of the source
+//    against the plain layout proxy passes (input.cropsLayout, measured by verifyScreenWithImages for the failing
+//    crops: without the records there is no fault), and (ii) the record is not in norm.unused and its change shows:
+//    the node's crop of the norm layout proxy against the layout proxy fails (input.cropsNormVsLayout, measureCrops
+//    with opts.base). Missing measurements explain nothing. Otherwise the crop stays open with `normWhy`.
+//    An icon / image leaf's own ICON_FRAME / SRC_SQUASH record replaces (i) (the plain layout proxy cannot draw such a
+//    leaf as the source does: that is why the record exists) by: the norm layout proxy draws the node at every such
+//    record's `to` (within tolFrame) and the source size differs from `to` beyond the crop search on one of them.
 //  - R74 (SRC_SQUASH restoring a FIXED size, the Planora `.say` avatar): a size / icon record with szFrom (apply-norm
 //    turned a FILL / HUG axis into FIXED at `to`) predicts the node's own size as `to` minus its modelled proxy size
 //    (not to - from: the modelled FILL box was never `from` wide); the node no longer counts as a FILL item of its
@@ -181,7 +190,7 @@
 //    lines when wider, never fewer when narrower; a font-size record or a non-px line height gives no prediction),
 //    (its scope reaches what resized its parent through R76). Crops: an icon / image leaf with its own
 //    ICON_FRAME / SRC_SQUASH record is explained 'norm' whatever explained its size root (a layout flag such as
-//    shrink included), since the record is what changes the drawn content.
+//    shrink included), since the record is what changes the drawn content (when R77 holds).
 //  - R76: scope (b) climbs while the nearest source ancestor itself changed beyond its tolerance in the norm proxy
 //    (its norm delta): a node inside a parent that a record moved or resized answers to that record, still predicted
 //    from the parent's measured box (a space-between row's last item in a card narrowed by the screen padding).
@@ -193,6 +202,16 @@
 //    { id, width, magnitude, drift? } (Planora's text round-up drift once line heights are whole px: Figma no longer
 //    rounds the boxes, and what the target layout changes is each text's own record, checked above). One that
 //    remains, or a new one, is a needsApproval entry as before. No norm layout proxy: the plan-1 layer stands.
+//  - R78 (review I2: the norm layout proxy was trusted unchecked): input.normLayout must be marked 'normLayout' with
+//    model 'none' (the layout or the norm proxy passed in its place throws). The R66 layer-2 pass (attribution,
+//    agreement, record check, R76 scope) runs a second time on the norm layout proxy against the layout proxy (the
+//    same arithmetic, base = layout): every unexplained deviation there is an open norm root (`on: 'normLayout'`, never
+//    allowlistable; explained ones are not listed). A node without a norm layout box is unchecked. A plan-1 approval
+//    is resolved by R75 only when the node or its record scope carries a box (incl. type) record; otherwise it stays
+//    a needsApproval entry (normWhy).
+//  - m8: with input.norm.entries (ds.mjs / pipeline pass the normalize entries) every record must name an entry with
+//    status auto / answered and the same prop, category, from and to; any other record explains nothing and is a
+//    `norm-spec` data finding (path 'record <entry>'). Only a SRC_SQUASH record restores a FIXED size (R74 szFrom).
 //  - 'ask' entries have no records (applyNorm skips them) and a record carrying a status other than auto / answered
 //    is ignored: nothing a question has not answered explains anything.
 //  - report.norm = { applied (records used), explainedRoots, explainedCrops, unexplained (ids of unexplained norm
@@ -379,6 +398,16 @@ export function verifyScreen(input, opts = {}) {
     }
   }
 
+  // R78: the norm layout proxy (the records replayed on the unmodelled spec) is renderProxy's unmodelled result marked
+  // 'normLayout'; the norm proxy, the layout proxy or an unmarked one passed in its place is an error
+  const NL = norm && input.normLayout ? input.normLayout : null;
+  for (const M of NL ? W : []) {
+    const P = NL[M];
+    if (!P || P.model !== 'none' || P.mark !== 'normLayout' || P === layout?.[M] || P === NP[M] || !P.boxes) {
+      throw new Error(`verifyScreen: the norm layout proxy at ${M} must be renderProxy's result for the records replayed on the inferred spec with mark 'normLayout' and model 'none' (model ${JSON.stringify(P && P.model)}, mark ${JSON.stringify(P && P.mark)})`);
+    }
+  }
+
   const specById = new Map();
   const specAll = new Map(); // every spec node, syn frames included (R66 predictions and audit)
   const specParent = new Map(); // spec id -> its spec parent (syn frames included: they are the real containers)
@@ -402,6 +431,7 @@ export function verifyScreen(input, opts = {}) {
   const MD = { A: new Map(), B: new Map() }; // modelled proxy - source
   const LD = { A: new Map(), B: new Map() }; // layout proxy - source
   const ND = { A: new Map(), B: new Map() }; // R66: norm proxy - modelled proxy
+  const NDL = { A: new Map(), B: new Map() }; // R78: norm layout proxy - layout proxy
   const unchecked = []; const uncheckedReasons = {};
   const uncheck = (id, why) => {
     if (!uncheckedReasons[id]) { unchecked.push(id); uncheckedReasons[id] = why; } else uncheckedReasons[id] += `; ${why}`;
@@ -422,6 +452,11 @@ export function verifyScreen(input, opts = {}) {
         const nb = NP[M] && NP[M].boxes ? NP[M].boxes[n.id] : null;
         if (!nb) why.push(`no norm box at ${M}`);
         else if (s && p) ND[M].set(n.id, sub(nb, p));
+      }
+      if (NL) {
+        const nl = NL[M].boxes[n.id];
+        if (!nl) why.push(`no norm layout box at ${M}`);
+        else if (s && l) NDL[M].set(n.id, sub(nl, l));
       }
     }
     if (why.length) uncheck(n.id, why.join('; '));
@@ -815,34 +850,79 @@ export function verifyScreen(input, opts = {}) {
   // counterpart there (same node and width; the drift entry with a drift entry) is resolved by the records
   // (norm.approvalsResolved); one that remains, or a new one, needs approval as before. Without a norm layout proxy
   // (its replay failed) the plan-1 layer stands.
-  let approvalsResolved = [];
-  const NL = norm && input.normLayout && W.every((M) => input.normLayout[M] && input.normLayout[M].boxes) ? input.normLayout : null;
-  if (NL) {
-    const rel = (P, M, id) => { const b = P[M] && P[M].boxes ? P[M].boxes[id] : null, e = byId.get(id), s = e && src(e.n, M); return b && s ? sub(b, s) : null; };
-    const nw = modelLayer((M, id) => rel(NP, M, id), (M, id) => rel(NL, M, id));
-    const kept = (a) => nw.approvals.some((b) => (a.drift ? !!b.drift : !b.drift && b.id === a.id && b.width === a.width));
-    approvalsResolved = needsApproval.filter((a) => !kept(a)).map((a) => ({ id: a.id, width: a.width, magnitude: a.magnitude, ...(a.drift ? { drift: true } : {}) }));
-    ({ deltas: modelDeltas, approvals: needsApproval, fol: modelFollowers, drift: modelDrift } = nw);
+  // ---- R66 records (m8: cross-checked against the report entries when verify has them) ----
+  const recFindings = [];
+  let recs = norm ? (norm.applied || []).filter((a) => a && (a.status == null || NORM_APPLY.has(a.status))) : [];
+  if (norm && Array.isArray(norm.entries)) {
+    const byEntry = new Map(norm.entries.map((x) => [String(x.id), x]));
+    recs = recs.filter((a) => {
+      const x = byEntry.get(String(a.entry));
+      let why = null;
+      if (!x) why = 'no such entry';
+      else if (!NORM_APPLY.has(x.status)) why = `entry status ${x.status}`;
+      else if (x.prop !== a.prop || (x.cat != null && x.cat !== a.cat) || !recEq(a.cat, x.from, a.from) || !recEq(a.cat, x.to, a.to)) why = `entry says ${x.cat} ${x.prop} ${JSON.stringify(x.from)} -> ${JSON.stringify(x.to)}`;
+      if (!why) return true;
+      recFindings.push({ id: String(a.node), kind: 'norm-spec', path: `record ${a.entry}`, expected: 'an auto / answered entry with the same prop, from and to', actual: `${a.cat} ${a.prop} ${JSON.stringify(a.from)} -> ${JSON.stringify(a.to)}: ${why}` });
+      return false;
+    });
   }
-
-  // ---- R66: norm deltas (norm proxy minus modelled proxy), attributed like the model deltas ----
-  const recs = norm ? (norm.applied || []).filter((a) => a && (a.status == null || NORM_APPLY.has(a.status))) : [];
   const recsBy = new Map();
   for (const a of recs) { const k = String(a.node); if (!recsBy.has(k)) recsBy.set(k, []); recsBy.get(k).push(a); }
   const recsOf = (id) => recsBy.get(String(id)) || [];
-  const normFollowers = { A: 0, B: 0 };
-  const dn = (M, id) => {
-    const a = NP && NP[M] && NP[M].boxes ? NP[M].boxes[id] : null, b = proxy[M] && proxy[M].boxes ? proxy[M].boxes[id] : null;
-    return a && b ? sub(a, b) : null;
-  };
   const mainAx = (s) => (!s || !s.lay ? null : s.lay.d === 'H' ? 0 : s.lay.d === 'V' ? 1 : null);
   const flowOf = (s) => (s.kids || []).filter((k) => !k.abs);
   const sumRec = (id, prop, cats = ['space']) => recsOf(id).filter((a) => cats.includes(a.cat) && a.prop === prop).reduce((x, a) => x + recDv(a), 0);
   const padsOf = (id, ax) => [sumRec(id, ax ? 'paddingT' : 'paddingL'), sumRec(id, ax ? 'paddingB' : 'paddingR')];
   const gapOf = (id) => sumRec(id, 'gap');
-  // R74: a SRC_SQUASH record that restores a FIXED size on an axis the modelled spec had as FILL / HUG (szFrom)
-  const restoreOf = (id, ax) => recsOf(id).find((a) => (a.cat === 'size' || a.cat === 'icon') && a.prop === (ax ? 'height' : 'width') && a.szFrom && a.szFrom !== 'FIXED');
+  // R74 (m8: only a SRC_SQUASH record): a record that restores a FIXED size on an axis the modelled spec had as FILL /
+  // HUG (szFrom)
+  const restoreOf = (id, ax) => recsOf(id).find((a) => a.code === 'SRC_SQUASH' && (a.cat === 'size' || a.cat === 'icon') && a.prop === (ax ? 'height' : 'width') && a.szFrom && a.szFrom !== 'FIXED');
   const isFillIn = (k, ax) => !!k.sz && k.sz[ax] === 'FILL' && !restoreOf(k.id, ax);
+  // (b) the ids whose records can reach a node at width M: the subtree of its nearest source ancestor (through syn
+  // frames), its own subtree included; R76: climbing while that ancestor itself changed beyond its tolerance in NDM
+  const scopeOf = (M, id, NDM) => {
+    const s = specAll.get(id);
+    let a = specParent.get(id);
+    while (a && a.syn) a = specParent.get(a.id);
+    for (;;) {
+      const da = a && byId.has(a.id) ? NDM[M].get(a.id) : null;
+      if (!da || within(byId.get(a.id).n, da)) break;
+      let up = specParent.get(a.id);
+      while (up && up.syn) up = specParent.get(up.id);
+      if (!up) break;
+      a = up;
+    }
+    const scope = [];
+    const inScope = (x) => { scope.push(x.id); (x.kids || []).forEach(inScope); };
+    if (a || s) inScope(a || s);
+    return scope;
+  };
+
+  let approvalsResolved = [];
+  if (NL) {
+    const rel = (P, M, id) => { const b = P[M] && P[M].boxes ? P[M].boxes[id] : null, e = byId.get(id), s = e && src(e.n, M); return b && s ? sub(b, s) : null; };
+    const nw = modelLayer((M, id) => rel(NP, M, id), (M, id) => rel(NL, M, id));
+    const kept = (a) => nw.approvals.some((b) => (a.drift ? !!b.drift : !b.drift && b.id === a.id && b.width === a.width));
+    // R78: the records resolve an approval only when the node or its record scope carries a box (or type) record;
+    // otherwise it stays, whatever the norm layout proxy shows
+    const byRecord = (a) => scopeOf(a.width, a.id, ND).some((id) => recsOf(id).some(isBoxRec));
+    const gone = needsApproval.filter((a) => !kept(a));
+    approvalsResolved = gone.filter(byRecord).map((a) => ({ id: a.id, width: a.width, magnitude: a.magnitude, ...(a.drift ? { drift: true } : {}) }));
+    ({ deltas: modelDeltas, approvals: needsApproval, fol: modelFollowers, drift: modelDrift } = nw);
+    needsApproval = [...gone.filter((a) => !byRecord(a)).map((a) => ({ ...a, normWhy: 'no box or type record on the node or in its record scope' })), ...needsApproval];
+  }
+
+  // ---- R66: norm deltas (norm proxy minus modelled proxy), attributed like the model deltas ----
+  // R78: the same pass (attribution, agreement, record check) runs on the norm layout proxy against the layout proxy
+  // (BASE = layout, TGT = normLayout, on 'normLayout'): the records must explain every deviation there too
+  const normFollowers = { A: 0, B: 0 };
+  const dnOf = (BASE, TGT) => (M, id) => {
+    const a = TGT && TGT[M] && TGT[M].boxes ? TGT[M].boxes[id] : null, b = BASE && BASE[M] && BASE[M].boxes ? BASE[M].boxes[id] : null;
+    return a && b ? sub(a, b) : null;
+  };
+  const dnP = dnOf(proxy, NP);
+  const normPass = (BASE, TGT, NDM, on) => {
+  const dn = dnOf(BASE, TGT), out = [];
   // predicted change of s's own size on ax at width M ({ v, tol } or null: no prediction)
   const predSize = (M, s, ax, t) => {
     const own = recsOf(s.id), dim = ax ? 'height' : 'width';
@@ -850,7 +930,7 @@ export function verifyScreen(input, opts = {}) {
     const dimR = own.filter((a) => (a.cat === 'size' || a.cat === 'icon') && a.prop === dim);
     const back = restoreOf(s.id, ax);
     if (back) { // R74: the axis becomes FIXED at `to`, whatever the modelled proxy measured
-      const mb = proxy[M].boxes[s.id];
+      const mb = BASE[M].boxes[s.id];
       return mb ? { v: Number(back.to) - mb[ax + 2], tol: t } : null;
     }
     if (dimR.length) return { v: dimR.reduce((x, a) => x + recDv(a), 0), tol: t };
@@ -882,7 +962,7 @@ export function verifyScreen(input, opts = {}) {
       if (dw && Math.abs(dw[2]) > t + EPS) {
         if (fs.length) return null;
         const lhFrom = lh.length ? Number(lh[0].from) : pxNum(s.font && s.font.lh), lhTo = lh.length ? Number(lh[0].to) : lhFrom;
-        const mb = proxy[M].boxes[s.id], nb = NP[M].boxes[s.id];
+        const mb = BASE[M].boxes[s.id], nb = TGT[M].boxes[s.id];
         if (!(lhFrom > 0) || !(lhTo > 0) || !mb || !nb) return null;
         const before = Math.max(1, Math.round(mb[3] / lhFrom));
         let after = Math.max(1, Math.round(nb[3] / lhTo));
@@ -890,7 +970,7 @@ export function verifyScreen(input, opts = {}) {
         return { v: after * lhTo - mb[3], tol: t };
       }
       if (szA !== 'HUG' || (!fs.length && !lh.length)) return { v: 0, tol: t };
-      const mb = proxy[M].boxes[s.id];
+      const mb = BASE[M].boxes[s.id];
       if (!mb) return null;
       if (ax === 1 && lh.length) {
         const from = Number(lh[0].from);
@@ -912,7 +992,7 @@ export function verifyScreen(input, opts = {}) {
       if (dks.some((x) => !x)) return null;
       if (ax === mainAx(s)) return { v: N + F + (s.lay.sb ? 0 : (fk.length - 1) * gapOf(s.id)) + dks.reduce((x, dk) => x + dk[ax + 2], 0), tol: t };
       const mx = (P) => Math.max(...fk.map((k) => P[M].boxes[k.id][ax + 2]));
-      return { v: N + F + mx(NP) - mx(proxy), tol: t };
+      return { v: N + F + mx(TGT) - mx(BASE), tol: t };
     }
     return { v: 0, tol: t };
   };
@@ -952,27 +1032,15 @@ export function verifyScreen(input, opts = {}) {
   const normExplain = (M, root) => {
     const e = byId.get(root.id), s = specAll.get(root.id);
     // (b) the records that can reach this node: in the subtree of its nearest source ancestor (through syn frames),
-    // its own subtree included (a HUG frame follows its children); the agreement check below does the arithmetic
-    let a = specParent.get(root.id);
-    while (a && a.syn) a = specParent.get(a.id);
-    // R76: while that ancestor itself moved or resized in the norm proxy (beyond its tolerance), the node answers to
-    // whatever changed it: the scope climbs to the ancestor's own nearest source ancestor (a reflowing text in a
-    // widened bubble, R74; the last item of a space-between row in a card that a screen padding narrowed). The
-    // agreement check below still predicts the node from that ancestor's measured box.
-    for (;;) {
-      const da = a && byId.has(a.id) ? ND[M].get(a.id) : null;
-      if (!da || within(byId.get(a.id).n, da)) break;
-      let up = specParent.get(a.id);
-      while (up && up.syn) up = specParent.get(up.id);
-      if (!up) break;
-      a = up;
-    }
-    const scope = [];
-    const inScope = (x) => { scope.push(x.id); (x.kids || []).forEach(inScope); };
-    if (a || s) inScope(a || s);
+    // its own subtree included (a HUG frame follows its children); the agreement check below does the arithmetic.
+    // R76: while that ancestor itself moved or resized (beyond its tolerance), the node answers to whatever changed it:
+    // the scope climbs to the ancestor's own nearest source ancestor (a reflowing text in a widened bubble, R74; the
+    // last item of a space-between row in a card that a screen padding narrowed); the agreement check still predicts
+    // the node from that ancestor's measured box.
+    const scope = scopeOf(M, root.id, NDM);
     const related = scope.flatMap((id) => recsOf(id)).filter(isBoxRec);
     if (!s || !related.length) return { normWhy: 'no applied box record on the node, its layout parent or anything inside them' };
-    const d = ND[M].get(root.id), t = tolOf(e.n), mism = [];
+    const d = NDM[M].get(root.id), t = tolOf(e.n), mism = [];
     for (const w of root.why) {
       const [ax, size] = AXW[w], m = d[ax + (size ? 2 : 0)];
       const p = size ? predSize(M, s, ax, t) : predPos(M, s, ax, t);
@@ -982,14 +1050,14 @@ export function verifyScreen(input, opts = {}) {
     if (mism.length) return { normMismatch: mism };
     return { entry: [...new Set(related.map((a) => a.entry))] };
   };
-  for (const M of norm && layout ? W : []) {
-    const { mroots, followers } = attribute(M, ND[M], true, (k) => { const b = src(k, M), d = ND[M].get(k.id); return [0, 1, 2, 3].map((i) => b[i] + d[i]); });
-    normFollowers[M] = followers;
+  for (const M of W) {
+    const { mroots, followers } = attribute(M, NDM[M], true, (k) => { const b = src(k, M), d = NDM[M].get(k.id); return [0, 1, 2, 3].map((i) => b[i] + d[i]); });
+    if (!on) normFollowers[M] = followers;
     for (const r of mroots) {
       const x = normExplain(M, r);
-      const root = { id: r.id, width: M, delta: r.delta, why: r.why, layer: 'norm' };
+      const root = { id: r.id, width: M, delta: r.delta, why: r.why, layer: 'norm', ...(on ? { on } : {}) };
       if (x.entry) Object.assign(root, { explainedBy: 'norm', entry: x.entry }); else Object.assign(root, x);
-      roots.push(root);
+      out.push(root);
     }
     // R66 record agreement: every box record is checked against the measured norm delta where it acts, root or not
     // (a record whose `to` is wrong by less than a root shows: line-height 25.3 -> 25 claimed as 29 moves nothing
@@ -1024,15 +1092,23 @@ export function verifyScreen(input, opts = {}) {
         if (pr && Math.abs(m - pr.v) > pr.tol + EPS) mism.push({ axis: w, measured: r2(m), predicted: r2(pr.v) });
       }
       if (!mism.length) continue;
-      const prev = roots.find((r) => r.layer === 'norm' && r.id === id && r.width === M);
+      const prev = out.find((r) => r.id === id && r.width === M);
       if (prev) {
         delete prev.explainedBy; delete prev.entry; delete prev.normWhy;
         for (const x of mism) if (!prev.why.includes(x.axis)) prev.why.push(x.axis);
         prev.normMismatch = [...(prev.normMismatch || []), ...mism.filter((x) => !(prev.normMismatch || []).some((y) => y.axis === x.axis))];
         prev.recordCheck = true;
-      } else roots.push({ id, width: M, delta: d, why: mism.map((x) => x.axis), layer: 'norm', normMismatch: mism, recordCheck: true });
+      } else out.push({ id, width: M, delta: d, why: mism.map((x) => x.axis), layer: 'norm', ...(on ? { on } : {}), normMismatch: mism, recordCheck: true });
     }
   }
+  return out;
+  };
+  if (norm && layout) {
+    roots.push(...normPass(proxy, NP, ND));
+    // R78: on the norm layout proxy only what the records cannot explain is listed (an open norm root)
+    if (NL) roots.push(...normPass(layout, NL, NDL, 'normLayout').filter((r) => !r.explainedBy));
+  }
+
 
   // ---- R66: static audit, every difference between the modelled and the target spec comes from a record ----
   const normSpecFindings = [];
@@ -1261,17 +1337,61 @@ export function verifyScreen(input, opts = {}) {
   const cropShift = opts.shift ?? 1;
   const sizeRoot = new Map();
   for (const r of roots) {
+    if (r.on) continue; // R78: a norm layout root is no box the crops are taken from
     if (!r.why.some((w) => w === 'w' || w === 'h')) continue;
     if (!r.why.some((w) => (w === 'w' && Math.abs(r.delta[2]) > cropShift + EPS) || (w === 'h' && Math.abs(r.delta[3]) > cropShift + EPS))) continue;
     // R66: a node that is a size root in two layers (layout and norm) shares the status of the unexplained one
     const k = `${r.id}|${r.width}`, prev = sizeRoot.get(k);
     if (!prev || (prev.explainedBy && !r.explainedBy)) sizeRoot.set(k, r);
   }
+  // R66: records that change nothing measurable (norm.unused)
+  const unused = [], unusedRecs = new Set();
+  for (const a of norm ? recs : []) {
+    if (a.cat === 'color') { try { if (deltaE2000(String(a.from), String(a.to)) < 1) continue; } catch { /* unparsable: judged below */ } }
+    const id = String(a.node), s = specAll.get(id);
+    const ids = [id, ...((s && s.kids) || []).map((k) => k.id)];
+    const moved = W.some((M) => ids.some((k) => { const d = dnP(M, k); return !!d && d.some((v) => Math.abs(v) > NORM_MOVED); }));
+    const dA = proxy.A && proxy.A.dom, dN = NP.A && NP.A.dom;
+    const painted = !!dA && !!dN && JSON.stringify(dA[id] ?? null) !== JSON.stringify(dN[id] ?? null);
+    if (!moved && !painted) { unusedRecs.add(a); unused.push({ entry: a.entry, node: id, ...(a.run !== undefined ? { run: a.run } : {}), prop: a.prop, from: a.from, to: a.to, code: a.code }); }
+  }
+  // R77: a crop failure (source vs norm layout proxy) is the records' doing only when (i) the same crop of the source
+  // against the plain layout proxy passes (input.cropsLayout: without the records there is no fault) and (ii) the
+  // record that may change the node's pixels is not in norm.unused and its change shows: the node's crop of the norm
+  // layout proxy against the layout proxy fails too (input.cropsNormVsLayout). Missing measurements explain nothing.
+  const failing = (c) => !!c && (c.ratio > cropRatio || (c.peak ?? 0) >= cropPeak);
+  const cropsL = Array.isArray(input.cropsLayout) ? input.cropsLayout : null, cropsNL = Array.isArray(input.cropsNormVsLayout) ? input.cropsNormVsLayout : null;
+  // R77 for a resize record: an icon / image leaf's own ICON_FRAME / SRC_SQUASH record exists because the plain layout
+  // proxy cannot draw the leaf as the source does (Planora's squashed avatar is a 135.5 px FILL box there, the R61
+  // open crop), so (i) cannot hold. Instead the crop difference must be the declared resize itself: the norm layout
+  // proxy draws the node at every such record's `to` on its axis (within tolFrame) and the source size differs from
+  // `to` beyond the crop search on at least one of them. Anything else drawn in the leaf is left to the data checks
+  // (icon identity, svg markup and paint).
+  const resized = (c, rs) => {
+    const e = byId.get(c.id), fr = rs.filter((a) => (a.code === 'ICON_FRAME' || a.code === 'SRC_SQUASH') && (a.prop === 'width' || a.prop === 'height'));
+    if (!e || !(e.n.kind === 'icon' || e.n.kind === 'image') || !fr.length || !NL) return false;
+    const b = NL[c.width] && NL[c.width].boxes[c.id], s = src(e.n, c.width);
+    if (!b || !s) return false;
+    const ax = (a) => (a.prop === 'width' ? 2 : 3);
+    return fr.every((a) => Math.abs(b[ax(a)] - Number(a.to)) <= tolFrame + EPS) && fr.some((a) => Math.abs(s[ax(a)] - Number(a.to)) > cropShift + EPS);
+  };
+  const normCause = (c, rs) => {
+    if (!rs.length) return { rs: [] };
+    const live = rs.filter((a) => !unusedRecs.has(a));
+    if (!live.length) return { rs: [], why: 'its records change nothing measurable (norm.unused)' };
+    if (input.cropsOn === 'layout' || !cropsL || !cropsNL) return { rs: [], why: 'no crops of the layout and norm layout proxies to tell what the records changed' };
+    const at = (xs) => xs.find((x) => x.id === c.id && x.width === c.width);
+    const l = at(cropsL), d = at(cropsNL);
+    if (!l || !d) return { rs: [], why: 'no crops of the layout and norm layout proxies to tell what the records changed' };
+    if (failing(l) && !resized(c, live)) return { rs: [], why: 'the crop fails against the plain layout proxy too (the fault is not the records\' doing)' };
+    if (!failing(d)) return { rs: [], why: 'the records do not change this crop (norm layout vs layout passes)' };
+    return { rs: live };
+  };
   if (norm && input.cropsOn === 'layout') skipped.push('norm-crop');
   if (!Array.isArray(crops)) skipped.push('crop');
   else {
     for (const c of crops) {
-      if (!(c.ratio > cropRatio || (c.peak ?? 0) >= cropPeak)) continue;
+      if (!failing(c)) continue;
       const e = byId.get(c.id), r = sizeRoot.get(`${c.id}|${c.width}`);
       const leafIcon = !!e && (e.n.kind === 'icon' || e.n.kind === 'image');
       // R66: the node's own records that may change its pixels
@@ -1284,36 +1404,31 @@ export function verifyScreen(input, opts = {}) {
       // R61: an icon or image does not stretch with its box (it is drawn centred / fitted), so a resized box moves the
       // drawn content: a size explanation never excuses such a leaf's crop; it stands alone (approval via allowlist).
       // R66: unless the norm resized it on purpose (its own ICON_FRAME / SRC_SQUASH record)
+      // R77: only through the records that caused it (normCause)
       else if (r && r.explainedBy && leafIcon) {
-        if (ownFrame.length) cropExplained.push(byNorm(ownFrame));
-        else crop.push({ ...c, sizeExplainedBy: r.explainedBy, root: r.id });
+        const k = normCause(c, ownFrame);
+        if (k.rs.length) cropExplained.push(byNorm(k.rs));
+        else crop.push({ ...c, sizeExplainedBy: r.explainedBy, root: r.id, ...(k.why ? { normWhy: k.why } : {}) });
       }
-      // R66: a norm size root shares its status with its crop only through a record on the node itself
+      // R66: a norm size root shares its status with its crop only through a record on the node itself (R77: a paint /
+      // type / icon record that caused it)
       else if (r && r.explainedBy === 'norm') {
-        const mine = [...own.filter(isBoxRec), ...ownPaint];
-        if (mine.length) cropExplained.push(byNorm(mine)); else crop.push({ ...c, sizeExplainedBy: 'norm', root: r.id });
+        const k = normCause(c, ownPaint);
+        if (k.rs.length) cropExplained.push(byNorm(k.rs)); else crop.push({ ...c, sizeExplainedBy: 'norm', root: r.id, ...(k.why ? { normWhy: k.why } : {}) });
       }
       else if (r && r.explainedBy) cropExplained.push({ ...c, explainedBy: r.explainedBy, root: r.id });
       else if (r) cropLinked.push({ ...c, root: r.id });
-      else if (ownPaint.length) cropExplained.push(byNorm(ownPaint));
-      else crop.push(c);
+      else {
+        const k = normCause(c, ownPaint);
+        if (k.rs.length) cropExplained.push(byNorm(k.rs)); else crop.push(k.why ? { ...c, normWhy: k.why } : c);
+      }
     }
   }
 
   // ---- R66: the norm section of the report ----
   let normOut;
   if (norm) {
-    for (const f of normSpecFindings) data.push(f);
-    const unused = [];
-    for (const a of recs) {
-      if (a.cat === 'color') { try { if (deltaE2000(String(a.from), String(a.to)) < 1) continue; } catch { /* unparsable: judged below */ } }
-      const id = String(a.node), s = specAll.get(id);
-      const ids = [id, ...((s && s.kids) || []).map((k) => k.id)];
-      const moved = W.some((M) => ids.some((k) => { const d = dn(M, k); return !!d && d.some((v) => Math.abs(v) > NORM_MOVED); }));
-      const dA = proxy.A && proxy.A.dom, dN = NP.A && NP.A.dom;
-      const painted = !!dA && !!dN && JSON.stringify(dA[id] ?? null) !== JSON.stringify(dN[id] ?? null);
-      if (!moved && !painted) unused.push({ entry: a.entry, node: id, ...(a.run !== undefined ? { run: a.run } : {}), prop: a.prop, from: a.from, to: a.to, code: a.code });
-    }
+    for (const f of [...recFindings, ...normSpecFindings]) data.push(f);
     const nr = roots.filter((r) => r.layer === 'norm');
     normOut = {
       applied: recs.length, explainedRoots: nr.filter((r) => r.explainedBy).length,
@@ -1353,9 +1468,13 @@ const textAnchor = (n, s, b) => {
   return k ? [b[0] + (b[2] - s[2]) * k, b[1], s[2], b[3]] : b;
 };
 
+// R77: opts.base = another proxy ({A, B} with png and boxes) compared instead of the source: the window (source size)
+// sits in each proxy image where that proxy's box anchors it (R72), masks at each proxy's boxes; opts.ids = only
+// these nodes are compared (masks still cover every cropped descendant).
 export async function measureCrops(browser, screen, proxy, opts = {}) {
   const maxArea = opts.maxArea ?? CROP_MAX_AREA;
-  if (!screen.png || !screen.png[0] || !screen.png[1]) throw new Error('measureCrops: screen.png is missing (captureScreens with { png: true })');
+  const base = opts.base || null, only = opts.ids ? new Set(opts.ids) : null;
+  if (!base && (!screen.png || !screen.png[0] || !screen.png[1])) throw new Error('measureCrops: screen.png is missing (captureScreens with { png: true })');
   const out = [];
   for (const [i, M] of W.entries()) {
     const P = proxy[M];
@@ -1365,7 +1484,18 @@ export async function measureCrops(browser, screen, proxy, opts = {}) {
     // R50: a leaf that paints content (text, icon, image) is cropped at any size; containers above maxArea rely on
     // the data checks (colour, radius, stroke, effect, visibility)
     const paintLeaf = (n) => !(n.kids && n.kids.length) && (isTextSrc(n) || n.kind === 'icon' || n.kind === 'image');
-    const rect = (n) => { const s = M === 'A' ? n.rA : n.rB, b = P.boxes[n.id]; return s && b && s[2] * s[3] > 0 && (s[2] * s[3] <= maxArea || paintLeaf(n)) ? [s, b] : null; };
+    const Bp = base ? base[M] : null;
+    if (base && (!Bp || !Bp.png)) throw new Error(`measureCrops: base proxy PNG at ${M} is missing`);
+    // [rect in the first image, box in the proxy image]: the source rect, or (R77) the base proxy's window
+    const rect = (n) => {
+      const s = M === 'A' ? n.rA : n.rB, b = P.boxes[n.id];
+      if (!(s && b && s[2] * s[3] > 0 && (s[2] * s[3] <= maxArea || paintLeaf(n)))) return null;
+      if (!Bp) return [s, b];
+      const bb = Bp.boxes[n.id];
+      if (!bb) return null;
+      const w = textAnchor(n, s, bb);
+      return [[w[0], w[1], s[2], s[3]], b];
+    };
     const cropped = new Map(flat.map(({ n }) => [n.id, rect(n)]).filter(([, r]) => r));
     // R45: a container compares its own paint only: every descendant that has its own crop is masked (in the source
     // image at its source box, in the proxy image at its proxy box); a descendant without a crop stays in the window
@@ -1375,11 +1505,12 @@ export async function measureCrops(browser, screen, proxy, opts = {}) {
     };
     for (const { n } of flat) {
       const r = cropped.get(n.id);
-      if (!r) continue;
+      if (!r || (only && !only.has(n.id))) continue;
       const [ma, mb] = descMasks(n);
       pairs.push({ id: n.id, rectA: r[0], rectB: textAnchor(n, r[0], r[1]), ...(ma.length ? { masksA: ma, masksB: mb } : {}) });
     }
-    const res = await cropDiffMany(browser, screen.png[i], P.png, pairs, opts);
+    if (!pairs.length) continue;
+    const res = await cropDiffMany(browser, Bp ? Bp.png : screen.png[i], P.png, pairs, opts);
     pairs.forEach((p, k) => out.push({ id: p.id, width: M, ratio: res[k].ratio, diff: res[k].diff, peak: res[k].peak }));
   }
   return out;
@@ -1404,5 +1535,14 @@ export async function verifyScreenWithImages(browser, input, opts = {}) {
   const crops = await measureCrops(browser, input.screen, input.normLayout || input.layout, opts);
   const NPx = input.norm.proxy;
   const pixel = [await pixelDiff(browser, input.screen.png[0], NPx.A.png), await pixelDiff(browser, input.screen.png[1], NPx.B.png)];
-  return verifyScreen({ ...input, crops, pixel, cropsOn }, opts);
+  // R77: for each failing crop, the same crop against the plain layout proxy and the norm layout proxy against the
+  // layout proxy (what the records changed there)
+  const extra = {};
+  if (input.normLayout) {
+    const ratio = opts.cropRatio ?? CROP_RATIO, peak = opts.cropPeak ?? CROP_PEAK;
+    const ids = [...new Set(crops.filter((c) => c.ratio > ratio || (c.peak ?? 0) >= peak).map((c) => c.id))];
+    extra.cropsLayout = ids.length ? await measureCrops(browser, input.screen, input.layout, { ...opts, ids }) : [];
+    extra.cropsNormVsLayout = ids.length ? await measureCrops(browser, input.screen, input.normLayout, { ...opts, ids, base: input.layout }) : [];
+  }
+  return verifyScreen({ ...input, crops, pixel, cropsOn, ...extra }, opts);
 }

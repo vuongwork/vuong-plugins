@@ -127,7 +127,8 @@ export const DS_EXT = {
     for (const it of items) it.screen.darkMode = dark;
     const ds = designSystem(items.map((it) => ({ screen: it.screen, spec: it.modelled.spec })), state);
     state.files.set(job.path, ds);
-    return items.map((it) => ds.targets[String(it.screen.id ?? it.screen.name)]);
+    // m8: verify cross-checks every applied record against the entries
+    return items.map((it) => ({ ...ds.targets[String(it.screen.id ?? it.screen.name)], entries: ds.norm.entries }));
   },
   async afterFile({ job, res, dir, browser, state }) {
     const ds = state.files.get(job.path);

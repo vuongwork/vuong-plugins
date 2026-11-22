@@ -10,7 +10,9 @@
 //   opts.norm = { spec, applied } (applyNorm of the modelled spec, R66): also renders the target spec at A and B (mark
 //   'norm', returned as `norm`) and the records replayed on the inferred spec (replayApplied, unmodelled, mark
 //   'normLayout', returned as `normLayout`; the crops are measured on it; if the replay throws, report.normLayoutError
-//   is set and 'norm-crop' is skipped). Without opts.norm: exactly the plan-1 pipeline.
+//   is set and 'norm-crop' is skipped). Without opts.norm: exactly the plan-1 pipeline. opts.norm.entries (m8, the
+//   normalize entries) is passed to verify, which cross-checks every record against them. opts.normLayoutTweak(spec)
+//   (mutate.mjs normLayoutDrift only) changes the replayed spec in place before it is rendered.
 // runFile(browser, htmlPath, opts) -> { file: htmlPath, screens: [{ screen, inferred, modelled, report, proxy, layout,
 //   mutations? }] }
 //   opts: root (required), widen, nameOf, widenBy, viewport, webFonts (false = no Google Fonts, R9 opt-out), fontMap
@@ -76,10 +78,11 @@ export async function runScreen(browser, screen, inferred, fontMap, opts = {}) {
   let normLayout = null, normLayoutError = null;
   try {
     const ls = replayApplied(inferred.spec, applied);
+    if (opts.normLayoutTweak) opts.normLayoutTweak(ls);
     normLayout = { A: mark(await at(ls, 0), 'normLayout'), B: mark(await at(ls, 1), 'normLayout') };
   } catch (err) { normLayoutError = err.message; }
   const report = await verifyScreenWithImages(browser, {
-    screen, spec: modelled.spec, proxy, layout, flags, norm: { spec: opts.norm.spec, applied, proxy: norm }, normLayout,
+    screen, spec: modelled.spec, proxy, layout, flags, norm: { spec: opts.norm.spec, applied, proxy: norm, ...(Array.isArray(opts.norm.entries) ? { entries: opts.norm.entries } : {}) }, normLayout,
   }, opts.verify || {});
   if (normLayoutError) report.normLayoutError = normLayoutError;
   return { report, proxy, layout, modelled, norm, normLayout };
@@ -126,7 +129,7 @@ export async function runFile(browser, htmlPath, opts = {}) {
     const entry = { screen, inferred, ...r, ...(target ? { target } : {}) };
     if (mutateAt.has(i)) {
       const { runMutations } = await import('./mutate.mjs');
-      entry.mutations = await runMutations(browser, screen, inferred, fontMap, { proxy: proxyOpts, verify: opts.verify, ...(norm ? { norm } : {}) });
+      entry.mutations = await runMutations(browser, screen, inferred, fontMap, { proxy: proxyOpts, verify: opts.verify, screenIndex: i, ...(norm ? { norm } : {}) });
     }
     out.push(entry);
     if (opts.onScreen) opts.onScreen(entry);

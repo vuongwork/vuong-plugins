@@ -1645,6 +1645,8 @@ test('R66: a colour record on the card explains its crop and sets the expected c
     inp.norm.proxy.A.dom['n.0'].bg = 'rgb(224, 224, 224)';
     inp.norm.applied = applied;
     inp.crops = [bad('n.0', 'A'), bad('n.0', 'B')];
+    // R77: the plain layout proxy passes these crops; the norm layout proxy differs from it there (the record's doing)
+    inp.cropsLayout = inp.crops.map((c) => ({ ...c, ratio: 0, diff: 0, peak: 0 })); inp.cropsNormVsLayout = inp.crops.map((c) => ({ ...c }));
     return verifyScreen(inp);
   };
   const r = make([rec('n.0', 'color', 'COLOR_NEAR', 'bg', '#eeeeee', '#e0e0e0')]);
@@ -1680,6 +1682,7 @@ test('R66/R61: icon 20 -> 24 with ICON_FRAME on the icon explains its crop; the 
     nmove(inp, 'n.0.1', [0, 0, 4, 4]); nmove(inp, 'n.0', [0, 0, 4, 4]); nmove(inp, 'n.1', [0, 4, 0, 0]);
     inp.norm.applied = applied;
     inp.crops = [bad('n.0.1', 'A')];
+    inp.cropsLayout = [{ ...bad('n.0.1', 'A'), ratio: 0, diff: 0, peak: 0 }]; inp.cropsNormVsLayout = [bad('n.0.1', 'A')]; // R77
     return verifyScreen(inp);
   };
   const r = make([rec('n.0.1', 'icon', 'ICON_FRAME', 'width', 20, 24), rec('n.0.1', 'icon', 'ICON_FRAME', 'height', 20, 24)]);
@@ -1853,6 +1856,7 @@ test('R74/R61: the avatar crop on a size root explained by shrink is explained b
   const bad = { id: 'n.0.0', width: 'A', ratio: 0.8, diff: 300, peak: 200 };
   const inp = sayFixture();
   inp.crops = [bad];
+  inp.cropsLayout = [{ ...bad, ratio: 0, diff: 0, peak: 0 }]; inp.cropsNormVsLayout = [bad]; // R77: the record's doing
   const r = verifyScreen(inp);
   assert.ok(r.roots.some((x) => x.id === 'n.0.0' && x.width === 'A' && x.explainedBy === 'shrink'), JSON.stringify(r.roots));
   assert.deepEqual(r.cropExplained.map((c) => [c.id, c.explainedBy]), [['n.0.0', 'norm']]);
@@ -1988,4 +1992,157 @@ test('R76: the last item of a space-between row inside a FILL card the screen pa
   // the icon moved 5 px left instead of 2: the prediction from the card's measured box disagrees
   const o = verifyScreen(sbFixture(-5));
   assert.ok(normRoots(o).some((x) => x.id === 'n.0.1' && !x.explainedBy && x.normMismatch), JSON.stringify(normRoots(o)));
+});
+
+// ---- R77: a crop failure is explained by the norm only when the records caused it ----
+// (i) the same node's crop against the plain layout proxy passes (the fault exists only because of the records) and
+// (ii) the node carries a paint / type / icon record not in norm.unused whose change shows in the norm layout proxy
+// against the layout proxy (that crop fails too)
+const R77_BAD = (id, width) => ({ id, width, ratio: 0.9, diff: 5000, peak: 255 });
+const R77_OK = (id, width) => ({ id, width, ratio: 0, diff: 0, peak: 0 });
+function deFixture({ layoutOk = true, recordShows = false } = {}) {
+  const inp = normFixture();
+  nspec(inp, 'n.0.0', (s) => { s.font = { ...s.font, c: 'rgb(35, 34, 34)' }; });
+  const d = inp.norm.proxy.A.dom['n.0.0'];
+  d.color = 'rgb(35, 34, 34)'; d.runs = d.runs.map((x) => { const y = [...x]; y[7] = 'rgb(35, 34, 34)'; return y; });
+  inp.norm.applied = [rec('n.0.0', 'color', 'COLOR_DE1', 'color', '#222222', '#232222', { run: 0 })];
+  inp.crops = [R77_BAD('n.0.0', 'A'), R77_BAD('n.0.0', 'B')];
+  inp.cropsLayout = ['A', 'B'].map((w) => (layoutOk ? R77_OK : R77_BAD)('n.0.0', w));
+  inp.cropsNormVsLayout = ['A', 'B'].map((w) => (recordShows ? R77_BAD : R77_OK)('n.0.0', w));
+  return inp;
+}
+
+test('R77: an invisible colour record (ΔE < 1) never explains a 90 % crop failure of its text', () => {
+  const r = verifyScreen(deFixture());
+  assert.deepEqual(r.cropExplained, []);
+  assert.deepEqual(r.crop.map((c) => [c.id, c.width]), [['n.0.0', 'A'], ['n.0.0', 'B']]);
+  assert.equal(r.pass, false);
+  // without the extra crops (no norm layout proxy measured) nothing is explained either
+  const o = deFixture(); delete o.cropsLayout; delete o.cropsNormVsLayout;
+  assert.deepEqual(verifyScreen(o).cropExplained, []);
+});
+
+test('R77: a record whose change shows explains the crop only if the plain layout proxy passes the same crop', () => {
+  const r = verifyScreen(deFixture({ recordShows: true }));
+  assert.deepEqual(r.cropExplained.map((c) => [c.id, c.width, c.explainedBy]), [['n.0.0', 'A', 'norm'], ['n.0.0', 'B', 'norm']]);
+  // the fault is there without the records too: open
+  const o = verifyScreen(deFixture({ recordShows: true, layoutOk: false }));
+  assert.deepEqual(o.cropExplained, []);
+  assert.deepEqual(o.crop.map((c) => c.id), ['n.0.0', 'n.0.0']);
+});
+
+test('R77: a record that changes nothing (norm.unused, a no-op SRC_SQUASH) never explains a crop', () => {
+  const inp = normFixture();
+  inp.norm.applied = [rec('n.0.1', 'icon', 'SRC_SQUASH', 'width', 20, 20)];
+  inp.crops = [R77_BAD('n.0.1', 'A')];
+  inp.cropsLayout = [R77_OK('n.0.1', 'A')];
+  inp.cropsNormVsLayout = [R77_BAD('n.0.1', 'A')];
+  const r = verifyScreen(inp);
+  assert.equal(r.norm.unused.length, 1);
+  assert.deepEqual(r.cropExplained, []);
+  assert.deepEqual(r.crop.map((c) => c.id), ['n.0.1']);
+  assert.equal(r.pass, false);
+});
+
+// ---- R78: the norm layout proxy is checked like the norm proxy ----
+function r78Fixture() {
+  const inp = normFixture();
+  modelOnly(inp, 'n.1', [0, 0, 0, 6]);
+  for (const M of ['A', 'B']) inp.norm.proxy[M].boxes['n.1'][3] += 6;
+  inp.norm.applied = [rec('n.0', 'color', 'COLOR_NEAR', 'bg', '#eeeeee', '#eeeeee')];
+  inp.normLayout = { A: { ...inp.layout.A, boxes: structuredClone(inp.layout.A.boxes), mark: 'normLayout' }, B: { ...inp.layout.B, boxes: structuredClone(inp.layout.B.boxes), mark: 'normLayout' } };
+  return inp;
+}
+
+test('R78: the norm layout proxy must carry mark normLayout and model none', () => {
+  const a = r78Fixture(); a.normLayout = a.norm.proxy;
+  assert.throws(() => verifyScreen(a), /norm layout proxy at A/);
+  const b = r78Fixture(); delete b.normLayout.A.mark;
+  assert.throws(() => verifyScreen(b), /norm layout proxy at A/);
+  const c = r78Fixture(); c.normLayout = c.layout;
+  assert.throws(() => verifyScreen(c), /norm layout proxy at A/);
+});
+
+test('R78: a norm layout deviation no record explains is an open norm root; the approval is not resolved without a box record', () => {
+  const inp = r78Fixture();
+  for (const M of ['A', 'B']) inp.normLayout[M].boxes['n.1'][3] += 6;
+  const r = verifyScreen(inp);
+  assert.ok(r.roots.some((x) => x.layer === 'norm' && x.on === 'normLayout' && x.id === 'n.1' && !x.explainedBy), JSON.stringify(r.roots));
+  assert.ok(r.norm.unexplained.includes('n.1'));
+  assert.deepEqual(r.norm.approvalsResolved, []);
+  assert.ok(r.needsApproval.some((x) => x.id === 'n.1'), JSON.stringify(r.needsApproval));
+  assert.equal(r.pass, false);
+  // the norm layout proxy equal to the layout proxy: nothing to explain there, the plan-1 approval stays
+  const k = verifyScreen(r78Fixture());
+  assert.ok(k.needsApproval.some((x) => x.id === 'n.1'));
+  assert.ok(!k.roots.some((x) => x.on === 'normLayout'), JSON.stringify(k.roots));
+});
+
+test('R78: the line-height records explain the norm layout proxy too (round-up column)', () => {
+  const r = verifyScreen(driftColumn());
+  assert.deepEqual(r.roots.filter((x) => x.on === 'normLayout'), []);
+  // a text the norm layout proxy draws 3 px lower without a record: open
+  const o = driftColumn();
+  o.normLayout.A = { ...o.normLayout.A, boxes: structuredClone(o.normLayout.A.boxes) };
+  o.normLayout.A.boxes['n.11'][1] += 3;
+  const x = verifyScreen(o);
+  assert.ok(x.roots.some((y) => y.on === 'normLayout' && y.id === 'n.11' && !y.explainedBy), JSON.stringify(x.roots.filter((y) => y.layer === 'norm')));
+});
+
+// ---- m8: records are cross-checked against the entries when verify has them ----
+test('m8: every record must name an auto / answered entry with the same prop, from and to; else a norm-spec finding', () => {
+  const R = rec('n.0', 'space', 'GRID4', 'paddingL', 13, 12);
+  const E = (o = {}) => ({ id: R.entry, cat: 'space', code: 'GRID4', prop: 'paddingL', from: 13, to: 12, status: 'auto', nodes: [{ screen: 's', node: 'n.0' }], ...o });
+  const run = (entries) => { const inp = padFixture([R]); inp.norm.entries = entries; return verifyScreen(inp); };
+  const ok = run([E()]);
+  assert.deepEqual(ok.data, []);
+  assert.equal(ok.pass, true, JSON.stringify(ok.roots));
+  for (const entries of [[], [E({ status: 'ask' })], [E({ to: 8 })], [E({ prop: 'paddingR' })]]) {
+    const r = run(entries);
+    assert.ok(r.data.some((d) => d.kind === 'norm-spec' && d.path === `record ${R.entry}`), JSON.stringify(r.data));
+    assert.equal(r.pass, false);
+  }
+});
+
+test('m8: only a SRC_SQUASH record restores a FIXED size (szFrom)', () => {
+  const r = verifyScreen(sayFixture({ applied: [rec('n.0.0', 'icon', 'ICON_FRAME', 'width', 26, 34, { szFrom: 'FILL' })] }));
+  assert.ok(r.data.some((d) => d.kind === 'norm-spec' && d.id === 'n.0.0' && d.path === 'sz.0'), JSON.stringify(r.data));
+  assert.equal(r.pass, false);
+});
+
+test('R77: measureCrops can compare two proxies (opts.base) and only some nodes (opts.ids)', { skip }, async () => {
+  const good = await shot(tick(20)), bad = await shot(cross(20));
+  const tree = { id: 'n', kind: 'frame', rA: [0, 0, 100, 100], rB: [0, 0, 100, 100], kids: [
+    { id: 'n.0', kind: 'icon', rA: [20, 12, 16, 16], rB: [20, 12, 16, 16] }, { id: 'n.1', kind: 'icon', rA: [60, 60, 16, 16], rB: [60, 60, 16, 16] }] };
+  const boxes = { n: [0, 0, 100, 100], 'n.0': [20, 12, 16, 16], 'n.1': [60, 60, 16, 16] };
+  // the source PNG is never read with a base: an empty screen png would fail if it were
+  const screen = { tree, png: [bad, bad] };
+  const same = await measureCrops(browser, screen, { A: { boxes, png: good }, B: { boxes, png: good } }, { base: { A: { boxes, png: good }, B: { boxes, png: good } }, ids: ['n.0'] });
+  assert.deepEqual(same.map((c) => [c.id, c.width]), [['n.0', 'A'], ['n.0', 'B']]);
+  assert.ok(same.every((c) => !fails(c)), JSON.stringify(same));
+  const diff = await measureCrops(browser, screen, { A: { boxes, png: bad }, B: { boxes, png: good } }, { base: { A: { boxes, png: good }, B: { boxes, png: good } }, ids: ['n.0'] });
+  assert.ok(fails(diff.find((c) => c.width === 'A')) && !fails(diff.find((c) => c.width === 'B')), JSON.stringify(diff));
+});
+
+// R77 for a resize record (Planora s3 / s4 avatar, acceptance (b)): the plain layout proxy cannot pass the avatar crop
+// (it draws the FILL avatar 135.5 px wide, the R61 open crop), so (i) is replaced for the node's own ICON_FRAME /
+// SRC_SQUASH record by: the norm layout proxy draws the node at the record's `to` on its axis and the source size
+// differs from `to` beyond the crop search (the crop difference is the declared resize itself)
+test('R77: the avatar crop is explained by its SRC_SQUASH record when the norm layout proxy draws it at `to`; any other size stays open', () => {
+  const bad = { id: 'n.0.0', width: 'A', ratio: 0.47, diff: 300, peak: 165 };
+  const make = (avatarW) => {
+    const inp = sayFixture();
+    const nl = (M) => ({ ...inp.layout[M], boxes: { ...structuredClone(inp.norm.proxy[M].boxes) }, mark: 'normLayout' });
+    inp.normLayout = { A: nl('A'), B: nl('B') };
+    for (const M of ['A', 'B']) inp.normLayout[M].boxes['n.0.0'][2] = avatarW;
+    inp.crops = [bad];
+    inp.cropsLayout = [{ ...bad, ratio: 0.8, peak: 256 }]; // the plain layout proxy fails it too (FILL avatar)
+    inp.cropsNormVsLayout = [bad];
+    return verifyScreen(inp);
+  };
+  const r = make(34);
+  assert.deepEqual(r.cropExplained.map((c) => [c.id, c.explainedBy]), [['n.0.0', 'norm']], JSON.stringify(r.crop));
+  const o = make(30);
+  assert.deepEqual(o.cropExplained, []);
+  assert.deepEqual(o.crop.map((c) => c.id), ['n.0.0']);
 });

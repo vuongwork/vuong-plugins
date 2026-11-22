@@ -16,7 +16,11 @@
 //   opts: root (required), widen, nameOf, widenBy, viewport, webFonts (false = no Google Fonts, R9 opt-out), fontMap
 //   (default defaultFontMap()), verify ({ tolFrame, tolText, tolModel }), mutate (run runMutations too),
 //   mutateSample (with mutate: only n screens of the file, spread evenly: indexes floor(k * N / n)), onScreen(entry)
-//   (progress callback). Capture launches its own browser; proxies and verify use `browser`.
+//   (progress callback), normalize (plan 2, ds.mjs: async ([{ screen, inferred, modelled }] of every screen of the
+//   file) -> [{ spec, applied } | null] in the same order: each screen's target spec; a target with at least one
+//   applied record runs as opts.norm of runScreen and of runMutations, and the screen entry carries it as `target`;
+//   without normalize, or with no applied record: the plan-1 run). Capture launches its own browser; proxies and
+//   verify use `browser`.
 // gate(report, allowlist, { file, screen, tree }) -> { pass, open: { roots, approvals, crops }, allowed: { roots, approvals,
 //   crops } }: the screen gate after the allowlist (spec §14 layer 5). Allowlist entries are
 //   { file, screen, node, width, kind: 'root'|'approval'|'crop', delta + why | ratio + peak, fingerprint, reason, approved };
@@ -109,13 +113,20 @@ export async function runFile(browser, htmlPath, opts = {}) {
   const proxyOpts = webFonts ? {} : { webFonts: false };
   const mutateAt = new Set(opts.mutate ? sampleIndexes(screens.length, opts.mutateSample) : []);
   const out = [];
+  const inferredAll = screens.map((screen) => inferScreen(screen));
+  // plan 2: the target specs of every screen at once (normalisation works on the whole file)
+  const targets = opts.normalize
+    ? await opts.normalize(screens.map((screen, i) => ({ screen, inferred: inferredAll[i], modelled: applyFigmaModel(inferredAll[i].spec, fontMap, { rendered: screen.fontsRendered }) })))
+    : [];
   for (const [i, screen] of screens.entries()) {
-    const inferred = inferScreen(screen);
-    const r = await runScreen(browser, screen, inferred, fontMap, { proxy: proxyOpts, verify: opts.verify });
-    const entry = { screen, inferred, ...r };
+    const inferred = inferredAll[i];
+    const target = targets[i] || null;
+    const norm = target && Array.isArray(target.applied) && target.applied.length ? target : null;
+    const r = await runScreen(browser, screen, inferred, fontMap, { proxy: proxyOpts, verify: opts.verify, ...(norm ? { norm } : {}) });
+    const entry = { screen, inferred, ...r, ...(target ? { target } : {}) };
     if (mutateAt.has(i)) {
       const { runMutations } = await import('./mutate.mjs');
-      entry.mutations = await runMutations(browser, screen, inferred, fontMap, { proxy: proxyOpts, verify: opts.verify });
+      entry.mutations = await runMutations(browser, screen, inferred, fontMap, { proxy: proxyOpts, verify: opts.verify, ...(norm ? { norm } : {}) });
     }
     out.push(entry);
     if (opts.onScreen) opts.onScreen(entry);

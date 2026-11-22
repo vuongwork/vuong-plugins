@@ -84,12 +84,13 @@ export async function screenView(browser, file, entry, g, summary) {
     const P = entry[proxyName][x.width];
     const box = P && P.boxes[x.id];
     items.push({
-      kind, id: x.id, width: x.width, node: describeNode(n), proxy: proxyName === 'layout' ? 'layout proxy' : 'modelled proxy',
+      kind, id: x.id, width: x.width, node: describeNode(n), proxy: proxyName === 'layout' ? 'layout proxy' : proxyName === 'norm' ? 'normalised proxy' : 'modelled proxy',
       src, box, x, allowedBy, flags: flagsOf(x.id),
       job: src || box ? { win: union(src, box), i, P } : null,
     });
   };
-  for (const r of g.open.roots) add('root', r, 'layout');
+  // R66: a root of layer 'norm' is shown on the normalised proxy
+  for (const r of g.open.roots) add('root', r, r.layer === 'norm' && entry.norm ? 'norm' : 'layout');
   for (const r of g.allowed.roots) add('root', r, 'layout', r.allowedBy);
   for (const a of g.open.approvals) add('approval', a, 'proxy');
   for (const a of g.allowed.approvals) add('approval', a, 'proxy', a.allowedBy);

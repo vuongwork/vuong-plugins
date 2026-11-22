@@ -179,9 +179,20 @@
 //    szFrom to FIXED only from such a record. A HUG text whose own width changed beyond tolerance reflows: its height
 //    is predicted as a whole number of lines of its line height (record `to`, else the spec's px value; never more
 //    lines when wider, never fewer when narrower; a font-size record or a non-px line height gives no prediction),
-//    and its scope (b) climbs one level, to what resized its parent. Crops: an icon / image leaf with its own
+//    (its scope reaches what resized its parent through R76). Crops: an icon / image leaf with its own
 //    ICON_FRAME / SRC_SQUASH record is explained 'norm' whatever explained its size root (a layout flag such as
 //    shrink included), since the record is what changes the drawn content.
+//  - R76: scope (b) climbs while the nearest source ancestor itself changed beyond its tolerance in the norm proxy
+//    (its norm delta): a node inside a parent that a record moved or resized answers to that record, still predicted
+//    from the parent's measured box (a space-between row's last item in a card narrowed by the screen padding).
+//  - R75 (plan 2 Task 9: "layers 2-3 run on the norm proxy instead of the figma one"): with a norm layout proxy
+//    (input.normLayout, the records replayed on the unmodelled spec), the Figma-model layer (modelDeltas,
+//    needsApproval, modelDrift, R18 / R43) compares the norm proxy with the norm layout proxy, i.e. the Figma model
+//    of the spec that will be built, instead of the modelled proxy with the layout proxy. A plan-1 approval with no
+//    counterpart there (same node and width; a drift entry with a drift entry) is listed in norm.approvalsResolved
+//    { id, width, magnitude, drift? } (Planora's text round-up drift once line heights are whole px: Figma no longer
+//    rounds the boxes, and what the target layout changes is each text's own record, checked above). One that
+//    remains, or a new one, is a needsApproval entry as before. No norm layout proxy: the plan-1 layer stands.
 //  - 'ask' entries have no records (applyNorm skips them) and a record carrying a status other than auto / answered
 //    is ignored: nothing a question has not answered explains anything.
 //  - report.norm = { applied (records used), explainedRoots, explainedCrops, unexplained (ids of unexplained norm
@@ -771,28 +782,47 @@ export function verifyScreen(input, opts = {}) {
   // not listed. modelDrift = the largest accumulated model delta on any node of the screen (followers included); above
   // tolModel it is one needsApproval entry (drift: true) unless a listed model root already carries that magnitude,
   // so many small steps adding up beyond tolModel can never pass unseen.
-  const modelDeltas = [], needsApproval = [], modelFollowers = { A: 0, B: 0 };
-  let modelDrift = null;
   const mag = (d) => r2(Math.max(...d.map(Math.abs)));
-  for (const M of layout ? W : []) {
-    const DD = new Map();
-    for (const { n } of list) {
-      const md = MD[M].get(n.id), ld = LD[M].get(n.id);
-      if (md && ld) DD.set(n.id, sub(md, ld));
+  // fig(M, id) / lay(M, id): the modelled / unmodelled box minus the source box
+  const modelLayer = (fig, lay) => {
+    const deltas = [], approvals = [], fol = { A: 0, B: 0 };
+    let drift = null;
+    for (const M of layout ? W : []) {
+      const DD = new Map();
+      for (const { n } of list) {
+        const md = fig(M, n.id), ld = lay(M, n.id);
+        if (md && ld) DD.set(n.id, sub(md, ld));
+      }
+      for (const { n } of list) {
+        const dd = DD.get(n.id);
+        if (dd && !within(n, dd) && (!drift || mag(dd) > drift.magnitude)) drift = { id: n.id, width: M, delta: dd, magnitude: mag(dd) };
+      }
+      const { mroots, followers } = attribute(M, DD, true, (k) => { const b = src(k, M), d = DD.get(k.id); return [0, 1, 2, 3].map((i) => b[i] + d[i]); });
+      fol[M] = followers;
+      for (const r of mroots) {
+        const e = { id: r.id, width: M, delta: r.delta, why: r.why, magnitude: mag(r.delta), explainedBy: 'figmaModel' };
+        (e.magnitude > tolModel + EPS ? approvals : deltas).push(e);
+      }
     }
-    for (const { n } of list) {
-      const dd = DD.get(n.id);
-      if (dd && !within(n, dd) && (!modelDrift || mag(dd) > modelDrift.magnitude)) modelDrift = { id: n.id, width: M, delta: dd, magnitude: mag(dd) };
+    if (drift && drift.magnitude > tolModel + EPS && !approvals.some((e) => e.magnitude >= drift.magnitude - EPS)) {
+      approvals.push({ ...drift, drift: true, explainedBy: 'figmaModel' });
     }
-    const { mroots, followers } = attribute(M, DD, true, (k) => { const b = src(k, M), d = DD.get(k.id); return [0, 1, 2, 3].map((i) => b[i] + d[i]); });
-    modelFollowers[M] = followers;
-    for (const r of mroots) {
-      const e = { id: r.id, width: M, delta: r.delta, why: r.why, magnitude: mag(r.delta), explainedBy: 'figmaModel' };
-      (e.magnitude > tolModel + EPS ? needsApproval : modelDeltas).push(e);
-    }
-  }
-  if (modelDrift && modelDrift.magnitude > tolModel + EPS && !needsApproval.some((e) => e.magnitude >= modelDrift.magnitude - EPS)) {
-    needsApproval.push({ ...modelDrift, drift: true, explainedBy: 'figmaModel' });
+    return { deltas, approvals, fol, drift };
+  };
+  let { deltas: modelDeltas, approvals: needsApproval, fol: modelFollowers, drift: modelDrift } = modelLayer((M, id) => MD[M].get(id), (M, id) => LD[M].get(id));
+  // R75: with a target spec, the Figma-model layer is judged on the spec that will be built: the norm proxy (its
+  // Figma model) against the norm layout proxy (the same records on the unmodelled spec). A plan-1 approval with no
+  // counterpart there (same node and width; the drift entry with a drift entry) is resolved by the records
+  // (norm.approvalsResolved); one that remains, or a new one, needs approval as before. Without a norm layout proxy
+  // (its replay failed) the plan-1 layer stands.
+  let approvalsResolved = [];
+  const NL = norm && input.normLayout && W.every((M) => input.normLayout[M] && input.normLayout[M].boxes) ? input.normLayout : null;
+  if (NL) {
+    const rel = (P, M, id) => { const b = P[M] && P[M].boxes ? P[M].boxes[id] : null, e = byId.get(id), s = e && src(e.n, M); return b && s ? sub(b, s) : null; };
+    const nw = modelLayer((M, id) => rel(NP, M, id), (M, id) => rel(NL, M, id));
+    const kept = (a) => nw.approvals.some((b) => (a.drift ? !!b.drift : !b.drift && b.id === a.id && b.width === a.width));
+    approvalsResolved = needsApproval.filter((a) => !kept(a)).map((a) => ({ id: a.id, width: a.width, magnitude: a.magnitude, ...(a.drift ? { drift: true } : {}) }));
+    ({ deltas: modelDeltas, approvals: needsApproval, fol: modelFollowers, drift: modelDrift } = nw);
   }
 
   // ---- R66: norm deltas (norm proxy minus modelled proxy), attributed like the model deltas ----
@@ -925,12 +955,17 @@ export function verifyScreen(input, opts = {}) {
     // its own subtree included (a HUG frame follows its children); the agreement check below does the arithmetic
     let a = specParent.get(root.id);
     while (a && a.syn) a = specParent.get(a.id);
-    // R74: a reflowing text (HUG height, own width changed) answers to what resized its parent: one level up
-    const dwr = s && s.t === 'T' && s.sz && s.sz[1] === 'HUG' ? ND[M].get(root.id) : null;
-    if (a && dwr && Math.abs(dwr[2]) > tolOf(e.n) + EPS) {
+    // R76: while that ancestor itself moved or resized in the norm proxy (beyond its tolerance), the node answers to
+    // whatever changed it: the scope climbs to the ancestor's own nearest source ancestor (a reflowing text in a
+    // widened bubble, R74; the last item of a space-between row in a card that a screen padding narrowed). The
+    // agreement check below still predicts the node from that ancestor's measured box.
+    for (;;) {
+      const da = a && byId.has(a.id) ? ND[M].get(a.id) : null;
+      if (!da || within(byId.get(a.id).n, da)) break;
       let up = specParent.get(a.id);
       while (up && up.syn) up = specParent.get(up.id);
-      if (up) a = up;
+      if (!up) break;
+      a = up;
     }
     const scope = [];
     const inScope = (x) => { scope.push(x.id); (x.kids || []).forEach(inScope); };
@@ -1283,7 +1318,7 @@ export function verifyScreen(input, opts = {}) {
     normOut = {
       applied: recs.length, explainedRoots: nr.filter((r) => r.explainedBy).length,
       explainedCrops: cropExplained.filter((c) => c.explainedBy === 'norm').length,
-      unexplained: [...new Set(nr.filter((r) => !r.explainedBy).map((r) => r.id))], unused, followers: normFollowers,
+      unexplained: [...new Set(nr.filter((r) => !r.explainedBy).map((r) => r.id))], unused, followers: normFollowers, approvalsResolved,
     };
   }
 

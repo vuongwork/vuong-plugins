@@ -50,10 +50,11 @@ const number = (name, v, { positive = false, int = false } = {}) => {
   return n;
 };
 
-export function parseCli(argv, env = process.env) {
+// extra = { options } (ds.mjs): more string options, returned under their own names
+export function parseCli(argv, env = process.env, extra = null) {
   let values;
   try {
-    ({ values } = parseArgs({ args: argv, options: OPTIONS, strict: true, allowPositionals: false }));
+    ({ values } = parseArgs({ args: argv, options: { ...OPTIONS, ...((extra && extra.options) || {}) }, strict: true, allowPositionals: false }));
   } catch (e) { throw new UsageError(e.message); }
   if (values.help) return { help: true };
   if (!values.out) throw new UsageError('--out <dir> is required');
@@ -76,6 +77,7 @@ export function parseCli(argv, env = process.env) {
     verify, webFonts: !values['no-webfonts'], out: values.out, allowlist: values.allowlist,
     mutate: !!values.mutate, mutateSample: number('mutate-sample', values['mutate-sample'], { positive: true, int: true }),
     corpus: values.corpus, corpusDir,
+    ...(extra ? Object.fromEntries(Object.keys(extra.options || {}).map((k) => [k, values[k]])) : {}),
   };
 }
 
@@ -98,15 +100,20 @@ const safe = (s) => String(s).replace(/[^A-Za-z0-9._-]/g, '_');
 const irOf = (screens) => screens.map(({ png, pngOriginal, ...rest }) => rest);
 
 // Runs the whole job; deps.fontMap / deps.browser / deps.log are for tests. Returns the exit code.
-export async function main(argv, deps = {}) {
+// ext (ds.mjs, plan 2): { usage, options, setup(o, deps, jobs) -> state (throws: exit 2), normalize(job, items, state)
+// -> targets (runFile opts.normalize), afterFile({ job, res, dir, browser, state }) (more outputs per file),
+// finish({ state, log, pass }) (the last lines) }; state.args is merged into report.json args. Without ext: the
+// plan-1 CLI, unchanged.
+export async function main(argv, deps = {}, ext = null) {
   const log = deps.log || ((m) => process.stderr.write(`${m}\n`));
+  const usage = ext ? ext.usage : USAGE;
   let o;
-  try { o = parseCli(argv, deps.env || process.env); } catch (e) {
-    if (e instanceof UsageError) { log(`error: ${e.message}\n${USAGE}`); return 2; }
+  try { o = parseCli(argv, deps.env || process.env, ext); } catch (e) {
+    if (e instanceof UsageError) { log(`error: ${e.message}\n${usage}`); return 2; }
     throw e;
   }
-  if (o.help) { log(USAGE); return 0; }
-  let jobs, allowlist = [];
+  if (o.help) { log(usage); return 0; }
+  let jobs, allowlist = [], state = null;
   try {
     if (o.corpus) {
       const c = loadCorpus(resolve(o.corpus), o.corpusDir);
@@ -118,6 +125,7 @@ export async function main(argv, deps = {}) {
     if (!jobs.length) throw new UsageError(`corpus ${o.corpus} has no files`);
     if (o.allowlist) allowlist = readAllowlist(o.allowlist);
     for (const j of jobs) if (!existsSync(j.path)) throw new UsageError(`HTML file not found: ${j.path}`);
+    if (ext) state = await ext.setup(o, deps, jobs);
   } catch (e) { log(`error: ${e.message}`); return 2; }
 
   const t0 = Date.now();
@@ -131,6 +139,7 @@ export async function main(argv, deps = {}) {
         root: j.root, widen: j.widen, nameOf: j.nameOf, widenBy: o.widenBy, viewport: j.viewport, webFonts: o.webFonts,
         fontMap: deps.fontMap, verify: o.verify, mutate: o.mutate, mutateSample: o.mutateSample,
         onScreen: (e) => log(`  ${e.report.id}: ${e.report.pass ? 'pass' : 'fail'} (${((Date.now() - t0) / 1000).toFixed(1)} s)`),
+        ...(ext ? { normalize: (items) => ext.normalize(j, items, state) } : {}),
       });
       results.push({ job: j, res });
     }
@@ -159,15 +168,17 @@ export async function main(argv, deps = {}) {
         screensOut.push({ summary, gate: g, report: e.report, flags: e.report.flags, allowlistDraft, ...(e.mutations ? { mutations: e.mutations } : {}) });
         views.push(await screenView(browser, job.file, e, g, summary));
       }
+      if (ext) await ext.afterFile({ job, res, dir, browser, state });
     }
     const { pass, missed } = runVerdict(screensOut);
     const seconds = Math.round((Date.now() - t0) / 100) / 10;
-    const args = { ...(o.corpus ? { corpus: o.corpus } : { html: o.html, root: o.root }), ...(o.widen ? { widen: o.widen } : {}), webFonts: o.webFonts, tol: o.verify, mutate: o.mutate, allowlistApproved: allowlist.filter((e) => e && e.approved === true).length };
+    const args = { ...(o.corpus ? { corpus: o.corpus } : { html: o.html, root: o.root }), ...(state && state.args ? state.args : {}), ...(o.widen ? { widen: o.widen } : {}), webFonts: o.webFonts, tol: o.verify, mutate: o.mutate, allowlistApproved: allowlist.filter((e) => e && e.approved === true).length };
     writeFileSync(join(o.out, 'report.json'), JSON.stringify({ generated: new Date().toISOString(), seconds, args, pass, ...(o.mutate ? { mutationsMissed: missed } : {}), screens: screensOut }, null, 1));
     writeFileSync(join(o.out, 'report.html'), renderReportHtml({ generated: `${new Date().toISOString()} · ${seconds} s`, args, screens: views }));
     const failed = screensOut.filter((s) => !s.summary.pass).length;
     log(`${screensOut.length - failed}/${screensOut.length} screens pass in ${seconds} s; report: ${join(o.out, 'report.html')}`);
     if (missed.length) log(`the mutation check missed ${missed.length} planted error${missed.length === 1 ? '' : 's'} (${missed.join(', ')}): the verifier cannot be trusted; exit 1`);
+    if (ext) ext.finish({ state, log, pass });
     return pass ? 0 : 1;
   } finally {
     if (own && browser) await browser.close();

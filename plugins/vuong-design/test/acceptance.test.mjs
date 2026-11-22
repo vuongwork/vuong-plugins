@@ -2,11 +2,15 @@
 // as the CLI (pipeline.mjs runFile + gate with the corpus allowlist). Needs VD_CORPUS_DIR (skipped otherwise) and
 // VD_PLAYWRIGHT_FROM. The mutation part (spec §14 layer 4, ≈30 s per screen) runs only with VD_ACCEPT_MUTATE=1.
 // Prints a per-screen table and every failing item before the assertions.
+// Plan 2: with VD_ACCEPT_RULES=<rules file> every file is normalised first (ds.mjs designSystem with that rules file)
+// and each screen with an applied record is verified with its target spec (norm proxy, R66 / R74 / R75).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runFile, gate, summarize, loadCorpus, PAYLOAD_LIMIT } from '../core/pipeline.mjs';
+import { designSystem } from '../core/ds.mjs';
+import { readRules } from '../core/rules-file.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DIR = process.env.VD_CORPUS_DIR;
@@ -14,6 +18,11 @@ const MUTATE = process.env.VD_ACCEPT_MUTATE === '1';
 const skip = !DIR ? 'set VD_CORPUS_DIR to the acceptance corpus directory (see test/corpus.json)'
   : !process.env.VD_PLAYWRIGHT_FROM ? 'set VD_PLAYWRIGHT_FROM to a dir with node_modules/playwright-core' : false;
 const EXPECTED_SCREENS = 25;
+const RULES = process.env.VD_ACCEPT_RULES;
+const normalizeWith = RULES ? ((rules) => (items) => {
+  const ds = designSystem(items.map((it) => ({ screen: it.screen, spec: it.modelled.spec })), { rules });
+  return items.map((it) => ds.targets[String(it.screen.id ?? it.screen.name)]);
+})(readRules(RULES)) : undefined;
 
 let browser;
 const rows = [];
@@ -25,7 +34,7 @@ before(async () => {
   browser = await launchBrowser();
   const corpus = loadCorpus(join(HERE, 'corpus.json'), DIR);
   for (const f of corpus.files) {
-    const res = await runFile(browser, f.path, { root: f.root, widen: f.widen, nameOf: f.nameOf, viewport: f.viewport, mutate: MUTATE });
+    const res = await runFile(browser, f.path, { root: f.root, widen: f.widen, nameOf: f.nameOf, viewport: f.viewport, mutate: MUTATE, ...(normalizeWith ? { normalize: normalizeWith } : {}) });
     for (const e of res.screens) {
       const g = gate(e.report, corpus.allowlist, { file: f.file, screen: e.report.id, tree: e.screen.tree });
       rows.push({ s: summarize(f.file, e, g), g, report: e.report, mutations: e.mutations });
@@ -49,6 +58,9 @@ before(async () => {
     for (const id of report.unchecked) it.push(`unchecked ${id}: ${report.uncheckedReasons[id]}`);
     for (const k of report.skipped) it.push(`skipped ${k}`);
     lines.push(`-- ${s.file} ${s.screen}: ${it.join('; ')}`);
+  }
+  if (RULES) {
+    for (const { s, report } of rows) if (report.norm) lines.push(`norm ${s.file} ${s.screen}: applied ${report.norm.applied}, explained roots ${report.norm.explainedRoots}, crops ${report.norm.explainedCrops}, approvals resolved ${report.norm.approvalsResolved.length}, unexplained [${report.norm.unexplained.join(', ')}]`);
   }
   if (MUTATE) {
     for (const { s, mutations: m } of rows) lines.push(`mutations ${s.file} ${s.screen}: allCaught ${m.allCaught}; ${m.results.map((x) => `${x.kind}=${x.caught === null ? 'skip' : x.caught}`).join(' ')}`);
@@ -90,4 +102,9 @@ test('acceptance: every screen passes (after the allowlist)', { skip }, () => {
 test('acceptance: every mutation is caught or skipped (VD_ACCEPT_MUTATE=1)', { skip: skip || (MUTATE ? false : 'set VD_ACCEPT_MUTATE=1 (≈30 s per screen)') }, () => {
   const missed = rows.flatMap((r) => r.mutations.results.filter((x) => x.caught === false).map((x) => `${r.s.file} ${r.s.screen} ${x.kind} ${x.target}`));
   assert.deepEqual(missed, []);
+});
+
+test('acceptance (VD_ACCEPT_RULES): no unexplained norm root and no norm-spec finding', { skip: skip || (RULES ? false : 'set VD_ACCEPT_RULES to a rules file') }, () => {
+  assert.deepEqual(rows.flatMap((r) => (r.report.norm ? r.report.norm.unexplained.map((id) => `${r.s.file} ${r.s.screen} ${id}`) : [])), []);
+  assert.deepEqual(rows.flatMap((r) => r.report.data.filter((d) => d.kind === 'norm-spec').map((d) => `${r.s.file} ${r.s.screen} ${d.id} ${d.path}`)), []);
 });

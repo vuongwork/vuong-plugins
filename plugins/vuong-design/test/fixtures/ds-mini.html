@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>ds-mini</title>
+<style>
+  :root { --ink: #222222; --card: #eeeeee; }
+  body { margin: 0; font-family: Georgia, serif; color: var(--ink); }
+  .scr { width: 300px; height: 400px; background: #ffffff; }
+  .card { margin: 8px; padding: 13px; background: var(--card); border-radius: 8px; }
+  .note { margin: 0; font-size: 13px; line-height: 1.6; }
+  .chip { display: inline-block; margin: 8px; padding: 4px 8px; background: #1a73e8; color: #ffffff; font-size: 12px; line-height: 16px; border-radius: 4px; }
+  @media (prefers-color-scheme: dark) { :root { --card: #333333; } }
+</style>
+</head>
+<body>
+<div class="scr">
+  <div class="card"><p class="note">Hôm nay còn chỗ cho ba việc.</p></div>
+  <span class="chip">Inbox</span>
+</div>
+<div class="scr">
+  <div class="card"><p class="note">Việc cũ chờ dời sang tuần sau.</p></div>
+  <span class="chip">Hôm nay</span>
+</div>
+</body>
+</html>

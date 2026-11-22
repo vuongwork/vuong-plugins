@@ -1907,3 +1907,85 @@ test('R74: a text that reflows in the wider bubble is predicted by whole lines o
   const g = verifyScreen(sayTextFixture(72));
   assert.ok(normRoots(g).some((x) => x.id === 'n.0.1.0' && !x.explainedBy && x.normMismatch), JSON.stringify(normRoots(g)));
 });
+
+// ---- R75: with a target spec, the Figma-model layer compares the norm proxy with the norm layout proxy ----
+// Twelve texts of line height 20.75 px stacked in a column: Figma rounds each text box up to 21 px, so the modelled
+// proxy drifts 0.25 px per text (2.75 + 0.25 px at the last one: a needsApproval drift). LINE_HEIGHT_INT 20.75 -> 21
+// on every text: the target spec's own layout (normLayout) and its Figma model (norm) agree, the drift is the records'.
+function driftColumn({ normExtra = 0, withNormLayout = true } = {}) {
+  const N = 12, LH = 20.75;
+  const kids = Array.from({ length: N }, (_, i) => ({ id: `n.${i}`, kind: 'text', rA: [10, 10 + i * LH, 200, LH], rB: [10, 10 + i * LH, 200, LH], font: { ...FONT, lh: LH }, runs: [{ t: `Dòng ${i}` }] }));
+  const screen = { id: 's', W: [300, 420], H: [400, 400], excluded: [], tree: { id: 'n', kind: 'frame', rA: [0, 0, 300, 400], rB: [0, 0, 420, 400], kids } };
+  const spec = { id: 'n', t: 'F', sz: ['FIXED', 'FIXED'], model: 'figma', lay: { d: 'V', p: [10, 10, 10, 10], g: 0, pa: 'S', ca: 'S' },
+    kids: kids.map((k) => ({ id: k.id, t: 'T', sz: ['FILL', 'HUG'], font: { ...FONT, lh: LH }, runs: k.runs })) };
+  const at = (fn) => { const o = {}; for (const M of ['A', 'B']) { const b = { n: M === 'A' ? [0, 0, 300, 400] : [0, 0, 420, 400] }; kids.forEach((k, i) => { b[k.id] = fn(k, i); }); o[M] = b; } return o; };
+  const exact = at((k) => [...k.rA]);
+  const rounded = at((k, i) => [10, 10 + i * 21, 200, 21]);
+  const shown = at((k, i) => [10, 10 + i * 21 + (i === N - 1 ? normExtra : 0), 200, 21]);
+  const dom = {};
+  dom.n = { color: 'rgb(0, 0, 0)', bg: 'rgba(0, 0, 0, 0)', ff: 'serif', ...SHOWN() };
+  for (const k of kids) dom[k.id] = { color: FONT.c, bg: 'rgba(0, 0, 0, 0)', ff: `"${FONT.ff}"`, ...SHOWN(), text: k.runs[0].t, runs: [[k.runs[0].t, FONT.fs, FONT.fw, 'normal', 'none', 'none', FONT.ff, FONT.c]] };
+  const P = (boxes, extra) => ({ A: { boxes: boxes.A, dom, fontsMissing: [], facesMissing: [], ...extra }, B: { boxes: boxes.B, dom, fontsMissing: [], facesMissing: [], ...extra } });
+  const nspec = structuredClone(spec);
+  for (const k of nspec.kids) { k.font.lh = 21; k.font.remeasure = true; }
+  const inp = { screen, spec, flags: [], crops: [], proxy: P(rounded, { model: 'figma' }), layout: P(exact, { model: 'none' }) };
+  inp.norm = { spec: nspec, applied: kids.map((k) => rec(k.id, 'type', 'LINE_HEIGHT_INT', 'lineHeight', LH, 21)), proxy: P(shown, { model: 'figma', mark: 'norm' }) };
+  if (withNormLayout) inp.normLayout = P(rounded, { model: 'none', mark: 'normLayout' });
+  return inp;
+}
+
+test('R75: a text round-up drift that the line-height records remove needs no approval with the target spec; it is listed as resolved', () => {
+  const plain = driftColumn();
+  delete plain.norm; delete plain.normLayout;
+  const p = verifyScreen(plain);
+  assert.ok(p.needsApproval.length > 0, 'plan-1 approval');
+  const r = verifyScreen(driftColumn());
+  assert.deepEqual(r.needsApproval, []);
+  assert.deepEqual(r.norm.approvalsResolved.map((x) => [x.id, x.width]).sort(), p.needsApproval.map((x) => [x.id, x.width]).sort());
+  assert.deepEqual(r.norm.unexplained, [], JSON.stringify(r.roots.filter((x) => x.layer === 'norm')));
+});
+
+test('R75: a Figma-model deviation that remains in the target spec still needs approval; no norm layout proxy keeps the plan-1 layer', () => {
+  const r = verifyScreen(driftColumn({ normExtra: 3 }));
+  assert.ok(r.needsApproval.some((x) => x.id === 'n.11'), JSON.stringify(r.needsApproval));
+  const k = verifyScreen(driftColumn({ withNormLayout: false }));
+  assert.ok(k.needsApproval.length > 0);
+  assert.deepEqual(k.norm.approvalsResolved, []);
+});
+
+// ---- R76: a node whose layout parent changed in the norm proxy answers to the records that changed the parent ----
+// The screen's padding left / right 10 -> 12: the FILL card n.0 (a space-between row) starts 2 px later and is 4 px
+// narrower; its last item n.0.1 sits at the far edge, 2 px further left. The record is on the screen, outside the
+// card's subtree.
+function sbFixture(iconDx = -2) {
+  const inp = fixture();
+  const card = inp.screen.tree.kids[0], n1 = inp.screen.tree.kids[1];
+  card.rA = [10, 10, 280, 40]; card.rB = [10, 10, 400, 40];
+  card.kids[0].rA = [20, 20, 40, 20]; card.kids[0].rB = [20, 20, 40, 20];
+  card.kids[1].rA = [260, 20, 20, 20]; card.kids[1].rB = [380, 20, 20, 20];
+  n1.rA = [10, 60, 280, 30]; n1.rB = [10, 60, 400, 30];
+  for (const P of ['proxy', 'layout']) for (const M of ['A', 'B']) {
+    const b = inp[P][M].boxes, s = (n) => [...(M === 'A' ? n.rA : n.rB)];
+    b['n.0'] = s(card); b['n.0.0'] = s(card.kids[0]); b['n.0.1'] = s(card.kids[1]); b['n.1'] = s(n1);
+  }
+  inp.spec.lay = { d: 'V', p: [10, 10, 10, 10], g: 10, pa: 'S', ca: 'S' };
+  const sc = inp.spec.kids[0];
+  sc.sz = ['FILL', 'HUG']; sc.lay = { d: 'H', p: [10, 10, 10, 10], sb: 1, pa: 'S', ca: 'S' };
+  sc.kids[1].w = 20; sc.kids[1].h = 20;
+  inp.spec.kids[1].sz = ['FILL', 'FIXED'];
+  inp.spec.model = 'figma';
+  const copy = (P) => ({ ...P, boxes: structuredClone(P.boxes), dom: structuredClone(P.dom), mark: 'norm' });
+  inp.norm = { spec: structuredClone(inp.spec), applied: [rec('n', 'space', 'GRID4', 'paddingL', 10, 12), rec('n', 'space', 'GRID4', 'paddingR', 10, 12)], proxy: { A: copy(inp.proxy.A), B: copy(inp.proxy.B) } };
+  inp.norm.spec.lay.p = [10, 12, 10, 12];
+  nmove(inp, 'n.0', [2, 0, -4, 0]); nmove(inp, 'n.0.0', [2, 0, 0, 0]); nmove(inp, 'n.0.1', [iconDx, 0, 0, 0]); nmove(inp, 'n.1', [2, 0, -4, 0]);
+  return inp;
+}
+
+test('R76: the last item of a space-between row inside a FILL card the screen padding narrowed is explained by that record', () => {
+  const r = verifyScreen(sbFixture());
+  assert.ok(normRoots(r).length > 0, JSON.stringify(r.roots));
+  assert.deepEqual(normRoots(r).filter((x) => !x.explainedBy), [], JSON.stringify(normRoots(r)));
+  // the icon moved 5 px left instead of 2: the prediction from the card's measured box disagrees
+  const o = verifyScreen(sbFixture(-5));
+  assert.ok(normRoots(o).some((x) => x.id === 'n.0.1' && !x.explainedBy && x.normMismatch), JSON.stringify(normRoots(o)));
+});

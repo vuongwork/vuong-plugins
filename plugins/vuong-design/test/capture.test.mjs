@@ -370,3 +370,16 @@ test('R48: inline svg internals get the paint page CSS gave them inlined; what i
   assert.doesNotMatch(plain.replace(/^<svg[^>]*>/, ''), /style=/, 'presentation attributes only: nothing inlined inside');
   assert.equal(svg('plain').paint.unsupported, undefined);
 });
+
+test('R54: only an svg made of exactly one <use> is a sprite reference; any other svg is serialised whole with its <use> targets inlined', { skip }, async () => {
+  const s = (await captureScreens(join(FIX, 'capture-sprite-mixed.html'), { root: '.scr', fontOverride: false })).screens[0];
+  const by = (cls) => walk(s.tree).find((n) => n.cls === cls);
+  const one = by('one'), mixed = by('mixed');
+  assert.equal(one.icon.ref, 'sq');
+  assert.equal(one.icon.svg, undefined);
+  assert.ok(s.svgDefs.sq, 'the sprite target is in svgDefs');
+  assert.equal(mixed.icon.ref, null);
+  assert.match(mixed.icon.svg, /<circle\b/);
+  assert.match(mixed.icon.svg, /<use\b[^>]*href="#sq"/);
+  assert.match(mixed.icon.svg, /<defs>.*<symbol\b[^>]*id="sq".*<\/defs>/s, 'the <use> target is inlined in the markup');
+});

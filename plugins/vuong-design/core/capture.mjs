@@ -30,7 +30,8 @@ const r2 = (v) => Math.round(v * 100) / 100;
 
 // R48: an inline svg (no <use>) is serialised with the paint page CSS gave its elements inlined (icon.svg); page CSS
 //   it cannot carry (inner transform, geometry, filter, mask, clip-path, markers ...) → paint.unsupported 'svg ...'.
-//   Sprite icons (<use> → svgDefs) are copied as markup only.
+//   Sprite icons (an svg of exactly one <use>, R54 → svgDefs) are copied as markup only; any other svg with a <use>
+//   is serialised whole with the <use> targets inlined as a leading <defs>.
 // R47: an INode whose element is position absolute/fixed carries pct = {l, r, t, b, w, h} for the insets and sizes
 //   authored in % (computed value, read with the element briefly display:none; px-only nodes have no pct).
 // ---------------- breakpoints ----------------
@@ -323,6 +324,20 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
     } else un.push({ prop: 'svg markup', value: 'clone differs from the page' });
     for (const [k] of rootStyle) clone.style.removeProperty(k); // the proxy sets these from icon
     if (!clone.getAttribute('style')) clone.removeAttribute('style');
+    // R54: <use> targets outside this svg (a page sprite) are inlined as a leading <defs>, transitively, so the markup
+    // draws on its own (the proxy, Figma); targets inside the svg are already in it
+    const refOf = (x) => (x.getAttribute('href') || x.getAttribute('xlink:href') || '').replace(/^#/, '');
+    const defs = [], seen = new Set();
+    for (let todo = [...clone.querySelectorAll('use')]; todo.length;) {
+      const id = refOf(todo.shift());
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      if (el.querySelector(`[id="${CSS.escape(id)}"]`)) continue;
+      const t = document.getElementById(id);
+      if (!t) { un.push({ prop: 'svg use', value: `#${id} not found` }); continue; }
+      const c = t.cloneNode(true); defs.push(c); todo.push(...c.querySelectorAll('use'));
+    }
+    if (defs.length) { const d = document.createElementNS('http://www.w3.org/2000/svg', 'defs'); defs.forEach((x) => d.appendChild(x)); clone.insertBefore(d, clone.firstChild); }
     const svg = clone.outerHTML;
     host.remove();
     if (notfEl) notfEl.disabled = false;
@@ -499,7 +514,10 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
       const p = paint(cs, el);
       if (tag === 'svg') {
         if (b.width < 0.5 || b.height < 0.5) { excl(id, 'zero-size'); return null; }
-        const u = el.querySelector('use');
+        // R54: a sprite reference only when the svg consists of exactly one <use>; any other svg (a <use> next to its own
+        // shapes included) is serialised whole, its <use> targets inlined
+        const inner = [...el.querySelectorAll('*')];
+        const u = inner.length === 1 && inner[0].tagName.toLowerCase() === 'use' ? inner[0] : null;
         const href = u ? (u.getAttribute('href') || u.getAttribute('xlink:href') || '') : '';
         const icon = { ref: href ? href.replace(/^.*#/, '') : null, color: cs.color, fill: cs.fill, stroke: cs.stroke, sw: cs.strokeWidth };
         if (!u) {

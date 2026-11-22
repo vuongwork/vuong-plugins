@@ -1,0 +1,10 @@
+<!doctype html><html><head><meta charset="utf-8"><title>capture-sprite-mixed</title>
+<!-- R54: .one is a sprite icon (exactly one <use>): copied as a reference. .mixed has a <use> plus its own circle: it is
+     serialised whole, with the <use> target inlined, so the proxy draws both parts. -->
+<style>body{margin:0;font-family:Georgia,serif}.scr{width:200px;background:#fff;display:flex;gap:8px;padding:8px}
+svg{width:40px;height:40px;display:block}</style></head><body>
+<svg style="display:none"><symbol id="sq" viewBox="0 0 24 24"><path d="M4 4h16v16H4z" fill="#1e88e5"/></symbol></svg>
+<div class="scr">
+<svg class="one"><use href="#sq"/></svg>
+<svg class="mixed" viewBox="0 0 40 40"><use href="#sq" width="20" height="20"/><circle cx="30" cy="30" r="8" fill="#e53935"/></svg>
+</div></body></html>

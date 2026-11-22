@@ -405,3 +405,14 @@ test('R53: CLI --mutate with a verifier too loose to catch a planted error exits
   assert.match(q.lines.join('\n'), /mutation check missed/);
   assert.match(html, /the mutation check missed/);
 });
+
+test('R54: an svg with a <use> and its own shapes is drawn whole by the proxy and verifies end to end', { skip }, async () => {
+  const { captureScreens } = await import('../core/capture.mjs');
+  const { inferScreen } = await import('../core/infer.mjs');
+  const { runScreen } = await import('../core/pipeline.mjs');
+  const screen = (await captureScreens(join(FIX, 'capture-sprite-mixed.html'), { root: '.scr', fontMap: fm, webFonts: false, png: true })).screens[0];
+  const e = await runScreen(browser, screen, inferScreen(screen), fm, { proxy: { webFonts: false } });
+  assert.equal(e.report.pass, true, JSON.stringify({ data: e.report.data, crop: e.report.crop, roots: e.report.roots }));
+  const mixed = (function f(n) { return n.cls === 'mixed' ? n : (n.kids || []).map(f).find(Boolean); })(screen.tree);
+  assert.equal(e.proxy.A.dom[mixed.id].icon, 'svg');
+});

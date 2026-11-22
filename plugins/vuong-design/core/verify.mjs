@@ -115,7 +115,8 @@
 //   8x8 CSS px square) >= 40. A failure on a node that is (inside) a raster node is in `cropExplained`. R44: a failure on a
 //   node that is itself a size root at that width (size delta > the 1px crop search) shares the root's status: in
 //   `cropExplained` with the root's flag, or in `cropLinked` ({..., root}) for an unexplained root; any other failure,
-//   inside a root's subtree included, is in `crop`.
+//   inside a root's subtree included, is in `crop`. R61: a crop fail on an icon/image leaf whose size root is explained
+//   stays in `crop` (with sizeExplainedBy): the drawn content does not stretch with the box, so it really moved.
 // pixel (whole screen, modelled proxy) and strict (share of checked nodes within tolerance, modelled) are reference.
 import { createHash } from 'node:crypto';
 import { firstFamily } from './font-map.mjs';
@@ -830,6 +831,9 @@ export function verifyScreen(input, opts = {}) {
       if (!(c.ratio > cropRatio || (c.peak ?? 0) >= cropPeak)) continue;
       const e = byId.get(c.id), r = sizeRoot.get(`${c.id}|${c.width}`);
       if (e && rasterIn(e)) cropExplained.push({ ...c, explainedBy: 'raster' });
+      // R61: an icon or image does not stretch with its box (it is drawn centred / fitted), so a resized box moves the
+      // drawn content: a size explanation never excuses such a leaf's crop; it stands alone (approval via allowlist)
+      else if (r && r.explainedBy && e && (e.n.kind === 'icon' || e.n.kind === 'image')) crop.push({ ...c, sizeExplainedBy: r.explainedBy, root: r.id });
       else if (r && r.explainedBy) cropExplained.push({ ...c, explainedBy: r.explainedBy, root: r.id });
       else if (r) cropLinked.push({ ...c, root: r.id });
       else crop.push(c);

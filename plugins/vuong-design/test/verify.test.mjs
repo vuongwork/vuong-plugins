@@ -1532,3 +1532,17 @@ test('R60 (probe-r60): FILL items are judged like space-between whatever the pac
   r = probe(tree1, both((b) => { b['n.0'][2] += 20; b['n.0.0'][2] += 20; }), [], spec1);
   assert.deepEqual(pos(r, 'n.0.0', 'x'), [], JSON.stringify(r.roots));
 });
+
+// ---- R61: a size explanation never excuses the crop of a leaf whose drawn content does not stretch (icon, image) ----
+test('R61: an explained size root on an icon leaves its crop open (the drawn icon moved inside the resized box)', () => {
+  const bad = (id, width) => ({ id, width, ratio: 0.8, diff: 300, peak: 200 });
+  const inp = fixture();
+  shift(inp, 'n.0.1', [0, 0, 5, 0]); // the icon box 5px wider: a size root on a leaf
+  inp.flags = [{ id: 'n.0.1', kind: 'testFlag', detail: 't' }];
+  inp.crops = [bad('n.0.1', 'A')];
+  const r = verifyScreen(inp);
+  assert.ok(r.roots.some((x) => x.id === 'n.0.1' && x.explainedBy === 'testFlag'), JSON.stringify(r.roots));
+  assert.deepEqual(r.cropExplained.map((c) => c.id), []);
+  assert.deepEqual(r.crop.map((c) => [c.id, c.width, c.sizeExplainedBy]), [['n.0.1', 'A', 'testFlag']]);
+  assert.equal(r.pass, false);
+});

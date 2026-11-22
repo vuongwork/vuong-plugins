@@ -56,22 +56,22 @@ VD_PLAYWRIGHT_FROM=... VD_CORPUS_DIR=... node --test plugins/vuong-design/test/a
 
 Runs the 25 screens of `test/corpus.json` (skipped without `VD_CORPUS_DIR`). It requires full coverage, no unexplained root, no needs-approval entry and no crop fail outside the approved allowlist, no data finding, and (with `VD_ACCEPT_MUTATE=1`) every mutation caught or skipped.
 
-Current numbers (2026-11-22, after the 8b-2 root-cause fixes R36–R46, HEAD 6e7621f, empty allowlist; not passing yet: what is left needs the user's approval or the SCALE decision, see below). CLI on the whole corpus: 104 s.
+Current numbers (2026-11-22, after 8b-3: R47 SCALE for % authored absolute nodes and R48 inline svg paint, HEAD 4b7895c, empty allowlist; not passing yet: what is left needs the user's approval, see below). CLI on the whole corpus: 123 s.
 
 | File | Screen | Checked | Unexplained roots | Explained roots | Needs approval (max px) | Crop fails A/B (+ linked) | Data | specBytes | Pass |
 |---|---|---|---|---|---|---|---|---|---|
-| planora-ui-screens.html | s0 | 81/81 | 1 | 0 | 0 | 0/2 | 0 | 20500 | fail |
-| planora-ui-screens.html | s1 | 59/59 | 1 | 0 | 0 | 0/2 | 0 | 14332 | fail |
+| planora-ui-screens.html | s0 | 81/81 | 0 | 0 | 0 | 0/0 | 0 | 20618 | pass |
+| planora-ui-screens.html | s1 | 59/59 | 0 | 0 | 0 | 0/0 | 0 | 14450 | pass |
 | planora-ui-screens.html | s2 | 64/64 | 0 | 0 | 0 | 0/0 | 0 | 13071 | pass |
-| planora-ui-screens.html | s3 | 56/56 | 1 | 6 | 0 | 0/2 | 0 | 13266 | fail |
+| planora-ui-screens.html | s3 | 56/56 | 0 | 6 | 0 | 0/0 | 0 | 13384 | pass |
 | planora-ui-screens.html | s4 | 62/62 | 0 | 6 | 1 (2.28) | 0/0 | 0 | 15623 | fail |
 | planora-ui-screens.html | s5 | 56/56 | 0 | 0 | 0 | 0/0 | 0 | 12790 | pass |
 | planora-ui-screens.html | s6 | 22/22 | 0 | 0 | 0 | 0/0 | 0 | 5540 | pass |
-| planora-ui-screens.html | s7 | 111/111 | 1 | 1 | 0 | 0/2 | 0 | 29854 | fail |
-| planora-ui-screens.html | s8 | 91/91 | 7 | 0 | 0 | 0/5 (+3) | 0 | 20634 | fail |
+| planora-ui-screens.html | s7 | 111/111 | 0 | 1 | 0 | 0/0 | 0 | 29972 | pass |
+| planora-ui-screens.html | s8 | 91/91 | 0 | 0 | 0 | 0/0 | 0 | 21134 | pass |
 | planora-ui-screens.html | s9 | 45/45 | 0 | 4 | 0 | 0/0 | 0 | 13048 | pass |
 | planora-ui-screens.html | s10 | 40/40 | 0 | 0 | 0 | 0/0 | 0 | 11718 | pass |
-| planora-ui-screens.html | s11 | 73/73 | 3 | 15 | 0 | 1/2 (+2) | 0 | 16260 | fail |
+| planora-ui-screens.html | s11 | 73/73 | 0 | 15 | 0 | 1/2 | 0 | 16507 | fail |
 | planora-ui-screens.html | s12 | 51/51 | 0 | 0 | 0 | 0/0 | 0 | 11708 | pass |
 | planora-ui-screens.html | s13 | 22/22 | 0 | 0 | 0 | 0/0 | 0 | 4707 | pass |
 | planora-ui-screens.html | s14 | 27/27 | 0 | 0 | 0 | 0/0 | 0 | 6585 | pass |
@@ -85,13 +85,13 @@ Current numbers (2026-11-22, after the 8b-2 root-cause fixes R36–R46, HEAD 6e7
 | calendar-layout-v2.html | s0 | 112/112 | 0 | 4 | 0 | 0/0 | 0 | 25375 | pass |
 | calendar-layout-v2.html | s1 | 112/112 | 0 | 4 | 1 (2.19) | 0/0 | 0 | 26072 | fail |
 | calendar-layout-v3.html | s0 | 165/165 | 0 | 4 | 0 | 0/0 | 0 | 36024 | pass |
-| **Total** | 25 | | **14** | 45 | **8** (max 4.25) | **16** (+5 linked) | 0 | max 36024 | **15/25** |
+| **Total** | 25 | | **0** | 45 | **8** (max 4.25) | **3** (+0 linked) | 0 | max 36024 | **20/25** |
 
 "Crop fails" are standalone crop fails; "+ linked" are crop fails on an unexplained size root (R44), which pass only together with that root's allowlist entry. "Needs approval" lists model roots above tolModel plus at most one cumulative model-drift entry per screen (R43), with the largest accumulated model delta as its magnitude.
 
-What is left (all 14 roots, 8 approvals, 16 + 5 crops):
-- Percentage positions/sizes (pending the SCALE decision): planora s8 / s11 bar fills (`width: 60%` etc., 5 roots + their 5 linked crops); bar markers `left: 58%` / `55%` (4 roots, 3 crops); nav badge `left: 52%` at B, −0.61px (5 roots on s0 s1 s3 s7 s8, 10 crops on the badge and its text).
+What is left (0 roots, 8 approvals, 3 crops):
 - Figma text-box round-up accumulating down a screen (needs approval, or a real-Figma check of fractional line heights): entry s0 (max 3.25px) and s1 (max 4.25px), calendar-v2 s1 (2.19px); planora s4 chip row width round-up (2.28px).
 - planora s11 `n.0.13.1.1.0` (A, B) and `n.0.13.1.1.1` (B): crops inside the shrink-flagged row `n.0.13.1` (the flag explains the row's size, not the children's paint; they stand alone, R44).
+- To check in real Figma (plan 3): R47 SCALE is relative to the parent frame, CSS % to the containing block's padding box (equal here: no border, parent = containing block; otherwise the fit fails and fixed constraints stand in, visibly); the `left: 52%` badge and `left: 58%` / `55%` markers hang from zero-width SCALE anchor frames (Figma's minimum size is 0.01).
 
-Mutations (`--mutate`, full corpus, 807 s): 180 caught, 0 missed, 45 skipped (no candidate).
+Mutations (`--mutate`, full corpus, HEAD 4b7895c, 939 s): 180 caught, 0 missed, 45 skipped (no candidate).

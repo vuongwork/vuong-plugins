@@ -117,6 +117,10 @@
 //   `cropExplained` with the root's flag, or in `cropLinked` ({..., root}) for an unexplained root; any other failure,
 //   inside a root's subtree included, is in `crop`. R61: a crop fail on an icon/image leaf whose size root is explained
 //   stays in `crop` (with sizeExplainedBy): the drawn content does not stretch with the box, so it really moved.
+//   R72: a text leaf's window in the proxy image is anchored at the edge its source text-align anchors the glyphs to
+//   (right / end: right edge, center: centre, else left), so a right aligned text whose box only grew to the left
+//   (Planora s11: CSS flex-shrink sized the source column to its content, Figma FILL splits it equally) compares the
+//   glyphs that are really drawn at the same place; a glyph moved inside its box is still a fail.
 // pixel (whole screen, modelled proxy; the norm proxy with input.norm) and strict (share of checked nodes within
 // tolerance, modelled) are reference.
 //
@@ -1256,6 +1260,16 @@ export function verifyScreen(input, opts = {}) {
 
 // Crops at A and B for every source node with a box in both images at that width and area <= maxArea (CSS px²): the
 // source rect in the source PNG against the same-size window at the node's box in the given proxy's PNG.
+// R72: the window in the proxy image starts where the text's alignment anchors its glyphs: a right (end) aligned
+// text at the box's right edge, a centred one at its centre, anything else at its left edge. The source alignment
+// decides (a proxy that aligns differently then fails). Only the horizontal anchor moves; lines start at the top.
+const textAnchor = (n, s, b) => {
+  if (!isTextSrc(n) || (n.kids && n.kids.length) || !n.font) return b;
+  const ta = String(n.font.ta || '');
+  const k = /center/.test(ta) ? 0.5 : /right|end/.test(ta) ? 1 : 0;
+  return k ? [b[0] + (b[2] - s[2]) * k, b[1], s[2], b[3]] : b;
+};
+
 export async function measureCrops(browser, screen, proxy, opts = {}) {
   const maxArea = opts.maxArea ?? CROP_MAX_AREA;
   if (!screen.png || !screen.png[0] || !screen.png[1]) throw new Error('measureCrops: screen.png is missing (captureScreens with { png: true })');
@@ -1280,7 +1294,7 @@ export async function measureCrops(browser, screen, proxy, opts = {}) {
       const r = cropped.get(n.id);
       if (!r) continue;
       const [ma, mb] = descMasks(n);
-      pairs.push({ id: n.id, rectA: r[0], rectB: r[1], ...(ma.length ? { masksA: ma, masksB: mb } : {}) });
+      pairs.push({ id: n.id, rectA: r[0], rectB: textAnchor(n, r[0], r[1]), ...(ma.length ? { masksA: ma, masksB: mb } : {}) });
     }
     const res = await cropDiffMany(browser, screen.png[i], P.png, pairs, opts);
     pairs.forEach((p, k) => out.push({ id: p.id, width: M, ratio: res[k].ratio, diff: res[k].diff, peak: res[k].peak }));

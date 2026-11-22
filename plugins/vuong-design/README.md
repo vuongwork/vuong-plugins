@@ -58,7 +58,7 @@ VD_PLAYWRIGHT_FROM=... VD_CORPUS_DIR=... node --test plugins/vuong-design/test/a
 
 Runs the 25 screens of `test/corpus.json` (skipped without `VD_CORPUS_DIR`). It requires full coverage, no unexplained root, no needs-approval entry and no crop fail outside the approved allowlist, no data finding, and (with `VD_ACCEPT_MUTATE=1`) every mutation caught or skipped.
 
-Current numbers (2026-11-22, after round 10 and R60: R56-R60 and the rr9 minors, empty allowlist; not passing yet: what is left needs the user's approval, see below). CLI on the whole corpus: about 137-215 s. Table and totals from that run.
+Current numbers (2026-11-22, after round 10, R60 and R72 (s11 crops): R56-R60 and the rr9 minors, empty allowlist; not passing yet: what is left needs the user's approval, see below). CLI on the whole corpus: about 137-215 s. Table and totals from that run.
 
 | File | Screen | Checked | Unexplained roots | Explained roots | Needs approval (max px) | Crop fails A/B (+ linked) | Data | specBytes | Pass |
 |---|---|---|---|---|---|---|---|---|---|
@@ -73,7 +73,7 @@ Current numbers (2026-11-22, after round 10 and R60: R56-R60 and the rr9 minors,
 | planora-ui-screens.html | s8 | 91/91 | 0 | 0 | 0 | 0/0 | 0 | 21134 | pass |
 | planora-ui-screens.html | s9 | 45/45 | 0 | 4 | 0 | 0/0 | 0 | 13048 | pass |
 | planora-ui-screens.html | s10 | 40/40 | 0 | 0 | 0 | 0/0 | 0 | 11718 | pass |
-| planora-ui-screens.html | s11 | 73/73 | 0 | 15 | 0 | 1/2 | 0 | 16507 | fail |
+| planora-ui-screens.html | s11 | 73/73 | 0 | 15 | 0 | 0/0 | 0 | 16507 | pass |
 | planora-ui-screens.html | s12 | 51/51 | 0 | 0 | 0 | 0/0 | 0 | 11708 | pass |
 | planora-ui-screens.html | s13 | 22/22 | 0 | 0 | 0 | 0/0 | 0 | 4707 | pass |
 | planora-ui-screens.html | s14 | 27/27 | 0 | 0 | 0 | 0/0 | 0 | 6585 | pass |
@@ -87,15 +87,14 @@ Current numbers (2026-11-22, after round 10 and R60: R56-R60 and the rr9 minors,
 | calendar-layout-v2.html | s0 | 112/112 | 0 | 4 | 0 | 0/0 | 0 | 25375 | pass |
 | calendar-layout-v2.html | s1 | 112/112 | 0 | 4 | 1 (2.19) | 0/0 | 0 | 26072 | fail |
 | calendar-layout-v3.html | s0 | 165/165 | 0 | 4 | 0 | 0/0 | 0 | 36024 | pass |
-| **Total** | 25 | | **1** | 44 | **8** (max 4.25) | **6** (+1 linked) | 0 | max 36024 | **19/25** |
+| **Total** | 25 | | **1** | 44 | **8** (max 4.25) | **3** (+1 linked) | 0 | max 36024 | **20/25** |
 
 "Crop fails" are standalone crop fails; "+ linked" are crop fails on an unexplained size root (R44), which pass only together with that root's allowlist entry. "Needs approval" lists model roots above tolModel plus at most one cumulative model-drift entry per screen (R43), with the largest accumulated model delta as its magnitude.
 
-What is left (1 root, 8 approvals, 6 crops + 1 linked):
+What is left (1 root, 8 approvals, 3 crops + 1 linked):
 - planora s3 `n.0.13.0` at B (the unexplained root): the avatar svg of a `.say` row is a FILL vector box. At width B its box is 145.5 px wider and starts 23.25 px further left. Classed as a Figma limitation pending the user's approval; the linked crop at B passes or fails with that entry. At width A the box is 93.5 px wider with its start edge in place. The row holds FILL items, so since R60 the box (its first item) is judged by its near edge, whatever the centre packing, and the shrink flag explains the size. The A root is therefore explained; its crop (ratio 0.80) is not (R61: a size explanation never excuses an icon/image crop, since the drawn avatar, centred in its box, is displaced by 46.75 px at A) and needs approval.
 - planora s4 `n.0.9.0` (A, B): the same `.say` avatar pattern; its size is explained by shrink, its crops stay open under R61 (needs approval).
 - Figma text-box round-up accumulating down a screen (needs approval, or a real-Figma check of fractional line heights): entry s0 (max 3.25px) and s1 (max 4.25px), calendar-v2 s1 (2.19px); planora s4 chip row width round-up (2.28px).
-- planora s11 `n.0.13.1.1.0` (A, B) and `n.0.13.1.1.1` (B): crops inside the shrink-flagged row `n.0.13.1` (the flag explains the row's size, not the children's paint; they stand alone, R44).
 - To check in real Figma (plan 3): R47 SCALE is relative to the parent frame, CSS % to the containing block's padding box (equal here: no border, parent = containing block; otherwise the fit fails and fixed constraints stand in, visibly); the `left: 52%` badge and `left: 58%` / `55%` markers hang from zero-width SCALE anchor frames (Figma's minimum size is 0.01).
 
 Mutations (`--mutate`, full corpus, after round 10, about 21 min): 221 caught, 0 missed, 104 skipped (no candidate; the corpus has no inline svg or image of any size, so svgLarge and imageLarge skip even with the M-f fallback to the largest one; they are covered by tests).

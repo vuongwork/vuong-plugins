@@ -1765,3 +1765,31 @@ test('R66 record check: a line-height record that lies (20.25 -> 20 claimed as 2
   assert.deepEqual(x.normMismatch.map((m) => [m.axis, m.measured, m.predicted]), [['h', -0.25, 3.75]]);
   assert.equal(bad.pass, false);
 });
+
+// ---- R72: the crop window of a text sits where its alignment anchors the glyphs ----
+test('R72: a right / centre aligned text in a wider proxy box is cropped at its alignment edge, not its left edge', { skip }, async () => {
+  const txt = (l, w, ta, s = '5') => `<div style="position:absolute;left:${l}px;top:10px;width:${w}px;text-align:${ta};font:800 24px/30px sans-serif;color:#26335c">${s}</div>`;
+  // Planora s11: the source column shrank to its content (CSS flex-shrink), the proxy splits it equally (FILL), so
+  // the box starts 30px further left; the right aligned glyph is drawn at the same place on both pages
+  const src = await shot(txt(60, 30, 'right')), prx = await shot(txt(30, 60, 'right'));
+  const run = (ta, png = prx, b = [30, 10, 60, 30]) => {
+    const tree = { id: 'n', kind: 'frame', rA: [0, 0, 100, 100], rB: [0, 0, 100, 100], kids: [
+      { id: 'n.0', kind: 'text', rA: [60, 10, 30, 30], rB: [60, 10, 30, 30], font: { ta }, runs: [{ t: '5' }] }] };
+    const boxes = { n: [0, 0, 100, 100], 'n.0': b };
+    return measureCrops(browser, { tree, png: [src, src] }, { A: { png, boxes }, B: { png, boxes } });
+  };
+  const at = (crops) => crops.filter((c) => c.id === 'n.0');
+  for (const ta of ['right', 'end', '-webkit-right']) assert.deepEqual(at(await run(ta)).filter(fails), [], ta);
+  // a left aligned text keeps the left anchor: the same pixels then fail
+  assert.equal(at(await run('start')).filter(fails).length, 2);
+  // the glyph really moved inside a right aligned box: still caught
+  const moved = await shot(txt(30, 50, 'right'));
+  assert.equal(at(await run('right', moved)).filter(fails).length, 2);
+  // centre: the window is centred in the proxy box
+  const srcC = await shot(txt(60, 30, 'center')), prxC = await shot(txt(45, 60, 'center'));
+  const tree = { id: 'n', kind: 'frame', rA: [0, 0, 100, 100], rB: [0, 0, 100, 100], kids: [
+    { id: 'n.0', kind: 'text', rA: [60, 10, 30, 30], rB: [60, 10, 30, 30], font: { ta: 'center' }, runs: [{ t: '5' }] }] };
+  const boxes = { n: [0, 0, 100, 100], 'n.0': [45, 10, 60, 30] };
+  const c = await measureCrops(browser, { tree, png: [srcC, srcC] }, { A: { png: prxC, boxes }, B: { png: prxC, boxes } });
+  assert.deepEqual(at(c).filter(fails), []);
+});

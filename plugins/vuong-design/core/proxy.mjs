@@ -205,7 +205,12 @@ export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
         if (ic.stroke) sv.push(`stroke:${ic.stroke}`);
         if (ic.sw) sv.push(`stroke-width:${ic.sw}`);
         const style = `style="${attr(sv.join(';'))}"`;
-        if (ic.svg) inner = String(ic.svg).replace(/^<svg\b/, `<svg ${style}`);
+        if (ic.svg) {
+          // R48: capture leaves only inlined paint (page CSS on the root) in the root's style: it goes after ours
+          let own = '';
+          const m = String(ic.svg).replace(/^(<svg\b[^>]*?)\sstyle="([^"]*)"/, (_, a, v) => { own = v; return a; });
+          inner = m.replace(/^<svg\b/, `<svg style="${attr(sv.join(';'))}${own ? `;${own}` : ''}"`);
+        }
         else if (ic.ref) inner = `<svg ${style}><use href="#${attr(ic.ref)}"></use></svg>`;
       }
     } else if (n.t === 'I') {

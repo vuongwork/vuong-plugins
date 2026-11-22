@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>capture-svgcss</title>
+<!-- R48: inline svg internals styled by page CSS. .ic: paint the proxy must carry (fill, stroke, stroke-width,
+     opacity; stroke-linejoin on the root). .ic2: a page CSS transform on an inner element, which capture does not carry (unsupported). .plain:
+     presentation attributes only, nothing to add. -->
+<style>
+body{margin:0;font-family:Arial,sans-serif}
+.scr{width:300px;height:60px;background:#fff;display:flex;gap:8px;padding:8px;box-sizing:border-box}
+svg{display:block;width:40px;height:40px;flex:none}
+.ic{stroke-linejoin:round}.ic rect{fill:#e53935}.ic circle{stroke:#1e88e5;stroke-width:3px;opacity:.5;fill:none}
+.ic2 rect{transform:rotate(10deg)}
+</style></head><body><div class="scr">
+<svg class="ic" viewBox="0 0 24 24"><rect x="2" y="2" width="8" height="8"/><circle cx="16" cy="16" r="5"/></svg>
+<svg class="ic2" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" fill="#333"/></svg>
+<svg class="plain" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="2"><path d="M2 2L22 22"/></svg>
+</div></body></html>

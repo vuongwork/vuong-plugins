@@ -350,3 +350,23 @@ test('R46: paint capture does not translate is listed as paint.unsupported at it
   const big = all.find((n) => n.cls === 'big');
   assert.ok(big.rA[2] * big.rA[3] > 4000, 'larger than the crop limit');
 });
+
+test('R48: inline svg internals get the paint page CSS gave them inlined; what is not carried is unsupported', { skip }, async () => {
+  const s = (await captureScreens(join(FIX, 'capture-svgcss.html'), { root: '.scr', fontOverride: false })).screens[0];
+  const all = walk(s.tree);
+  const svg = (cls) => all.find((n) => n.cls === cls);
+  const ic = svg('ic').icon.svg;
+  assert.match(ic, /<rect [^>]*style="[^"]*fill: rgb\(229, 57, 53\)/);
+  assert.match(ic, /<circle [^>]*style="[^"]*stroke: rgb\(30, 136, 229\)/);
+  assert.match(ic, /<circle [^>]*style="[^"]*stroke-width: 3px/);
+  assert.match(ic, /<circle [^>]*style="[^"]*opacity: 0\.5/);
+  assert.match(ic, /<circle [^>]*style="[^"]*fill: none/);
+  const rootTag = ic.match(/^<svg[^>]*>/)[0];
+  assert.match(rootTag, /style="stroke-linejoin: round;?"/, 'the root keeps only the page paint the proxy does not set');
+  assert.equal(svg('ic').paint.unsupported, undefined, 'everything .ic needs is carried');
+  const un = svg('ic2').paint.unsupported || [];
+  assert.deepEqual(un.map((u) => u.prop), ['svg rect transform'], JSON.stringify(un));
+  const plain = svg('plain').icon.svg;
+  assert.doesNotMatch(plain.replace(/^<svg[^>]*>/, ''), /style=/, 'presentation attributes only: nothing inlined inside');
+  assert.equal(svg('plain').paint.unsupported, undefined);
+});

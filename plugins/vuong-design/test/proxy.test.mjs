@@ -223,3 +223,14 @@ test('R47: SCALE keeps inset and size as a share of the parent; a zero-width SCA
   assertBox(B['n.3'], [358, 40, 20, 10], 'B end anchor: right edge at 90% of 420');
   assertBox(B['n.g0'], [243.6, 20, 0, 16], 'B wrapper stays zero-width');
 });
+
+test('R48: an inline svg root style from capture (inlined page paint) is appended to the proxy style, not dropped', () => {
+  const spec = { id: 'n', t: 'F', w: 100, h: 40, sz: ['FIXED', 'FIXED'], lay: { d: 'H', p: [0, 0, 0, 0], g: 0, pa: 'S', ca: 'S' },
+    kids: [{ id: 'n.0', t: 'V', w: 24, h: 24, sz: ['FIXED', 'FIXED'],
+      icon: { svg: '<svg viewBox="0 0 24 24" style="stroke-linejoin: round;"><path d="M2 2L22 22" style="stroke: rgb(1, 2, 3);"></path></svg>', color: 'rgb(0, 0, 0)', fill: 'none' } }] };
+  const h = buildProxyHtml(spec, {}, fm, OFFLINE);
+  const tag = h.match(/<svg viewBox[^>]*>|<svg style[^>]*>/)[0];
+  assert.equal((tag.match(/style=/g) || []).length, 1, tag);
+  assert.match(tag, /width:100%[^"]*;stroke-linejoin: round;/);
+  assert.match(h, /<path d="M2 2L22 22" style="stroke: rgb\(1, 2, 3\);">/);
+});

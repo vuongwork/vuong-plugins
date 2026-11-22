@@ -230,6 +230,21 @@ test('R46: a text-shadow on a large text fails the screen end to end (unsupporte
   assert.equal(gate(e.report, every, where).pass, false);
 });
 
+test('R48: an inline svg styled by page CSS is drawn as the page drew it; an uncarried inner transform is unsupported', { skip }, async () => {
+  const { captureScreens } = await import('../core/capture.mjs');
+  const { inferScreen } = await import('../core/infer.mjs');
+  const { runScreen } = await import('../core/pipeline.mjs');
+  const screen = (await captureScreens(join(FIX, 'capture-svgcss.html'), { root: '.scr', fontMap: fm, webFonts: false, png: true })).screens[0];
+  const e = await runScreen(browser, screen, inferScreen(screen), fm, { proxy: { webFonts: false } });
+  const id = (cls) => { const f = (n) => (n.cls === cls ? n : (n.kids || []).map(f).find(Boolean)); return f(screen.tree).id; };
+  const ic = id('ic'), ic2 = id('ic2'), plain = id('plain');
+  assert.ok(e.report.cropChecked > 0, 'crops ran (the 40x40 icons are under the crop limit)');
+  for (const k of [ic, plain]) assert.deepEqual(e.report.crop.filter((c) => c.id === k), [], `${k}: crop matches`);
+  const un = e.report.data.filter((d) => d.kind === 'unsupported');
+  assert.deepEqual(un.map((d) => [d.id, d.prop]), [[ic2, 'svg rect transform']]);
+  assert.equal(e.report.pass, false);
+});
+
 test('CLI: a selector that matches nothing exits 2', { skip }, async () => {
   const q = quiet();
   assert.equal(await main(['--html', join(FIX, 'capture-basic.html'), '--root', '.nothing', '--no-webfonts', '--out', tmp()], { fontMap: fm, browser, log: q.log }), 2);

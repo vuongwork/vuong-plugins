@@ -28,6 +28,9 @@ const DEFAULT_VIEWPORT = 1400;
 const VIEWPORT_HEIGHT = 1000;
 const r2 = (v) => Math.round(v * 100) / 100;
 
+// R48: an inline svg (no <use>) is serialised with the paint page CSS gave its elements inlined (icon.svg); page CSS
+//   it cannot carry (inner transform, geometry, filter, mask, clip-path, markers ...) → paint.unsupported 'svg ...'.
+//   Sprite icons (<use> → svgDefs) are copied as markup only.
 // R47: an INode whose element is position absolute/fixed carries pct = {l, r, t, b, w, h} for the insets and sizes
 //   authored in % (computed value, read with the element briefly display:none; px-only nodes have no pct).
 // ---------------- breakpoints ----------------
@@ -263,6 +266,68 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
     }
     return out;
   };
+  // R48: an inline svg is drawn by the proxy (and Figma) from its markup alone, without the page's stylesheet. The
+  // markup is cloned into an isolated shadow root (no page CSS; the svg root styled as the proxy styles it: color,
+  // fill, stroke, stroke-width from icon), and each element's computed paint is compared with the page's: every
+  // carried property that differs is inlined into the clone's style attribute (document order, so children see their
+  // parent's inlined values). Then every checked property is compared again: what still differs (a page CSS transform,
+  // geometry, filter, mask, clip-path, marker, blend on an inner element ...) is not carried and is returned as
+  // unsupported ({prop: 'svg <tag> <property>', value}). Transforms are read with the capture's no-transform sheet off.
+  // The serialised root keeps only inlined carried paint in its style (no box styles); the proxy appends it to its own.
+  const SVG_CARRY = ['fill', 'fill-opacity', 'fill-rule', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-linecap', 'stroke-linejoin',
+    'stroke-dasharray', 'stroke-dashoffset', 'stroke-miterlimit', 'opacity', 'stop-color', 'stop-opacity', 'flood-color', 'flood-opacity',
+    'lighting-color', 'clip-rule', 'paint-order', 'vector-effect', 'shape-rendering', 'visibility', 'display', 'color'];
+  const SVG_TEXT = ['font-family', 'font-size', 'font-weight', 'font-style', 'font-stretch', 'font-variant', 'letter-spacing', 'word-spacing',
+    'text-anchor', 'dominant-baseline', 'alignment-baseline', 'baseline-shift', 'text-decoration-line', 'white-space', 'writing-mode', 'direction'];
+  const SVG_ONLY_CHECK = ['transform', 'transform-origin', 'transform-box', 'filter', 'mask', 'clip-path', 'mix-blend-mode', 'isolation',
+    'marker-start', 'marker-mid', 'marker-end', 'x', 'y', 'cx', 'cy', 'r', 'rx', 'ry', 'width', 'height', 'd'];
+  const SVG_ROOT = new Set(['fill', 'fill-opacity', 'fill-rule', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-linecap', 'stroke-linejoin',
+    'stroke-dasharray', 'stroke-dashoffset', 'stroke-miterlimit', 'clip-rule', 'paint-order', 'shape-rendering', 'color']);
+  const SVG_TEXT_TAGS = /^(text|tspan|textPath)$/;
+  const serialiseSvg = (el, icon) => {
+    const notfEl = document.getElementById('__vd_notf');
+    if (notfEl) notfEl.disabled = true;
+    const host = document.createElement('div');
+    host.style.cssText = 'all:initial;position:absolute;left:-99999px;top:0;width:400px;height:400px';
+    document.body.appendChild(host);
+    const sh = host.attachShadow({ mode: 'open' });
+    const clone = el.cloneNode(true);
+    // the root's own inline style is the node's box (proxy: width/height 100%); its paint is in icon
+    clone.removeAttribute('style');
+    const rootStyle = [['color', icon.color], ['fill', icon.fill], ['stroke', icon.stroke], ['stroke-width', icon.sw]];
+    for (const [k, v] of rootStyle) if (v) clone.style.setProperty(k, v);
+    sh.appendChild(clone);
+    const O = [el, ...el.querySelectorAll('*')], C = [clone, ...clone.querySelectorAll('*')];
+    const un = [];
+    if (O.length === C.length) {
+      const propsOf = (i, check) => {
+        const tag = O[i].tagName;
+        if (i === 0) return SVG_CARRY.filter((k) => SVG_ROOT.has(k));
+        const ps = [...SVG_CARRY, ...(SVG_TEXT_TAGS.test(tag) ? SVG_TEXT : [])];
+        return check ? [...ps, ...SVG_ONLY_CHECK] : ps;
+      };
+      for (let i = 0; i < O.length; i++) {
+        const oc = getComputedStyle(O[i]), cc = getComputedStyle(C[i]);
+        for (const k of propsOf(i, false)) {
+          const v = oc.getPropertyValue(k);
+          if (v !== cc.getPropertyValue(k)) C[i].style.setProperty(k, v);
+        }
+      }
+      for (let i = 0; i < O.length; i++) {
+        const oc = getComputedStyle(O[i]), cc = getComputedStyle(C[i]);
+        for (const k of propsOf(i, true)) {
+          const v = oc.getPropertyValue(k);
+          if (v !== cc.getPropertyValue(k)) un.push({ prop: `svg ${O[i].tagName} ${k}`, value: v });
+        }
+      }
+    } else un.push({ prop: 'svg markup', value: 'clone differs from the page' });
+    for (const [k] of rootStyle) clone.style.removeProperty(k); // the proxy sets these from icon
+    if (!clone.getAttribute('style')) clone.removeAttribute('style');
+    const svg = clone.outerHTML;
+    host.remove();
+    if (notfEl) notfEl.disabled = false;
+    return { svg, un };
+  };
   // R47: authored % of an absolutely positioned element's insets and size ({l, r, t, b, w, h}: the computed value,
   // e.g. '52%' or 'calc(50% - 4px)', only where it contains a %). Computed styles report px for a rendered element;
   // with display:none the resolved value is the computed one, so the element is hidden for the read and restored.
@@ -437,7 +502,11 @@ function measurePage({ rootSel, widenSel, extras, nameOf }) {
         const u = el.querySelector('use');
         const href = u ? (u.getAttribute('href') || u.getAttribute('xlink:href') || '') : '';
         const icon = { ref: href ? href.replace(/^.*#/, '') : null, color: cs.color, fill: cs.fill, stroke: cs.stroke, sw: cs.strokeWidth };
-        if (!u) icon.svg = el.outerHTML; else if (icon.ref) iconRefs.add(icon.ref);
+        if (!u) {
+          const sv = serialiseSvg(el, icon);
+          icon.svg = sv.svg;
+          if (sv.un.length) p.unsupported = [...(p.unsupported || []), ...sv.un];
+        } else if (icon.ref) iconRefs.add(icon.ref);
         return { ...base(id, 'icon', tag, cls, r, p), icon };
       }
       if (tag === 'img' || tag === 'video' || tag === 'canvas' || tag === 'iframe' || tag === 'picture') {

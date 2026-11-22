@@ -86,7 +86,8 @@
 //   colour of the source computed border / outline vs the proxy DOM `stroke` / `outline` as rendered). A proxy DOM
 //   without these observations puts 'visibility' / 'stroke' in `skipped`.
 //   R46, any node size: unsupported (capture's paint.unsupported, i.e. paint it does not translate: text-shadow,
-//   blend modes, masks, list markers, ...; and any box paint on a text node, which the proxy draws as text only),
+//   blend modes, masks, list markers, ..., R48 'svg <tag> <property>' for page CSS inside an inline svg that the
+//   serialised markup does not carry; and any box paint on a text node, which the proxy draws as text only),
 //   unless the node is inside a raster node; effect (non-text nodes: source computed box-shadow and background-image
 //   vs the proxy DOM's `shadow` / `bgImage`; a DOM without them puts 'effect' in `skipped`). Data findings are never
 //   allowlistable (pipeline gate).

@@ -10,7 +10,11 @@ const lay = (o = {}) => ({ d: 'V', p: [0, 0, 0, 0], g: 0, pa: 'S', ca: 'S', ...o
 function fixture(id = 'home', withTok = true) {
   const tok = (o) => (withTok ? { tok: o } : {});
   const ir = {
-    id, name: id, vars: withTok ? { '--bg': { value: 'rgb(250,250,250)', uses: 1 }, '--line': { value: 'rgb(229,231,235)', uses: 4 } } : {},
+    id, name: id,
+    vars: withTok ? {
+      '--bg': { value: 'rgb(250,250,250)', uses: 1 }, '--line': { value: 'rgb(229,231,235)', uses: 4 }, '--r': { value: '8px', uses: 1 },
+      '--fg': { value: '#111827', uses: 1 }, '--accent': { value: 'rgb(37 99 235)', uses: 1 }, '--pad': { value: '16px', uses: 1 },
+    } : {},
     tree: {
       id: '0', kind: 'frame', tag: 'div', cls: 'scr', paint: { bg: 'rgb(250, 250, 250)' }, ...tok({ bg: '--bg', paddingT: '--pad' }),
       kids: [
@@ -171,4 +175,52 @@ test('deterministic: shuffling screens and kids (IR and spec) gives the same inv
   // sorted by screen, then node in tree order (DOM path), then cat, prop
   const nodes = a.uses.filter((u) => u.screen === 'a').map((u) => u.node);
   assert.deepEqual([...new Set(nodes)], ['0', '0.0', '0.0.0', '0.1', '0.1.0', '0.1.1', '0.1.2', '0.2', '0.3.g0', '0.3.0', '0.3.1']);
+});
+
+test('R63: type raw is the family the source authored, mapped back through screen.fontSubs', () => {
+  const fx = fixture();
+  fx.screen.tree.kids[0].kids[0].font = font({ ff: '"Inter"' }); // capture's override already rewrote the IR family
+  const withSubs = (subs) => inventory([{ ...fx, screen: { ...fx.screen, fontSubs: subs } }]);
+  let t = of(withSubs([{ from: 'Foo Sans', to: 'Inter', reason: 'not-in-figma' }]), '0.0.0', 'type');
+  assert.ok(t.every((u) => u.raw === 'Foo Sans' && u.rawCandidates === undefined && u.value.family === 'Inter'));
+  // kept families ('version', 'version-failed', 'override-failed') never map back
+  for (const reason of ['version', 'version-failed', 'override-failed']) {
+    t = of(withSubs([{ from: 'Foo Sans', to: 'Inter', reason }]), '0.0.0', 'type');
+    assert.ok(t.every((u) => u.raw === '"Inter"'), reason);
+  }
+  // two sources measured in the same Figma family: ambiguous, the IR list stays and the candidates are listed
+  t = of(withSubs([{ from: 'Zed', to: 'Inter', reason: 'system' }, { from: 'Foo Sans', to: 'Inter', reason: 'not-loaded' }]), '0.0.0', 'type');
+  assert.ok(t.every((u) => u.raw === '"Inter"' && JSON.stringify(u.rawCandidates) === '["Foo Sans","Zed"]'));
+  // no substitution for this family
+  t = of(withSubs([{ from: 'Bar', to: 'Roboto', reason: 'system' }]), '0.0.0', 'type');
+  assert.ok(t.every((u) => u.raw === '"Inter"'));
+});
+
+test('R64: a length or colour token is attached only when the variable resolves to the use value', () => {
+  const fx = fixture();
+  const card = fx.screen.tree.kids[0];
+  card.tok = { ...card.tok, paddingT: '--p12', paddingR: '--p13', paddingB: '--prem', paddingL: '--nope' };
+  fx.spec.kids[0].lay.p = [12.2, 12, 12, 12];
+  fx.screen.vars = { ...fx.screen.vars, '--p12': { value: '12px', uses: 1 }, '--p13': { value: ' 13px ', uses: 1 }, '--prem': { value: '0.75rem', uses: 1 }, '--r': { value: '6px', uses: 1 }, '--bg': { value: '#fff', uses: 1 } };
+  const inv = inventory([fx]);
+  const sp = Object.fromEntries(of(inv, '0.0', 'space').map((u) => [u.prop, [u.token, u.tokenMismatch]]));
+  assert.deepEqual(sp, { paddingT: ['--p12', undefined], paddingR: [undefined, '--p13'], paddingB: [undefined, '--prem'], paddingL: [undefined, '--nope'] });
+  assert.ok(of(inv, '0.0', 'radius').every((u) => u.token === undefined && u.tokenMismatch === '--r'));
+  const [bg] = of(inv, '0', 'color', 'bg'); // #fafafa vs --bg #ffffff
+  assert.deepEqual([bg.token, bg.tokenMismatch], [undefined, '--bg']);
+  const borderC = of(inv, '0.0', 'color').filter((u) => u.prop.startsWith('border'));
+  assert.ok(borderC.every((u) => u.token === '--line' && u.tokenMismatch === undefined)); // rgb(229,231,235) = #e5e7eb
+});
+
+test('icon and image size uses carry the sizes at A and B; icons say whether the axis is FIXED', () => {
+  const fx = fixture();
+  const row = fx.screen.tree.kids[1];
+  row.kids[2].rA = [0, 0, 18, 18]; row.kids[2].rB = [0, 0, 18, 18];
+  row.kids.push({ id: '0.1.3', kind: 'image', tag: 'img', cls: 'av', paint: {}, rA: [0, 0, 32, 32], rB: [0, 0, 40, 40] });
+  fx.spec.kids[1].kids.push({ id: '0.1.3', t: 'I', w: 32, h: 32, sz: ['FIXED', 'FIXED'], src: 'a.png' });
+  fx.spec.kids[1].kids[2] = { ...fx.spec.kids[1].kids[2], sz: ['FIXED', 'FILL'] };
+  const inv = inventory([fx]);
+  assert.deepEqual(of(inv, '0.1.2', 'icon').map((u) => [u.prop, u.sizes, u.fixed]), [['height', [18, 18, 18, 18], false], ['width', [18, 18, 18, 18], true]]);
+  assert.deepEqual(of(inv, '0.1.3', 'size').map((u) => [u.prop, u.value, u.sizes, u.img]), [['height', 32, [32, 32, 40, 40], true], ['width', 32, [32, 32, 40, 40], true]]);
+  assert.ok(of(inv, '0.1.0', 'size').every((u) => u.sizes === undefined && u.img === undefined));
 });

@@ -4,7 +4,8 @@
 //
 // inventory(screens: [{ screen: IR screen, spec: modelled SNode root }]) -> { uses: Use[], vars }
 //
-// Use = { screen, node, cat, prop, value, raw, role, token?, tokens?, flex?, unparsed?, run? }
+// Use = { screen, node, cat, prop, value, raw, role, token?, tokenMismatch?, tokens?, flex?, unparsed?, run?, rawCandidates?,
+//         sizes?, fixed?, img? }
 //  - screen: IR screen id (name when id is missing); node: SNode id (= source INode id unless synthetic).
 //  - cat / prop:
 //      color   bg | borderT|R|B|L (border colour per side) | color (text: node colour and each distinct run colour)
@@ -23,13 +24,26 @@
 //    unparsable colour such as color-mix() or url(#g), a radius in % or elliptical) keeps value null and
 //    `unparsed: true`; it is never dropped and never turned into black.
 //  - raw: the CSS string as captured ('12px' for spacing and sizes, which are geometry, not CSS). For type it is the
-//    IR font-family list (with capture's fontOverride on, that list is already the overridden one; the original
-//    families are in screen.fontSubs).
+//    family the source authored (R63): capture's fontOverride already replaced the IR font-family with the Figma
+//    family, so when the first family of the IR list equals the `to` of a screen.fontSubs entry whose reason is not
+//    'version' / 'version-failed' / 'override-failed' (those kept the page's own font), raw = that entry's `from`.
+//    Several such entries with the same `to` (two source fonts both measured in Inter): raw stays the IR list and
+//    rawCandidates = the sorted `from`s. No matching entry (no override, or a font Figma has): raw = the IR list.
 //  - flex: 'sb' for a space-between primary axis (Figma auto spacing): prop gap, no value.
 //  - token: the CSS variable name from the IR node's tok[prop] (capture, Task 1), or undefined when the node has
 //    none (no tok, synthetic frame, a run with its own colour from a nested element). For type the tokens are per
-//    key in `tokens` ({ family, size, weight, lineHeight, letterSpacing }), only for keys the run does not override.
-//    Space tokens come from the CSS padding/gap declaration; the spec value is geometric and is not compared here.
+//    key in `tokens` ({ family, size, weight, lineHeight, letterSpacing }), only for keys the run does not override
+//    (type tokens are not value-checked here).
+//    R64: a token is attached only when its value is this use's value. space / size / radius / icon: the variable's
+//    value on this screen (screen.vars['--x'].value, read at :root) must be a px length ('12px', or '0') within
+//    0.25 px of the use's value (the spec value is geometric: inferred padding / gap can differ from the CSS one).
+//    colour: toHex of the variable's value must equal the use's hex. Otherwise, and when the variable is missing,
+//    not px (rem, %, calc), empty (declared only lower down, a scoped override) or unparsable, there is no token
+//    and tokenMismatch = '--x' (the design-system token would not stand for this use). Border widths carry no
+//    token (capture's border tokens are colours). Shadow / opacity / type tokens are passed through unchecked.
+//  - sizes (R65 input): [wA, hA, wB, hB] measured at widths A and B (IR rA / rB; rB missing = rA) on icon width /
+//    height uses and image size uses. Capture records no declared CSS size, so none is carried (normalize derives
+//    it, R65). fixed: on icon width / height uses, whether that spec axis is FIXED. img: true on image size uses.
 //
 // role = `${cat}|${prop}|${sig(node)}|${sig(parent)}`, sig = tag + sorted classes joined with '.', state classes
 // dropped (is-*, active, selected, disabled, on). The parent is the source (DOM) parent from the IR, never a
@@ -52,6 +66,7 @@
 // by name, keys sorted: { value (first screen by id), uses (sum), screens, values? ({screen: value}, only when the
 // value differs between screens) }.
 import { parseColor, toHex } from './color.mjs';
+import { firstFamily } from './font-map.mjs';
 
 const STATE = /^(is-.+|active|selected|disabled|on)$/;
 const SIDE = ['T', 'R', 'B', 'L'];
@@ -95,6 +110,9 @@ const colorValue = (raw) => {
   return c.unparsed !== undefined ? { value: null, unparsed: true } : { value: toHex(c) };
 };
 const lsPx = (ls) => (ls == null || ls === 'normal' ? 0 : num(ls));
+const varPx = (v) => { const m = /^\s*(-?\d*\.?\d+)(px)?\s*$/.exec(String(v ?? '')); return m && (m[2] || +m[1] === 0) ? +m[1] : null; };
+const LEN_CATS = new Set(['space', 'size', 'radius', 'border', 'icon']);
+const KEEP_FONT = new Set(['version', 'version-failed', 'override-failed']);
 
 function indexIR(tree) {
   const node = new Map(), parent = new Map();
@@ -116,6 +134,25 @@ function screenUses(screen, spec) {
   const sid = screen.id ?? screen.name;
   const { node: irNode, parent: irParent } = indexIR(screen.tree);
   const uses = [];
+  const vars = screen.vars || {};
+  // R64: attach a token only when the variable's value is the use's value
+  const lenTok = (token, v) => {
+    if (!token) return {};
+    const px = varPx(vars[token] && vars[token].value);
+    return px != null && typeof v === 'number' && Math.abs(px - v) <= 0.25 ? { token } : { tokenMismatch: token };
+  };
+  const colTok = (token, hex) => {
+    if (!token) return {};
+    const c = parseColor(String((vars[token] && vars[token].value) ?? ''));
+    return hex && c.unparsed === undefined && toHex(c) === hex ? { token } : { tokenMismatch: token };
+  };
+  // R63: the family the source authored, from capture's font substitutions
+  const subs = (screen.fontSubs || []).filter((x) => x && !KEEP_FONT.has(x.reason));
+  const rawFamily = (list) => {
+    const fam = firstFamily(list);
+    const from = [...new Set(subs.filter((x) => x.to === fam).map((x) => x.from))].sort(cmpStr);
+    return from.length === 1 ? { raw: from[0] } : from.length > 1 ? { raw: list, rawCandidates: from } : { raw: list };
+  };
 
   // nearest source ancestor of a synthetic id: strip '.g<k>' segments
   const sourceOf = (id) => {
@@ -131,11 +168,15 @@ function screenUses(screen, spec) {
     const parentSig = sn.syn ? sigOf(sourceOf(sn.id)) : sigOf(ir ? irParent.get(ir.id) : null);
     const add = (cat, prop, v, extra = {}) => {
       const u = { screen: sid, node: sn.id, cat, prop, ...v, role: `${cat}|${prop}|${sig}|${parentSig}` };
-      for (const [k, x] of Object.entries(extra)) if (x !== undefined) u[k] = x;
+      const { token, ...rest } = extra;
+      const t = token === undefined ? {} : cat === 'color' ? colTok(token, v.value) : LEN_CATS.has(cat) ? lenTok(token, v.value) : { token };
+      for (const [k, x] of Object.entries({ ...t, ...rest })) if (x !== undefined) u[k] = x;
       uses.push(u);
     };
     const addColor = (prop, raw, token, extra = {}) => add('color', prop, { ...colorValue(raw), raw }, { token, ...extra });
-    const addLen = (cat, prop, v, token) => { if (typeof v === 'number' && v !== 0) add(cat, prop, { value: v, raw: pxRaw(v) }, { token }); };
+    const addLen = (cat, prop, v, token, extra = {}) => { if (typeof v === 'number' && v !== 0) add(cat, prop, { value: v, raw: pxRaw(v) }, { token, ...extra }); };
+    const rA = ir && Array.isArray(ir.rA) ? ir.rA : null, rB = ir && Array.isArray(ir.rB) ? ir.rB : rA;
+    const sizes = rA ? [rA[2], rA[3], rB[2], rB[3]] : undefined;
 
     // ---- paint ----
     const p = sn.paint || {};
@@ -165,14 +206,16 @@ function screenUses(screen, spec) {
 
     // ---- size: FIXED axes of frames and images ----
     if ((sn.t === 'F' || sn.t === 'I') && !sn.syn && !isRoot && Array.isArray(sn.sz)) {
-      if (sn.sz[0] === 'FIXED') addLen('size', 'width', sn.w, tok.width);
-      if (sn.sz[1] === 'FIXED') addLen('size', 'height', sn.h, tok.height);
+      const im = sn.t === 'I' ? { sizes, img: true } : {};
+      if (sn.sz[0] === 'FIXED') addLen('size', 'width', sn.w, tok.width, im);
+      if (sn.sz[1] === 'FIXED') addLen('size', 'height', sn.h, tok.height, im);
     }
 
     // ---- icons ----
     if (sn.t === 'V') {
-      addLen('icon', 'width', sn.w, tok.width);
-      addLen('icon', 'height', sn.h, tok.height);
+      const sz = Array.isArray(sn.sz) ? sn.sz : ['FIXED', 'FIXED'];
+      addLen('icon', 'width', sn.w, tok.width, { sizes, fixed: sz[0] === 'FIXED' });
+      addLen('icon', 'height', sn.h, tok.height, { sizes, fixed: sz[1] === 'FIXED' });
       const ic = sn.icon || {};
       if (ic.svg !== undefined || ic.ref !== undefined || ic.fill !== undefined || ic.stroke !== undefined) {
         if (ic.fill && ic.fill !== 'none') addColor('fill', ic.fill, tok.fill);
@@ -195,7 +238,7 @@ function screenUses(screen, spec) {
           family: s.ff ?? f.ff, size: num(s.fs ?? f.fs), weight: num(s.fw ?? f.fw), style: s.fst ?? f.fst ?? 'normal',
           lineHeight: typeof f.lh === 'number' ? f.lh : num(f.lh), letterSpacing: lsPx(s.ls ?? f.ls), transform: s.tt ?? f.tt ?? 'none',
         };
-        const raw = irS.ff ?? irFont.ff ?? (s.ff ?? f.ff);
+        const rf = rawFamily(irS.ff ?? irFont.ff ?? (s.ff ?? f.ff)), raw = rf.raw;
         const key = JSON.stringify([value, raw]);
         if (!seenType.has(key)) {
           seenType.add(key);
@@ -204,7 +247,7 @@ function screenUses(screen, spec) {
             ['lineHeight', 'lineHeight', null], ['letterSpacing', 'letterSpacing', 'ls']]) {
             if (tok[prop] && !(own && s[own] !== undefined)) tk[k] = tok[prop];
           }
-          add('type', 'text', { value, raw }, { tokens: Object.keys(tk).length ? tk : undefined, run: i });
+          add('type', 'text', { value, raw }, { tokens: Object.keys(tk).length ? tk : undefined, run: i, rawCandidates: rf.rawCandidates });
         }
         const c = s.c ?? f.c;
         if (c && !seenColor.has(c)) {

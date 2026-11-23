@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ordOf, decode, actualNodes, figmaDom, figmaProxy, rgbOf, splitFont, styleWeight, pngSize, proxyVsFigma } from '../core/figma-check.mjs';
+import { ordOf, decode, actualNodes, figmaDom, figmaProxy, rgbOf, splitFont, styleWeight, pngSize, proxyVsFigma, effectNodes } from '../core/figma-check.mjs';
+import { renderFigma } from '../core/report-html.mjs';
 import { chooseFig, mutateFig, FIG_KINDS } from '../core/mutate.mjs';
 import { gate } from '../core/pipeline.mjs';
 
@@ -103,10 +104,15 @@ test('figmaDom: frames, overlay strokes, radius units, icons; unknowns stay unde
   const sq = figmaDom(act.get('n.2'), { opEff: 0.5, spec: SPEC.kids[1] });
   assert.deepEqual(sq.radius, ['0px', '20px', '20px', '20px'], 'an actual radius that differs from the intent, in px');
   assert.equal(sq.op, 0.5);
-  assert.equal(figmaDom(act.get('n.0.1'), { opEff: 1, spec: SPEC.kids[0].kids[1] }).icon, 'i-plus');
+  // I1: which sprite icon a vector frame shows is not read back: no icon value is copied from the spec
+  const ic = figmaDom(act.get('n.0.1'), { opEff: 1, spec: SPEC.kids[0].kids[1] });
+  assert.equal(ic.icon, undefined);
+  assert.equal(ic.iconUnread, true);
+  assert.equal(figmaDom(act.get('n.0.1'), { opEff: 1, spec: { id: 'n.0.1', icon: { svg: '<svg/>' } } }).icon, 'svg', 'an inline svg: drawn as svg (markup unread)');
   const s = screenRes();
   s.nodes[3] = ['9:4', [150, 18, 24, 24], 0, { icon: 0 }];
-  assert.equal(figmaDom(actualNodes(dec(s), Dof()).get('n.0.1'), { opEff: 1, spec: SPEC.kids[0].kids[1] }).icon, undefined, 'an icon without vectors draws nothing');
+  const empty = figmaDom(actualNodes(dec(s), Dof()).get('n.0.1'), { opEff: 1, spec: SPEC.kids[0].kids[1] });
+  assert.deepEqual([empty.icon, empty.iconUnread], [undefined, undefined], 'an icon without vectors draws nothing: a real finding, not unread');
 });
 
 test('figmaProxy: boxes and DOM per vd id, effective opacity, unread checks, fonts; a node not read back is absent', () => {
@@ -118,7 +124,7 @@ test('figmaProxy: boxes and DOM per vd id, effective opacity, unread checks, fon
   assert.deepEqual(p.B.boxes['n.2'], [370, 300, 40, 40]);
   assert.ok(p.A.boxes['n.0#stroke']);
   assert.equal(p.B.png, null, 'no screenshot at width B');
-  assert.deepEqual(p.unread, ['crop-B', 'effect', 'text-decoration', 'text-transform']);
+  assert.deepEqual(p.unread, ['crop-B', 'effect', 'text-decoration', 'text-transform', 'icon']);
   assert.deepEqual(p.A.fontsMissing, ['Georgia']);
   assert.deepEqual(p.A.facesMissing, ['Be Vietnam Pro|0|600']);
   // a parent with opacity 0.5 halves its children's effective opacity
@@ -137,6 +143,7 @@ test('figmaProxy: boxes and DOM per vd id, effective opacity, unread checks, fon
   D3.screens[0].T.k[1].im = { m: 0 }; D3.M = ['data:image/png;base64,AAAA'];
   const p3 = figmaProxy(dec(screenRes(), D3), D3, { ...SPEC, kids: [{ ...SPEC.kids[0], kids: [SPEC.kids[0].kids[0], { id: 'n.0.1', t: 'V', icon: { svg: '<svg/>' } }] }, SPEC.kids[1]] });
   assert.deepEqual(p3.unread.slice(4).sort(), ['image', 'stroke-style', 'svg']);
+  assert.equal(figmaProxy(dec(), Dof(), { ...SPEC, kids: [{ ...SPEC.kids[0], kids: [SPEC.kids[0].kids[0], { id: 'n.0.1', t: 'V' }] }, SPEC.kids[1]] }).unread.includes('icon'), false);
   assert.ok(p3.A.dom['n.0'].stroke[0].includes('dashed'));
   // no readback at all: empty boxes (verify counts every node unchecked)
   assert.deepEqual(figmaProxy(null, null, SPEC).A.boxes, {});
@@ -179,4 +186,19 @@ test('gate: skipped figma-* checks (readback limits) never fail a screen; other 
   const rep = (skipped) => ({ unchecked: [], skipped, data: [], roots: [], needsApproval: [], crop: [], cropLinked: [] });
   assert.equal(gate(rep(['figma-crop-B', 'figma-effect'])).pass, true);
   assert.equal(gate(rep(['figma-crop-B', 'crop'])).pass, false);
+});
+
+test('effects the readback cannot see are listed per node for the report (I2)', () => {
+  const tree = { id: 'n', paint: { shadow: 'none', bgImage: 'none' }, kids: [
+    { id: 'n.0', paint: { shadow: 'rgb(0, 0, 0) 0px 2px 4px 0px' } },
+    { id: 'n.1', paint: { bgImage: 'linear-gradient(rgb(255, 0, 0), rgb(0, 0, 255))' }, kids: [{ id: 'n.1.0', paint: {} }] },
+  ] };
+  const ns = effectNodes(tree);
+  assert.deepEqual(ns, [{ id: 'n.0', what: ['box-shadow rgb(0, 0, 0) 0px 2px 4px 0px'] }, { id: 'n.1', what: ['background-image linear-gradient(rgb(255, 0, 0), rgb(0, 0, 255))'] }]);
+  const f = { status: 'done', root: '1:2', batch: 'batch-01', role: 'modelled', readback: { nodes: 4, missing: 0 }, shot: null, unread: ['effect'],
+    proxyVsFigma: null, effectsNotRead: { count: ns.length, nodes: ns }, fontMissing: [], unbound: [], errors: [], unsupported: [] };
+  const html = renderFigma({ figma: f });
+  assert.match(html, /2 nodes have effects not read back on Figma — compare the crop \/ screenshot by eye/);
+  assert.match(html, /<code>n\.0<\/code> box-shadow rgb\(0, 0, 0\)/);
+  assert.doesNotMatch(renderFigma({ figma: { ...f, effectsNotRead: { count: 0, nodes: [] } } }), /not read back on Figma/);
 });

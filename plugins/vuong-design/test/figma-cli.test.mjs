@@ -258,3 +258,37 @@ test('check: modelled role without norm records; a missing screenshot or a node 
   assert.equal(s1.figma.shot, null);
   assert.ok(q.lines.some((l) => /s1: fail \(no screenshot\)/.test(l)), q.lines.join('\n'));
 });
+
+test('ingest: a vars result with malformed errors items exits 2 before anything is written (M2)', async () => {
+  const h = handDs();
+  await main(['plan', '--ds', h.ds, '--out', h.out], { log: () => {} });
+  const before = readFileSync(join(h.F, 'state.json'), 'utf8');
+  const res = await sendAll(h.F);
+  for (const errors of [['boom'], [{ kind: 'variable', name: 'x' }], [{ msg: 3 }]]) {
+    const q = quiet();
+    assert.equal(await main(['ingest', '--out', h.out, '--result', save(h.d, 'v.json', { ...res['vars-01'], errors })], { log: q.log }), 2);
+    assert.match(q.lines.join('\n'), /errors\[0\]: not \{ kind, name, msg \}/);
+  }
+  assert.equal(readFileSync(join(h.F, 'state.json'), 'utf8'), before);
+  assert.equal(existsSync(join(h.F, 'result-vars-01.json')), false);
+  rmSync(h.d, { recursive: true, force: true });
+});
+
+test('plan warns when a vars batch failed and screen batches are still scheduled (M6)', async () => {
+  const h = handDs();
+  await main(['plan', '--ds', h.ds, '--out', h.out], { log: () => {} });
+  const res = await sendAll(h.F);
+  await main(['ingest', '--out', h.out, '--result', save(h.d, 'v.json', { ...res['vars-01'], errors: [{ kind: 'variable', name: 'color/c01', msg: 'boom' }] })], { log: () => {} });
+  const q = quiet();
+  assert.equal(await main(['plan', '--ds', h.ds, '--out', h.out], { log: q.log }), 0);
+  assert.ok(q.lines.some((l) => /^warning: vars-01 failed when last sent \(1 errors\); screen batches are still scheduled/.test(l)), q.lines.join('\n'));
+  const st = readJson(h.F, 'state.json');
+  assert.equal(st.run.warnings.length, 1);
+  assert.deepEqual(st.batches['vars-01'].lastFailed, [{ kind: 'variable', name: 'color/c01', msg: 'boom' }]);
+  // once vars-01 is done, no warning
+  await main(['ingest', '--out', h.out, '--result', save(h.d, 'v2.json', res['vars-01'])], { log: () => {} });
+  const q2 = quiet();
+  await main(['plan', '--ds', h.ds, '--out', h.out], { log: q2.log });
+  assert.ok(!q2.lines.some((l) => /failed when last sent/.test(l)), q2.lines.join('\n'));
+  rmSync(h.d, { recursive: true, force: true });
+});

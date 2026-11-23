@@ -42,7 +42,7 @@ import { fileURLToPath } from 'node:url';
 import { UsageError, readAllowlist, runVerdict } from './layout.mjs';
 import { encodeScreen, planBatches, newTables, OversizeError } from './figma-encode.mjs';
 import { varsPayload, varNames } from './figma-vars.mjs';
-import { ordOf, decode, figmaProxy, shotAtDsf, proxyVsFigma } from './figma-check.mjs';
+import { ordOf, decode, figmaProxy, shotAtDsf, proxyVsFigma, effectNodes } from './figma-check.mjs';
 
 const RUNTIME = readFileSync(new URL('./figma-runtime.js', import.meta.url), 'utf8');
 export const USAGE = `usage: node core/figma.mjs plan --ds <ds output dir> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo]
@@ -133,10 +133,11 @@ async function plan(argv, log) {
     const keep = p && p.status === 'done' && p.hash === b.hash && !o.redo && Object.values(files).every((f) => existsSync(join(F, f)));
     if (keep) st.batches[b.key] = p;
     else {
+      const lastFailed = p && p.status === 'failed' ? (p.errors || p.lastFailed || []) : null;
       writeFileSync(join(F, files.file), b.code);
       if (b.data) writeFileSync(join(F, files.data), JSON.stringify(b.data));
       if (p && p.status === 'done' && p.hash !== b.hash) changed.push(b.key);
-      st.batches[b.key] = { kind: b.kind, ...(b.n ? { n: b.n } : {}), ...files, screens: b.screens, bytes: b.bytes, hash: b.hash, status: 'pending' };
+      st.batches[b.key] = { kind: b.kind, ...(b.n ? { n: b.n } : {}), ...files, screens: b.screens, bytes: b.bytes, hash: b.hash, status: 'pending', ...(lastFailed && p.hash === b.hash ? { lastFailed } : {}) };
     }
     st.order.push(b.key);
     for (const s of b.screens) {
@@ -161,13 +162,19 @@ async function plan(argv, log) {
     used += n; send.push(k);
   }
   const nv = todo.filter((k) => st.batches[k].kind === 'vars').length;
-  st.run = { maxCalls, calls: { useFigma: tot.useFigma, screenshot: tot.screenshot, total: tot.useFigma + tot.screenshot }, kb: Math.round(tot.bytes / 100) / 10, send, sendCalls: used, stopBefore };
+  // M6: a vars batch that failed (and is unchanged) while screen batches are still to send: their bindings would miss
+  const varsFailed = st.order.filter((k) => st.batches[k].kind === 'vars' && st.batches[k].status !== 'done' && st.batches[k].lastFailed);
+  const warnings = varsFailed.length && todo.some((k) => st.batches[k].kind === 'screens')
+    ? [`${varsFailed.join(', ')} failed when last sent (${varsFailed.map((k) => `${st.batches[k].lastFailed.length} errors`).join(', ')}); screen batches are still scheduled and would bind to missing variables / styles: fix the cause and send ${varsFailed.join(', ')} again first`]
+    : [];
+  st.run = { maxCalls, ...(warnings.length ? { warnings } : {}), calls: { useFigma: tot.useFigma, screenshot: tot.screenshot, total: tot.useFigma + tot.screenshot }, kb: Math.round(tot.bytes / 100) / 10, send, sendCalls: used, stopBefore };
   writeFileSync(statePath(o.out), json(st));
   const skippedDone = st.order.length - todo.length;
   log(`plan: ${st.order.length} batches (${st.order.filter((k) => st.batches[k].kind === 'vars').length} vars, ${st.order.filter((k) => st.batches[k].kind === 'screens').length} screen), ${ids.length} screens${skippedDone ? `; ${skippedDone} already done (kept)` : ''}`);
   if (changed.length) log(`changed since they were sent: ${changed.join(', ')} (pending again)`);
   log(`estimate: ${tot.useFigma} use_figma calls (${nv} vars + ${tot.useFigma - nv} screen batches), ${tot.screenshot} get_screenshot calls, ${st.run.kb} KB to send`);
   log(`this run (--max-calls ${maxCalls}): send ${send.length ? send.join(', ') : 'nothing'} (${used} calls)${stopBefore ? `; stops before ${stopBefore}` : ''}`);
+  for (const w of warnings) log(`warning: ${w}`);
   if (tot.useFigma + tot.screenshot > maxCalls) log(`warning: the plan needs ${tot.useFigma + tot.screenshot} calls, over --max-calls ${maxCalls}: after this run, ingest the results and run plan again to continue`);
   return 0;
 }
@@ -222,7 +229,9 @@ export function validateVarsBatch(res, entry, index) {
   if (res.batch !== index) bad.push(`batch is ${JSON.stringify(res.batch)}, expected ${index} (vars batches count from 0)`);
   for (const k of ['collections', 'variables', 'textStyles', 'effectStyles']) if (!isObj(res[k])) bad.push(`${k} is not an object`);
   if (!isArr(res.errors)) bad.push('errors is not an array');
+  else res.errors.forEach((x, i) => { if (!isObj(x) || typeof x.msg !== 'string' || (x.kind !== undefined && typeof x.kind !== 'string') || (x.name !== undefined && typeof x.name !== 'string')) bad.push(`errors[${i}]: not { kind, name, msg }`); });
   if (!isArr(res.fontMissing)) bad.push('fontMissing is not an array');
+  else res.fontMissing.forEach((x, i) => { if (!isObj(x)) bad.push(`fontMissing[${i}]: not an object`); });
   return bad;
 }
 
@@ -255,7 +264,7 @@ async function ingest(argv, log) {
   if (b.kind === 'vars') {
     b.status = res.errors.length ? 'failed' : 'done';
     b.result = file;
-    if (res.errors.length) b.errors = res.errors; else delete b.errors;
+    if (res.errors.length) b.errors = res.errors; else { delete b.errors; delete b.lastFailed; }
     b.fontMissing = res.fontMissing.length;
     log(`${key}: ${b.status}${res.errors.length ? ` (${res.errors.length} errors: ${res.errors.slice(0, 3).map((x) => `${x.kind} ${x.name}: ${x.msg}`).join('; ')})` : ''}`);
   } else {
@@ -418,6 +427,7 @@ async function check(argv, log, deps) {
         unsupported: Object.keys((x.sres && x.sres.unsupported) || {}),
         shot: shot ? { file: `shot-${safe(x.id)}.png`, scale: Math.round(shot.scale * 1000) / 1000, rescaled: shot.rescaled } : null,
         unread: fig.unread,
+        effectsNotRead: (() => { const ns = effectNodes(sc.tree); return { count: ns.length, nodes: ns }; })(),
         proxyVsFigma: { ref: normOn ? 'norm' : 'modelled', ...proxyVsFigma(normOn ? normP : modP, fig, ids) },
       };
       const entry = { screen: sc, inferred, modelled, report, proxy: normOn ? modP : fig, layout, norm: normOn ? fig : null, normLayout, figma: fig, ...(mutations ? { mutations } : {}) };

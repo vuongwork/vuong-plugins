@@ -265,7 +265,7 @@ node core/figma.mjs check  --out <dir> [--mutate] [--allowlist <json>] [--html <
 - **plan** encodes every screen (`spec-norm-<id>.json`, `token-map.json`, `tokens.json`, `ir.json`), writes the variable batches (`varsPayload`) and the screen batches (`planBatches`, each at most 50 000 bytes), and prints the estimate: `use_figma` calls (vars + screen batches still to send), `get_screenshot` calls (one per screen), total KB. It lists the batches for this run, in order, while the calls fit `--max-calls` (default 40). It stops at a batch boundary (`state.run.stopBefore`) and warns when the plan needs more. A batch already `done` with the same code is kept and not written again, unless `--redo`. The same input gives the same numbering. `--force <screen>` (repeatable or comma-separated) puts the screen in `D.force`: the runtime rebuilds it even when it was edited by hand. `--ds` must be the folder of one HTML file (in corpus mode, `<out>/<file stem>`).
 - **ingest** validates a result against the BatchResult shape of its batch (README "Figma runtime"; vars batches: "Figma variables"), copies it to `result-<key>.json` and merges it into `state.json`.
   - Malformed JSON or a wrong shape → exit 2, state unchanged. Wrong shapes: a wrong batch number, a screen missing or not in the batch, `nodes` not the length of the encoding, an entry that is not `0` or `[fid, A, dB?, d?]`.
-  - A vars batch with a non-empty `errors` is `failed`, its errors kept. A screen batch is `failed` when a screen's root failed, else `done`.
+  - A vars batch with a non-empty `errors` is `failed`, its errors kept (each item must be `{ kind, name, msg }`, else exit 2). `plan` warns (and records `state.run.warnings`) while a failed vars batch is unsent and screen batches are scheduled. A screen batch is `failed` when a screen's root failed, else `done`.
   - Per screen: `done`, `skippedEdited` (`edited: true`: the frame was changed by hand and kept), or `failed`. `extra` frames are recorded.
   - The batch is told by the result's `batch` (a vars result counts from 0); `--batch` overrides it.
 - **check** captures the source page again. It takes the ds run's `--html`, `--root`, `--widen`, `--no-webfonts` from its `report.json`; flags override them, and `--name`, `--widen-by`, `--viewport` must be given again if the ds run used them. It rebuilds the inferred, modelled and target specs (exit 2 when a target differs from `spec-norm-<id>.json`: the page changed since `ds.mjs` ran) and renders the local proxies as `pipeline.runScreen` does. Then it runs `verifyScreen` with the Figma readback as the proxy of what was built (`figma-check.mjs figmaProxy`, mark `figma-real`):
@@ -276,7 +276,9 @@ node core/figma.mjs check  --out <dir> [--mutate] [--allowlist <json>] [--html <
     - `figma-crop-B`: the screenshot is at width A;
     - `figma-effect`: shadows, background images;
     - `figma-text-decoration`, `figma-text-transform`: runtime M5;
-    - when present, `figma-svg` (inline svg markup), `figma-image` (fit, position, source), `figma-stroke-style` (dash pattern).
+    - when present, `figma-icon` (which sprite icon a vector frame shows: only "has vectors" is read back; an icon frame without vectors is still a finding), `figma-svg` (inline svg markup), `figma-image` (fit, position, source), `figma-stroke-style` (dash pattern).
+
+    The Figma section lists every node whose source has a box-shadow or background-image (`figma.effectsNotRead`: count and nodes) as "effect not read back on Figma: compare the crop / screenshot by eye". Hidden layers (`visible`) are not read back either.
 
     Outline is `none`: Figma has none, so a source outline is a finding.
   - A node missing from the readback (entry `0`), or a screen not built, failed or `skippedEdited`: no Figma box, the nodes are unchecked and the screen fails.

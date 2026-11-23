@@ -80,7 +80,8 @@
 //   missing or wrong mark makes verifyScreen throw. Plan 3 Task 7 (R-P4): the Figma readback (figma-check.mjs
 //   figmaProxy: model 'figma', mark 'figma-real') plays the proxy of what is built: the modelled proxy, or the norm proxy
 //   in place of mark 'norm'. Its `unread` list (checks the readback cannot observe) is recorded as skipped
-//   'figma-<name>', which never fails a screen (figmaSkip); a run prop the DOM leaves undefined is not compared.
+//   'figma-<name>', which never fails a screen (figmaSkip); on that proxy only, a run prop the DOM leaves undefined
+//   on every run is not compared, nor the identity of an icon whose DOM says iconUnread.
 //   measureCrops opts.widths limits the crops to those widths (the Figma screenshot is at width A).
 //   fontSubstitution explains nothing (R10: capture measures the source in the Figma font), nor does shrinkModelled
 //   (infer's info that a shrink item is FILL + max, plan 3 Task 2; its shrink flag still explains). On a screen flagged
@@ -346,7 +347,7 @@ const runNorm = [(v) => `${r2(parseFloat(v))}px`, (v) => String(v ?? '400'), (v)
 // runs [[text, fs, fw, fst, td, tt, ff, colour]] of the source and of the proxy DOM, compared per non-blank character;
 // one finding per property (its first differing character). Texts that differ are not compared here (the text check
 // reports them).
-function runStyleDiff(src, dom) {
+function runStyleDiff(src, dom, figReal = false) {
   const chars = (runs) => {
     const out = [];
     for (const r of runs) for (const ch of String(r[0] ?? '')) if (/\S/.test(ch)) out.push([ch, ...r.slice(1, 8).map((v, i) => runNorm[i](v))]);
@@ -356,7 +357,7 @@ function runStyleDiff(src, dom) {
   if (a.length !== b.length || a.some((x, i) => x[0] !== b[i][0])) return [];
   const out = [];
   RUN_PROPS.forEach((prop, k) => {
-    if (dom.length && dom.every((r) => r[k + 1] === undefined)) return; // plan 3 T7: not observed (Figma readback: decoration, case)
+    if (figReal && dom.length && dom.every((r) => r[k + 1] === undefined)) return; // plan 3 T7: not read back on Figma (decoration, case)
     const i = a.findIndex((x, j) => x[k + 1] !== b[j][k + 1]);
     if (i >= 0) out.push({ prop, expected: a[i][k + 1], actual: b[i][k + 1], at: i });
   });
@@ -1182,6 +1183,7 @@ export function verifyScreen(input, opts = {}) {
     if (f.reason === 'override-failed') data.push({ id: screen.tree.id, kind: 'font', expected: f.to, actual: `${f.from} (override-failed)` });
   }
   const P3 = norm ? NP : proxy; // R66: layer 3 reads the norm proxy when there is one
+  const figReal = !!(P3.A && P3.A.mark === 'figma-real'); // plan 3 Task 7: the DOM is a Figma readback
   const dom = P3.A && P3.A.dom;
   if (!dom) skipped.push('data');
   const missing = new Set([...(P3.A?.fontsMissing || []), ...(P3.B?.fontsMissing || [])]);
@@ -1203,7 +1205,8 @@ export function verifyScreen(input, opts = {}) {
       const expected = normColor(tgt(n.id, 'color', 'bg', n.paint && n.paint.bg)), actual = normColor(d.bg);
       if (expected !== actual) data.push({ id: n.id, kind: 'color', expected, actual });
     }
-    if (n.kind === 'icon') {
+    // plan 3 Task 7: a Figma readback cannot tell which icon a vector frame shows (iconUnread; skipped 'figma-icon')
+    if (n.kind === 'icon' && !(figReal && d.iconUnread)) {
       const expected = iconKey(n.icon), actual = domIcon(d);
       if (expected !== actual) data.push({ id: n.id, kind: 'icon', expected, actual });
     }
@@ -1263,7 +1266,7 @@ export function verifyScreen(input, opts = {}) {
       if (!Array.isArray(d.runs)) miss.add('font-style');
       else {
         const src = (n.runs || []).filter((r) => !r.br).map((r) => { const f = { ...n.font, ...(r.s || {}) }; return [r.t, tgt(id, 'type', 'fontSize', f.fs), f.fw, f.fst, f.td, f.tt, f.ff, tgt(id, 'color', 'color', f.c)]; });
-        for (const f of runStyleDiff(src, d.runs)) data.push({ id, kind: 'font-style', ...f });
+        for (const f of runStyleDiff(src, d.runs, figReal)) data.push({ id, kind: 'font-style', ...f });
         // R55: every face a run uses (family, style, weight as rendered) must have loaded in the proxy
         if (!Array.isArray(faceMiss)) miss.add('font-face');
         else {
@@ -1447,7 +1450,7 @@ export function verifyScreen(input, opts = {}) {
 
   // plan 3 Task 7: a Figma readback proxy (mark 'figma-real', in the modelled or the norm role) lists what the readback
   // cannot observe (P.unread); those checks become skipped 'figma-<name>', reported but never failing (pass, gate)
-  const FP = P3.A && P3.A.mark === 'figma-real' ? P3.A : null;
+  const FP = figReal ? P3.A : null;
   for (const k of FP ? FP.unread || [] : []) { const i = skipped.indexOf(k); if (i >= 0) skipped.splice(i, 1); skipped.push(`figma-${k}`); }
   const checked = list.length - unchecked.length;
   const nodes = list.map(({ n }) => {

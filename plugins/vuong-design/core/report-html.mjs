@@ -323,7 +323,7 @@ const FIG_UNREAD = {
   'text-decoration': 'text decoration of runs', 'text-transform': 'text case of runs', svg: 'inline svg markup (only "has vectors" is read back)',
   image: 'image fit, position and source (only the image paint is read back)', 'stroke-style': 'dashed / dotted stroke style (dash pattern not read back)',
 };
-function renderFigma(v) {
+export function renderFigma(v) {
   const f = v.figma, out = ['<h3>Figma</h3>'];
   const st = f.status === 'skippedEdited' ? 'edited by hand in Figma, kept (skippedEdited): not checked; rerun with --force to overwrite'
     : f.status === 'done' ? `built (frame ${esc(f.root)}, ${esc(f.batch)}), checked as the ${f.role === 'norm' ? 'normalised' : 'modelled'} proxy`
@@ -338,6 +338,11 @@ function renderFigma(v) {
     if (rows.length) out.push(`<table><tr><th>node</th><th>width</th><th>Figma vs proxy</th></tr>${rows.join('')}</table>`);
   }
   if (f.unread && f.unread.length) out.push(`<p class="muted">Not observable in the Figma readback (listed as skipped figma-*, never failing): ${esc(f.unread.map((k) => FIG_UNREAD[k] || k).join('; '))}.</p>`);
+  const en = f.effectsNotRead;
+  if (en && en.count) {
+    out.push(`<p>${plural(en.count, 'node has an effect', 'nodes have effects')} not read back on Figma — compare the crop / screenshot by eye:</p>` +
+      `<ul>${en.nodes.map((x) => `<li><code>${esc(x.id)}</code> ${esc(x.what.join('; '))}</li>`).join('')}</ul>`);
+  }
   if (f.fontMissing.length) out.push(`<p>Fonts missing in Figma: ${esc(f.fontMissing.map((m) => `${m.o}: ${m.family} ${m.style} -> ${m.used}`).join('; '))}</p>`);
   if (f.unbound.length) out.push(`<p>Not bound to a variable or style: ${esc(f.unbound.map((u) => `${u.o} ${u.prop} ${u.name} (${u.reason})`).slice(0, 20).join('; '))}${f.unbound.length > 20 ? ' …' : ''}</p>`);
   if (f.errors.length) out.push(`<p>Build errors: ${esc(f.errors.map((x) => `${x.o}: ${x.msg}`).slice(0, 20).join('; '))}</p>`);

@@ -16,13 +16,15 @@
 //   What the readback does not observe is left out of the record (undefined), never filled in from the source:
 //    - shadow / bgImage (effects and gradient geometry are not read back)         -> unread 'effect'
 //    - svg markup of an inline svg icon (only "has vectors" is read back)         -> unread 'svg'
+//    - which sprite icon (ref) a vector frame shows (only "has vectors")           -> iconUnread, unread 'icon'
 //    - img fit / position / source of an image fill (only the IMAGE paint is read) -> unread 'image'
 //    - text-decoration / text-transform of runs (runtime M5: not compared)        -> unread 'text-decoration' / 'text-transform'
 //    - the dash style of a stroke (dashPattern is not read back; the encoded style is used) -> unread 'stroke-style'
 //    - width B has no screenshot (get_screenshot shows the frame at width A)      -> unread 'crop-B'
 //   verifyScreen records each unread name as skipped 'figma-<name>': listed in the report, never failing the screen.
 //   outline is 'none': Figma has no outline (the encoder reports a source outline as raw / unsupported), so a source
-//   outline is a real difference. vis 'visible', disp 'flex': every built node is shown. A colour equal to the
+//   outline is a real difference. vis 'visible', disp 'flex': every built node is shown (node.visible is not read
+//   back, so a layer hidden by hand in Figma is not detected). A colour equal to the
 //   intent is the intent's hex; alpha = the shortest decimal that encodes to the same byte. A corner radius equal to
 //   the intent is reported in the spec's own unit (the intent was encoded from it, e.g. 50% -> px), a different one
 //   in px.
@@ -32,6 +34,8 @@
 // pngSize(buf) -> [w, h]; rescalePng(browser, buf, factor) -> Buffer (canvas, smooth). The screenshot's scale is
 //   pngWidth / W_A; check rescales it to the proxy's device scale 2 before measureCrops.
 // proxyVsFigma(ref, fig, ids) -> { A: { max, worst }, B } the largest |box delta| between a local proxy and Figma.
+// effectNodes(tree) -> [{ id, what: ['box-shadow …' | 'background-image …'] }]   source nodes with an effect the readback
+//   cannot see (box-shadow, background-image other than none), for the report: compare them on the screenshot by eye.
 
 const r2 = (v) => Math.round(v * 100) / 100 + 0;
 const r3 = (v) => Math.round(v * 1000) / 1000 + 0;
@@ -184,11 +188,11 @@ export function figmaDom(n, ctx = {}) {
   else dom.stroke = sides(n.strokes, style);
   const sr = spec && spec.paint && Array.isArray(spec.paint.radius) && spec.paint.radius.length === 4 ? spec.paint.radius : null;
   dom.radius = n.radiusIntent && sr ? sr.map((x) => (typeof x === 'number' ? `${x}px` : String(x))) : (n.radius || [0, 0, 0, 0]).map((x) => `${r2(x)}px`);
-  if (e.t === 'V') {
-    if (!n.iconEmpty) {
-      const ic = spec && spec.icon;
-      dom.icon = ic && ic.ref ? ic.ref : 'svg';
-    }
+  // an icon frame with vectors: the readback cannot tell which sprite icon it is (iconUnread, unread 'icon'); an inline
+  // svg is reported as 'svg' (its markup is unread 'svg'); no vectors at all = nothing drawn (icon undefined: a finding)
+  if (e.t === 'V' && !n.iconEmpty) {
+    const ic = spec && spec.icon;
+    if (ic && ic.ref) dom.iconUnread = true; else dom.icon = 'svg';
   }
   if (e.t === 'I' || e.im) { if (!(n.fills || []).includes('IMAGE')) dom.img = null; }
   return dom;
@@ -212,6 +216,7 @@ export function figmaProxy(s, D, spec, opts = {}) {
       const ov = e.bd && e.bd.o ? act.get(`${e.o}#stroke`) || null : undefined;
       dom[e.o] = figmaDom(n, { opEff, spec: specIdx.get(e.o), overlay: ov });
       if (e.t === 'V' && !(e.ic && e.ic.g != null) && dom[e.o].icon === 'svg') unread.add('svg');
+      if (dom[e.o].iconUnread) unread.add('icon');
       if ((e.t === 'I' || e.im) && dom[e.o].img === undefined) unread.add('image');
       if (e.bd && e.bd.d) unread.add('stroke-style');
     }
@@ -275,5 +280,20 @@ export function proxyVsFigma(ref, fig, ids, worstN = 5) {
     rows.sort((x, y) => y.max - x.max || (x.id < y.id ? -1 : 1));
     out[M] = { compared: rows.length, max: rows.length ? rows[0].max : null, worst: rows.slice(0, worstN).filter((r) => r.max > 0) };
   }
+  return out;
+}
+
+// source nodes with paint the readback does not observe (shadows, background images): listed in the report
+export function effectNodes(tree) {
+  const out = [];
+  const on = (v) => v != null && v !== '' && v !== 'none';
+  const walk = (n) => {
+    const p = n.paint || {}, what = [];
+    if (on(p.shadow)) what.push(`box-shadow ${p.shadow}`);
+    if (on(p.bgImage)) what.push(`background-image ${String(p.bgImage).slice(0, 120)}`);
+    if (what.length) out.push({ id: n.id, what });
+    (n.kids || []).forEach(walk);
+  };
+  if (tree) walk(tree);
   return out;
 }

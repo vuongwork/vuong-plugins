@@ -2156,3 +2156,29 @@ test('R77: the avatar crop is explained by its SRC_SQUASH record when the norm l
   assert.deepEqual(o.cropExplained, []);
   assert.deepEqual(o.crop.map((c) => c.id), ['n.0.0']);
 });
+
+// plan 3 Task 7 (M1, I1): the Figma readback relaxations apply to a 'figma-real' proxy only
+test('figma-real proxy: undefined run props and an unread icon are not compared; a renderProxy DOM is compared as before', () => {
+  // the source text is underlined; the DOM leaves decoration / case undefined on every run
+  const underline = (inp) => { inp.screen.tree.kids[0].kids[0].font = { ...FONT, td: 'underline' }; return inp; };
+  const plain = underline(fixture());
+  plain.proxy.A.dom['n.0.0'].runs = plain.proxy.A.dom['n.0.0'].runs.map((r) => [...r.slice(0, 4), undefined, undefined, ...r.slice(6)]);
+  delete plain.proxy.A.dom['n.0.1'].icon;
+  plain.proxy.A.dom['n.0.1'].iconUnread = true;
+  let r = verifyScreen(plain);
+  assert.ok(r.data.some((d) => d.kind === 'font-style' && d.prop === 'text-decoration'), JSON.stringify(r.data));
+  assert.ok(r.data.some((d) => d.kind === 'icon' && d.id === 'n.0.1'));
+  assert.equal(r.pass, false);
+  const fig = underline(fixture());
+  for (const M of ['A', 'B']) Object.assign(fig.proxy[M], { mark: 'figma-real', unread: ['text-decoration', 'text-transform', 'icon'] });
+  fig.proxy.A.dom['n.0.0'].runs = plain.proxy.A.dom['n.0.0'].runs;
+  delete fig.proxy.A.dom['n.0.1'].icon;
+  fig.proxy.A.dom['n.0.1'].iconUnread = true;
+  r = verifyScreen(fig);
+  assert.deepEqual(r.data, []);
+  assert.deepEqual(r.skipped, ['figma-text-decoration', 'figma-text-transform', 'figma-icon']);
+  assert.equal(r.pass, true);
+  // on Figma, an icon frame without vectors (no icon, not unread) is still a finding
+  delete fig.proxy.A.dom['n.0.1'].iconUnread;
+  assert.ok(verifyScreen(fig).data.some((d) => d.kind === 'icon' && d.id === 'n.0.1'));
+});

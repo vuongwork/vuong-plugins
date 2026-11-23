@@ -3,6 +3,12 @@
 //  - FILL node with a border: Figma adds the stroke to the box, so the border becomes an absolute overlay
 //    (paint.strokeOverlay = true; plan 3 draws it) and the size is unchanged
 //  - several font sizes on one line: Figma keeps a fixed line height, Chrome grows it -> flag mixedRunHeight
+//  - max width (T8 items C / D): infer takes `max` from Chrome widths (shrinkFill: the unshrunk size flex.n; a single
+//    FILL child that grows less: its width at B), and a text's Chrome natural width is up to 1 px narrower than its
+//    Figma box (figmaTextBox), so Figma wrapped the last word. `max` is raised (never lowered) to the node's natural
+//    width in Figma terms (figmaNaturalW): a text -> figmaTextBox(max).w; an H frame -> paddings + gaps + its HUG /
+//    FIXED children at their modelled widths + its one FILL child at the rest (two or more FILL children, wrap or
+//    space-between: unchanged); a V frame -> paddings + the widest child (FILL children at the inner width).
 //  - fonts Figma lacks are replaced (node.font.ff / run ff) so the proxy renders with the real font; reported.
 //    Each family list is first resolved to the family Chrome actually rendered (opts.rendered = screen.fontsRendered,
 //    falling back to the first family). A rendered family that Figma has is kept; otherwise it is substituted by
@@ -41,6 +47,25 @@ export function resolveFamily(fontMap, list, renderedList) {
   if (isAvailable(fontMap, first) && r !== first) { from = first; reason = 'not-loaded'; }
   if (to === from) return { ff: to };
   return { ff: to, sub: { from, to, reason } };
+}
+
+const r2 = (v) => Math.round(v * 100) / 100 + 0;
+// the Figma natural width of a node whose Chrome natural width is W (src: the node before the model, mod: after)
+export function figmaNaturalW(src, mod, W) {
+  if (src.t === 'T' && src.font) return figmaTextBox(W, 0, parseFloat(src.font.ls) || 0).w;
+  const L = src.lay;
+  if (!L || L.wrap || L.sb || !src.kids || !mod.kids) return W;
+  const flow = src.kids.map((k, i) => [k, mod.kids[i]]).filter(([k]) => !k.abs);
+  const pad = ((L.p && L.p[1]) || 0) + ((L.p && L.p[3]) || 0);
+  const fill = ([k]) => !!(k.sz && k.sz[0] === 'FILL');
+  if (L.d === 'H') {
+    const el = flow.filter(fill);
+    if (el.length > 1) return W;
+    const gaps = (L.g || 0) * Math.max(0, flow.length - 1), rest = flow.filter((x) => !fill(x));
+    const sum = (f) => rest.reduce((s, x) => s + f(x), 0);
+    return pad + gaps + sum(([, m]) => m.w) + (el.length ? figmaNaturalW(el[0][0], el[0][1], W - pad - gaps - sum(([k]) => k.w)) : 0);
+  }
+  return pad + Math.max(0, ...flow.map((x) => (fill(x) ? figmaNaturalW(x[0], x[1], W - pad) : x[1].w)));
 }
 
 export function applyFigmaModel(spec, fontMap, opts = {}) {
@@ -114,6 +139,7 @@ export function applyFigmaModel(spec, fontMap, opts = {}) {
       } else o.paint = { ...n.paint, strokeOverlay: true };
     }
     if (n.kids) o.kids = n.kids.map(visit);
+    if (typeof n.max === 'number') o.max = r2(Math.max(n.max, figmaNaturalW(n, o, n.max)));
     return o;
   };
 

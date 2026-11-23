@@ -156,3 +156,32 @@ test("facts lineHeightFrac 'round': a px string line height is rounded too; 'nor
   assert.equal(r.spec.kids[1].font.lh, 'normal');
   assert.deepEqual(r.flags.map((f) => f.id), ['p']);
 });
+
+// T8 items C / D: Figma's text box is figmaTextBox(chromeW) = ceil(chromeW - trailing letter-spacing) wide, so a max
+// width equal to a text's Chrome natural width (shrinkFill FILL + max, or a single FILL child capped at its B width)
+// wraps the last word in Figma. The model raises max to the content's natural width in Figma terms.
+const fillText = (id, o = {}) => text(id, { w: 213, h: 37, sz: ['FILL', 'HUG'], ...o });
+const row = (o, ...kids) => ({ id: 'row', t: 'F', w: 237, h: 54, sz: ['FILL', 'HUG'], lay: { d: 'H', p: [9, 12, 9, 12], g: 0, pa: 'S', ca: 'S' }, kids, ...o });
+
+test('max width from a text: a FILL text gets ceil of its Chrome width (363.625 / 363.63 -> 364), never less than before', () => {
+  const { spec: out } = applyFigmaModel(root(fillText('a', { max: 363.625 }), fillText('b', { max: 363.63 }), fillText('c', { max: 286.47 }),
+    fillText('d', { max: 100.5, font: font({ ls: '1px' }) }), fillText('e', { max: 120 })), defaultFontMap());
+  assert.deepEqual(out.kids.map((k) => k.max), [364, 364, 287, 100.5, 120]);
+});
+
+test('max width of a FILL bubble (s3): paddings + its text at the Figma text width, 302.5 -> 303', () => {
+  const { spec: out } = applyFigmaModel(root(row({ max: 302.5 }, fillText('t'))), defaultFontMap());
+  assert.equal(out.kids[0].max, 303);
+  assert.equal(out.kids[0].kids[0].max, undefined);
+});
+
+test('max width of a row: HUG texts at their Figma box, gaps, the one FILL text at the rest rounded up; V layout: the widest FILL child', () => {
+  const r = row({ max: 200, lay: { d: 'H', p: [0, 10, 0, 10], g: 4, pa: 'S', ca: 'S' } }, text('h', { w: 40.3, h: 18 }), fillText('t'), { id: 'x', t: 'F', w: 4, h: 4, sz: ['FIXED', 'FIXED'], abs: { x: 0, y: 0, c: 'L' } });
+  // Chrome: 10 + 40.3 + 4 + 135.7 + 10 = 200 -> Figma: 10 + 41 + 4 + 136 + 10 = 201 (the absolute child takes no space)
+  const v = { id: 'col', t: 'F', w: 100, h: 40, sz: ['FILL', 'HUG'], max: 150.2, lay: { d: 'V', p: [0, 5, 0, 5], g: 2, pa: 'S', ca: 'S' }, kids: [fillText('t2'), text('h2', { w: 60, h: 18 })] };
+  const sb = { ...row({ max: 200.2 }, fillText('u'), fillText('w')) };
+  const { spec: out } = applyFigmaModel(root(r, v, sb), defaultFontMap());
+  assert.equal(out.kids[0].max, 201);
+  assert.equal(out.kids[1].max, 151);
+  assert.equal(out.kids[2].max, 200.2, 'two FILL items: the natural split is unknown, max unchanged');
+});

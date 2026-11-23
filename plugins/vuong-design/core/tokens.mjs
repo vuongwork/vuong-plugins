@@ -61,7 +61,7 @@ const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const r2 = (v) => Math.round(v * 100) / 100;
 const r4 = (v) => Math.round(v * 10000) / 10000;
 const VD = 'vuong-design';
-const PILL_PX = 9999; // R70: radius.full
+export const PILL_PX = 9999; // R70: radius.full
 
 const fmtNum = (v, d) => (d <= 2 ? String(r2(v)) : String(Number(v.toFixed(d))));
 export const numName = (v, d = 2) => fmtNum(v, d).replace('-', 'm').replace('.', '_');

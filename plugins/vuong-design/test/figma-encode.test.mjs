@@ -233,8 +233,8 @@ test('variables bind by the token map: plain and run keys, missing variables and
   const [s] = decodeForTest(D);
   const row = s.tree.kids[0];
   // bg #26335c80 = c01 (alpha 0.5); padding T 10 px != space.16? no: paddingT is 10 and maps to space.10 -> no variable
-  // the 999px pill radius does not equal radius.full (9999): not bound, the hard value stays (plan Global Constraint)
-  assert.deepEqual(row.vars, { bg: 'color/c01', b0: 'border/1', sc: 'role/ink', op: 'opacity/80', pl: 'space/16' });
+  // the 999px corner on a 304 x 60 row is a pill (R70): it binds to radius.full (9999), Figma clamps both to 30 px
+  assert.deepEqual(row.vars, { bg: 'color/c01', b0: 'border/1', sc: 'role/ink', op: 'opacity/80', pl: 'space/16', r0: 'role/card-radius' });
   assert.deepEqual(row.paint.radius, [999, 999, 0, 0]);
   assert.equal(row.effectStyle, 'shadow/s01');
   const txt = row.kids[0];
@@ -247,14 +247,29 @@ test('variables bind by the token map: plain and run keys, missing variables and
   assert.equal(plain.textStyle, 'type/t14-600');
   assert.equal(plain.vars, undefined);
   // c09 has no variable; c03 has none either; padding 10 has none; width of a FILL text cannot bind
-  assert.deepEqual(enc.unbound, { 'no-variable': 3, 'value-mismatch': 1, 'not-fixed': 1 });
+  assert.deepEqual(enc.unbound, { 'no-variable': 3, 'not-fixed': 1 });
   assert.deepEqual(enc.unboundList.map((u) => `${u.o} ${u.key} ${u.reason}`).sort(), [
-    'n.0 paddingT no-variable', 'n.0 radiusTL value-mismatch', 'n.0.0 color|1 no-variable', 'n.1 color no-variable', 'n.1 width not-fixed']);
+    'n.0 paddingT no-variable', 'n.0.0 color|1 no-variable', 'n.1 color no-variable', 'n.1 width not-fixed']);
   // mismatch: the token value differs from the spec value -> not bound
   const map2 = { s0: { 'n.0': { paddingL: 'primitive.space.10' } } };
   const enc2 = encodeScreen(small(), ctxFor({ map: map2, tables: tablesFor(['space/10']), tokens }));
   assert.equal(enc2.T.k[0].v, undefined);
   assert.deepEqual(enc2.unbound, { 'value-mismatch': 1 });
+});
+
+test('radius binds to radius.full only for a pill corner (R70); other radii need the exact value', () => {
+  const tokens = { primitive: { radius: { full: { $type: 'dimension', $value: { value: 9999, unit: 'px' } }, 8: { $type: 'dimension', $value: { value: 8, unit: 'px' } } } } };
+  const bindR = (r, path) => {
+    const spec = { id: 'n', t: 'F', w: 40, h: 20, sz: ['FIXED', 'FIXED'], paint: { bg: 'rgb(1, 2, 3)', radius: [r, '0px', '0px', '0px'] } };
+    const enc = encodeScreen(spec, ctxFor({ map: { s0: { n: { radiusTL: path } } }, tables: tablesFor(['radius/full', 'radius/8']), tokens }));
+    return [enc.T.v && enc.T.v.r0, JSON.stringify(enc.unbound)];
+  };
+  assert.deepEqual(bindR('999px', 'primitive.radius.full'), [0, '{}'], '999px on 40 x 20 is a pill');
+  assert.deepEqual(bindR('15px', 'primitive.radius.full'), [0, '{}'], '15 >= 10: a pill');
+  assert.deepEqual(bindR('10px', 'primitive.radius.full'), [0, '{}'], 'boundary: exactly half the smaller side');
+  assert.deepEqual(bindR('8px', 'primitive.radius.full'), [undefined, '{"value-mismatch":1}'], '8 < 10: not a pill, 8 != 9999');
+  assert.deepEqual(bindR('8px', 'primitive.radius.8'), [1, '{}'], 'exact value binds');
+  assert.deepEqual(bindR('8.5px', 'primitive.radius.8'), [undefined, '{"value-mismatch":1}']);
 });
 
 test('figmaVarName drops the primitive tier and writes / for .', () => {

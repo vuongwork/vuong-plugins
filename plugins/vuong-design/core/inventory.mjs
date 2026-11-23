@@ -127,6 +127,9 @@ export function cmpNodeId(a, b) {
 };
 
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+// R70: a corner radius (px) is a pill when it is at least half the node's smaller side (-0.01 px). Shared with
+// figma-encode.mjs, which binds such corners to radius.full.
+export const isPillRadius = (px, w, h) => px >= Math.min(w, h) / 2 - 0.01;
 const pxRaw = (v) => `${v}px`;
 const colorValue = (raw) => {
   const c = parseColor(raw);
@@ -282,7 +285,7 @@ function screenUses(screen, spec) {
       const ok = /^-?[\d.]+px$/.test(String(r).trim());
       if (ok && num(r) === 0) return;
       const box = typeof sn.w === 'number' && typeof sn.h === 'number' ? [sn.w, sn.h] : undefined;
-      const pill = ok && box && num(r) >= Math.min(box[0], box[1]) / 2 - 0.01 ? true : undefined;
+      const pill = ok && box && isPillRadius(num(r), box[0], box[1]) ? true : undefined;
       add('radius', 'radius' + CORNER[i], ok ? { value: num(r), raw: r } : { value: null, raw: r }, { token: tok.radius, unparsed: ok ? undefined : true, box, pill });
     });
     if (p.shadow) add('shadow', 'shadow', { value: p.shadow, raw: p.shadow }, { token: tok.shadow });

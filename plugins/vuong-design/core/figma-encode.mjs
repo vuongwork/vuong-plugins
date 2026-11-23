@@ -10,8 +10,11 @@
 //   `tables` is shared by every screen of a run and grows as screens are encoded (first-use order of a pre-order
 //   walk, own keys in the order of mapRefs below). V is given (Task 6 varNames) and never grows.
 //   tokens (tokens.json, optional): resolves role aliases (text / effect style names) and checks that a token's value
-//   equals the spec value before binding (plan Global Constraint: colour same hex + alpha; px <= 0.01, radius too: a
-//   999px or 50% pill does not bind to radius.full 9999, it keeps its value, 'value-mismatch'; opacity <= 0.005).
+//   equals the spec value before binding (plan Global Constraint: colour same hex + alpha; px <= 0.01; opacity <=
+//   0.005). Radius: a corner binds to radius.full (tokens.mjs PILL_PX, 9999) only when it is a pill by the R70 test
+//   (inventory.mjs isPillRadius: spec px radius >= half the node's smaller side, spec w / h; 50% is resolved to px
+//   first): Figma clamps it to half the smaller side, so it renders as the source. Every other radius needs
+//   |spec px - token px| <= 0.01, else 'value-mismatch'.
 //   Without it role typography and shadow paths cannot be resolved (reason 'no-style') and values are not checked.
 // Names (shared with figma-vars.mjs, Task 6): Figma variable = token path without the `primitive.` tier, '.' -> '/'
 //   (primitive.color.c01 -> color/c01; role tokens keep their tier: role.text-muted -> role/text-muted); text style =
@@ -77,7 +80,8 @@
 // alignment and constraints, FIXED sizing, opacity 1, font size 12, AUTO line height, letter spacing 0, black text,
 // LEFT, WIDTH_AND_HEIGHT) or the builder's base state for a new frame (no fills, no strokes, no clip).
 import { parseColor, toHex } from './color.mjs';
-import { parseShadow } from './tokens.mjs';
+import { parseShadow, PILL_PX } from './tokens.mjs';
+import { isPillRadius } from './inventory.mjs';
 import { firstFamily } from './font-map.mjs';
 import { PAYLOAD_LIMIT } from './pipeline.mjs';
 
@@ -360,7 +364,12 @@ export function encodeScreen(spec, ctx = {}) {
     if ('c' in sv) { const a = sv.c != null ? hexOf(sv.c) : null; return a !== null && a === tokenHex(v); }
     const tv = v && typeof v === 'object' && typeof v.value === 'number' ? v.value : typeof v === 'number' ? v : null;
     if (tv === null) return true; // typography, shadow: tokenMap already matched them
-    if ('radius' in sv) return sv.radius != null && Math.abs(sv.radius - tv) <= 0.01; // strict: a 999px pill is not radius.full 9999
+    if ('radius' in sv) {
+      if (sv.radius == null) return false;
+      // R70: radius.full (PILL_PX) stands for every pill corner; Figma clamps it to half the smaller side, as CSS does
+      if (tv === PILL_PX && isPillRadius(sv.radius, n.w, n.h)) return true;
+      return Math.abs(sv.radius - tv) <= 0.01;
+    }
     if ('num' in sv) return sv.num != null && Math.abs(sv.num - tv) <= 0.005;
     if ('px' in sv) return sv.px != null && Math.abs(sv.px - tv) <= 0.01;
     return true;

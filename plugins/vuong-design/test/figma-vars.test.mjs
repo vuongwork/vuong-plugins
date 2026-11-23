@@ -90,7 +90,7 @@ test('payload on the fake: collections, variables, aliases, scopes, descriptions
   const val = (n) => { const v = vs.find((x) => x.name === n); return v.valuesByMode[mode(v)]; };
   const c2 = val('color/c02');
   assert.deepEqual(c2, { r: 0.7882, g: 0.4078, b: 0.2471, a: 0.5 });
-  assert.equal(val('opacity/55'), 0.55);
+  assert.equal(val('opacity/55'), 55, 'Figma reads an OPACITY variable as a percentage');
   assert.equal(val('radius/full'), 9999);
   assert.equal(val('font/size/10_5'), 10.5);
   assert.deepEqual((await byName(f, 'color/c01')).scopes, SCOPE_SETS[0]);
@@ -274,4 +274,26 @@ test('the full Planora tokens.json (about 210 KB) is split into batches <= 50 00
   const rs = await runAll(codes, f);
   assert.deepEqual(rs.flatMap((r) => r.errors), []);
   assert.equal(sum(rs, 'variables').created, varNames(t).length);
+});
+
+// T8 item E: a FLOAT variable bound to opacity is read by Figma as a percentage (live: opacity/90 holding 0.9 drew the
+// node at 0.009), so opacity values are written x 100; a literal role opacity gets the OPACITY scope and x 100 too
+test('opacity variables hold percentages (0.9 -> 90), literal role opacities too; an old 0..1 value is updated', async () => {
+  const t = { primitive: { opacity: { 90: { $type: 'number', $value: 0.9 }, 8: { $type: 'number', $value: 0.08 } } },
+    role: { 'say-opacity': { $type: 'number', $value: '{primitive.opacity.90}' }, 'chip-opacity': { $type: 'number', $value: 0.8 } } };
+  const p = varsPlan(t);
+  assert.deepEqual(p.vars.map((v) => [v.name, v.val, SCOPE_SETS[v.sc]]), [['opacity/8', 8, ['OPACITY']], ['opacity/90', 90, ['OPACITY']],
+    ['role/say-opacity', 'opacity/90', ['OPACITY']], ['role/chip-opacity', 80, ['OPACITY']]]);
+  const f = makeFakeFigma({ fonts });
+  const coll = f.variables.createVariableCollection('Primitive');
+  coll.renameMode(coll.modes[0].modeId, 'Value');
+  const old = f.variables.createVariable('opacity/90', coll, 'FLOAT');
+  old.setValueForMode(coll.modes[0].modeId, 0.9); old.scopes = ['OPACITY'];
+  const [r] = await runAll(varsPayload(t), f);
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.variables.updated, 1);
+  const vs = await f.variables.getLocalVariablesAsync();
+  const v = (n) => vs.find((x) => x.name === n);
+  assert.equal(v('opacity/90').valuesByMode[coll.modes[0].modeId], 90);
+  assert.equal(Object.values(v('role/chip-opacity').valuesByMode)[0], 80);
 });

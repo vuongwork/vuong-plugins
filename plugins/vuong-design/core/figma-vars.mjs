@@ -16,10 +16,11 @@
 //   role token holding a literal gets the literal. Description = $description. Every variable has explicit scopes:
 //     color (primitive and role)  FRAME_FILL SHAPE_FILL TEXT_FILL STROKE_COLOR EFFECT_COLOR
 //     space -> GAP (Figma has no padding scope: GAP covers gap and padding)   size -> WIDTH_HEIGHT
-//     radius -> CORNER_RADIUS   border -> STROKE_FLOAT   opacity -> OPACITY (value 0..1, as the token)
+//     radius -> CORNER_RADIUS   border -> STROKE_FLOAT   opacity -> OPACITY (value = token x 100: Figma reads an opacity
+//     variable as a percentage, 0.9 -> 90; measured live in T8, a 0.9 variable drew at 0.009)
 //     font.size -> FONT_SIZE   font.lineHeight -> LINE_HEIGHT   font.letterSpacing -> LETTER_SPACING
 //   A role takes the scopes of the primitive it reaches (a literal role dimension: by name: radius, padding / gap,
-//   border, else WIDTH_HEIGHT). Colours: components 0..1 and alpha in the COLOR value {r, g, b, a}.
+//   border, opacity (x 100, as above), else WIDTH_HEIGHT). Colours: components 0..1 and alpha in the COLOR value {r, g, b, a}.
 // Text styles: fontName (the runtime's face resolution: exact face, else the nearest weight of the family, else
 //   Inter; every substitution is in fontMissing), fontSize, lineHeight (PIXELS from $extensions.lineHeightPx, else
 //   PERCENT = ratio x 100), letterSpacing PIXELS, textCase from $extensions.textTransform, italic from fontStyle.
@@ -79,7 +80,9 @@ function valueOf(t) {
   if (t.$type === 'dimension') return v && v.unit === 'px' && Number.isFinite(v.value) ? { ty: 1, val: v.value } : { skip: 'unit' };
   return Number.isFinite(v) ? { ty: 1, val: v } : { skip: 'value' };
 }
-const roleScope = (name) => (/radius/.test(name) ? 3 : /padding|gap/.test(name) ? 1 : /border/.test(name) ? 4 : 2);
+const roleScope = (name) => (/radius/.test(name) ? 3 : /padding|gap/.test(name) ? 1 : /border/.test(name) ? 4 : /opacity/.test(name) ? 5 : 2);
+// T8 item E: Figma reads a FLOAT variable bound to opacity as a percentage (0..100), so the token's 0..1 is x 100
+const stored = (val, sc) => (sc === 5 ? r4(val * 100) : val);
 
 export function varsPlan(tokens) {
   const skipped = [], vars = [];
@@ -91,7 +94,7 @@ export function varsPlan(tokens) {
     if (sc === undefined) { skipped.push({ path, reason: 'no-scope-rule' }); continue; }
     const v = valueOf(t);
     if (v.skip) { skipped.push({ path, reason: v.skip }); continue; }
-    vars.push({ name: varNameOf(path), coll: 0, ty: v.ty, val: v.val, sc, desc: desc(t) });
+    vars.push({ name: varNameOf(path), coll: 0, ty: v.ty, val: stored(v.val, sc), sc, desc: desc(t) });
     known.add(path);
   }
   for (const [path, t] of leaves(tokens.role, 'role')) {
@@ -105,7 +108,8 @@ export function varsPlan(tokens) {
     } else {
       const v = valueOf(r.token);
       if (v.skip) { skipped.push({ path, reason: v.skip }); continue; }
-      vars.push({ name, coll: 1, ty: v.ty, val: v.val, sc: v.ty === 0 ? 0 : roleScope(name), desc: desc(t) });
+      const sc = v.ty === 0 ? 0 : roleScope(name);
+      vars.push({ name, coll: 1, ty: v.ty, val: stored(v.val, sc), sc, desc: desc(t) });
     }
   }
 

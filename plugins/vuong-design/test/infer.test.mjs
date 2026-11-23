@@ -128,7 +128,8 @@ test('flags: shrink, weightedFill and spaceAround on the right nodes', { skip },
   assert.match(a1.detail, /basis/);
   for (const f of c.flags) assert.equal(typeof f.detail, 'string');
   const got = c.flags.map((f) => `${f.id} ${f.kind}`).sort();
-  const want = [['sq', 'shrink'], ['w2', 'weightedFill'], ['w1', 'weightedFill'], ['r3', 'spaceAround'],
+  // plan 3 Task 2: with the measured facts (shrinkFill ok/ok) the squeezed FILL item is also modelled (info flag)
+  const want = [['sq', 'shrink'], ['sq', 'shrinkModelled'], ['w2', 'weightedFill'], ['w1', 'weightedFill'], ['r3', 'spaceAround'],
     ['a1', 'weightedFill'], ['a2', 'weightedFill']]
     .map(([cls, kind]) => `${c.node(cls).id} ${kind}`).sort();
   assert.deepEqual(got, want);
@@ -441,4 +442,94 @@ test('R47: geometry alone never gives SCALE; an authored % does (hand-built)', (
     kids: [N('n.0', [0, 0, 300, 60], [0, 0, 420, 60]), N('n.1', [30, 50, 60, 10], [30, 50, 60, 10], { paint: { pos: 'absolute' }, pct: { l: '10%' } })],
   }))).spec.kids.find((k) => k.id === 'n.1');
   assert.equal(off.abs.c, 'L');
+});
+
+// ---- plan 3 Task 2: measured Figma facts (core/figma-facts.json); every test passes `facts` explicitly ----
+const FACTS = { version: 1, measured: null, lineHeightFrac: 'keep', textBox: 'ceil', scaleBasis: 'frame', zeroWidthAnchor: 'ok',
+  scaleInHug: 'ok', strokeOverlay: 'ok', shrinkFill: { maxWidth: 'ok', growText: 'ok' }, baseline: 'ok' };
+const facts = (o = {}) => ({ ...FACTS, ...o });
+const NO_SHRINK = { shrinkFill: { maxWidth: 'no', growText: 'no' } };
+// planora s3 `.say`: a centred row (272 -> 368) of an avatar (natural 34) and a bubble (natural 302.5), gap 9; both
+// squeezed at A by flex-shrink, both at their natural width (centred) at B
+const sayRow = () => screenOf(N('n', [0, 0, 272, 34], [0, 0, 368, 34], {
+  flexBox: { jc: 'center', fd: 'row', ov: false },
+  kids: [
+    N('n.0', [0, 0, 26, 34], [11.25, 0, 34, 34], { flex: { g: 0, s: 1, b: 'auto', ax: 'x', n: 34 } }),
+    N('n.1', [35, 0, 237, 34], [54.25, 0, 302.5, 34], { flex: { g: 0, s: 1, b: 'auto', ax: 'x', n: 302.5 } }),
+  ],
+}));
+// an absolute child authored in % inside a parent p; p hugs its 100 x 20 flow child at both widths when `hug`
+const pctScreen = ({ border = false, pct = { l: '10%', w: '20%' }, hug = false } = {}) => {
+  const kid = hug
+    ? N('n.0.1', [10, 0, 20, 10], [10, 0, 20, 10], { paint: { pos: 'absolute' }, pct })
+    : N('n.0.1', [30, 5, 60, 10], [42, 5, pct.w ? 84 : 60, 10], { paint: { pos: 'absolute' }, pct });
+  const p = hug
+    ? N('n.0', [0, 0, 100, 20], [0, 0, 100, 20], { kids: [N('n.0.0', [0, 0, 100, 20], [0, 0, 100, 20]), kid] })
+    : N('n.0', [0, 0, 300, 60], [0, 0, 420, 60], {
+      paint: border ? { border: [{ w: 2 }, { w: 2 }, { w: 2 }, { w: 2 }] } : {},
+      kids: [N('n.0.0', [0, 0, 300, 20], [0, 0, 420, 20]), kid],
+    });
+  return screenOf(N('n', [0, 0, 300, 100], [0, 0, 420, 100], { kids: [p] }));
+};
+const byIdOf = (spec) => new Map(walk(spec).map((s) => [s.id, s]));
+// inferScreen's output before the facts existed (recorded from the plan-1/2 code)
+const BEFORE = {
+  say: '{"spec":{"id":"n","t":"F","w":272,"h":34,"lay":{"d":"H","p":[0,0,0,0],"g":9,"pa":"C","ca":"S"},"kids":[{"id":"n.0","t":"F","w":26,"h":34,"sz":["FILL","FIXED"]},{"id":"n.1","t":"F","w":237,"h":34,"sz":["FILL","FIXED"]}],"sz":["FIXED","FIXED"]},"flags":[{"id":"n.0","kind":"shrink","detail":"flex-shrink 1: 26px instead of 34px"},{"id":"n.1","kind":"shrink","detail":"flex-shrink 1: 237px instead of 302.5px"},{"id":"n.0","kind":"weightedFill","detail":"equal flex-grow 0 on basis auto/auto, sizes 26/237"},{"id":"n.1","kind":"weightedFill","detail":"equal flex-grow 0 on basis auto/auto, sizes 26/237"}]}',
+  pct: '{"spec":{"id":"n","t":"F","w":300,"h":100,"lay":{"d":"V","p":[0,0,0,0],"g":0,"pa":"S","ca":"S"},"kids":[{"id":"n.0","t":"F","w":300,"h":60,"lay":{"d":"V","p":[0,0,40,0],"g":0,"pa":"S","ca":"S"},"kids":[{"id":"n.0.0","t":"F","w":300,"h":20,"sz":["FILL","FIXED"]},{"id":"n.0.1","t":"F","w":60,"h":10,"paint":{"pos":"absolute"},"abs":{"x":30,"y":5,"c":"SCALE"},"sz":["FIXED","FIXED"]}],"sz":["FILL","HUG"]}],"sz":["FIXED","FIXED"]},"flags":[]}',
+  border: '{"spec":{"id":"n","t":"F","w":300,"h":100,"lay":{"d":"V","p":[0,0,0,0],"g":0,"pa":"S","ca":"S"},"kids":[{"id":"n.0","t":"F","w":300,"h":60,"paint":{"border":[{"w":2},{"w":2},{"w":2},{"w":2}]},"lay":{"d":"V","p":[0,0,40,0],"g":0,"pa":"S","ca":"S"},"kids":[{"id":"n.0.0","t":"F","w":300,"h":20,"sz":["FILL","FIXED"]},{"id":"n.0.1","t":"F","w":60,"h":10,"paint":{"pos":"absolute"},"abs":{"x":30,"y":5,"c":"SCALE"},"sz":["FIXED","FIXED"]}],"sz":["FILL","HUG"]}],"sz":["FIXED","FIXED"]},"flags":[]}',
+  anchor: '{"spec":{"id":"n","t":"F","w":300,"h":100,"lay":{"d":"V","p":[0,0,0,0],"g":0,"pa":"S","ca":"S"},"kids":[{"id":"n.0","t":"F","w":300,"h":60,"lay":{"d":"V","p":[0,0,40,0],"g":0,"pa":"S","ca":"S"},"kids":[{"id":"n.0.0","t":"F","w":300,"h":20,"sz":["FILL","FIXED"]},{"id":"n.0.g0","t":"F","syn":"anchor","w":0,"h":10,"sz":["FIXED","FIXED"],"abs":{"x":30,"y":5,"c":"SCALE"},"kids":[{"id":"n.0.1","t":"F","w":60,"h":10,"paint":{"pos":"absolute"},"abs":{"x":0,"y":0,"c":"L"},"sz":["FIXED","FIXED"]}]}],"sz":["FILL","HUG"]}],"sz":["FIXED","FIXED"]},"flags":[]}',
+  hug: '{"spec":{"id":"n","t":"F","w":300,"h":100,"lay":{"d":"V","p":[0,0,0,0],"g":0,"pa":"S","ca":"S"},"kids":[{"id":"n.0","t":"F","w":100,"h":20,"lay":{"d":"V","p":[0,0,0,0],"g":0,"pa":"S","ca":"S"},"kids":[{"id":"n.0.0","t":"F","w":100,"h":20,"sz":["FIXED","FIXED"]},{"id":"n.0.1","t":"F","w":20,"h":10,"paint":{"pos":"absolute"},"abs":{"x":10,"y":0,"c":"SCALE"},"sz":["FIXED","FIXED"]}],"sz":["HUG","HUG"]}],"sz":["FIXED","FIXED"]},"flags":[]}',
+};
+const out = (r) => JSON.stringify({ spec: r.spec, flags: r.flags });
+
+test('facts: measured defaults change nothing but shrinkFill; shrinkFill no/no gives the earlier spec', () => {
+  for (const [k, s] of [['pct', pctScreen()], ['border', pctScreen({ border: true })], ['anchor', pctScreen({ pct: { l: '10%' } })], ['hug', pctScreen({ hug: true })]]) {
+    assert.equal(out(inferScreen(s, { facts: facts() })), BEFORE[k], k);
+  }
+  assert.equal(out(inferScreen(sayRow(), { facts: facts(NO_SHRINK) })), BEFORE.say);
+  assert.equal(out(inferScreen(sayRow(), { facts: facts({ shrinkFill: { maxWidth: 'ok', growText: 'no' } }) })), BEFORE.say, 'maxWidth alone: nothing special');
+});
+
+test('facts shrinkFill ok/ok: a shrink item is FILL capped at its unshrunk size; shrink kept, shrinkModelled added', () => {
+  const { spec, flags } = inferScreen(sayRow(), { facts: facts() });
+  const by = byIdOf(spec);
+  assert.deepEqual([by.get('n.0').sz[0], by.get('n.0').max], ['FILL', 34]);
+  assert.deepEqual([by.get('n.1').sz[0], by.get('n.1').max], ['FILL', 302.5]);
+  const of = (kind) => flags.filter((f) => f.kind === kind).map((f) => f.id).sort();
+  assert.deepEqual(of('shrink'), ['n.0', 'n.1'], 'shrink still explains the A residual (Figma shares equally, CSS proportionally)');
+  assert.deepEqual(of('shrinkModelled'), ['n.0', 'n.1']);
+  // growText alone: FILL without a max
+  const g = inferScreen(sayRow(), { facts: facts({ shrinkFill: { maxWidth: 'no', growText: 'ok' } }) });
+  const gb = byIdOf(g.spec);
+  assert.deepEqual([gb.get('n.0').sz[0], gb.get('n.0').max, gb.get('n.1').max], ['FILL', undefined, undefined]);
+  assert.equal(g.flags.filter((f) => f.kind === 'shrinkModelled').length, 2);
+});
+
+test("facts scaleBasis 'padding': SCALE only when the parent has no border; a bordered parent gets the fixed constraint", () => {
+  const kid = (r) => byIdOf(r.spec).get('n.0.1');
+  const plain = inferScreen(pctScreen(), { facts: facts({ scaleBasis: 'padding' }) });
+  assert.equal(kid(plain).abs.c, 'SCALE');
+  assert.equal(plain.flags.length, 0);
+  const b = inferScreen(pctScreen({ border: true }), { facts: facts({ scaleBasis: 'padding' }) });
+  assert.ok(['L', 'R', 'LR', 'C'].includes(kid(b).abs.c), kid(b).abs.c);
+  assert.deepEqual(b.flags.map((f) => [f.id, f.kind]), [['n.0.1', 'scaleBasis']]);
+});
+
+test("facts zeroWidthAnchor 'moves': a % inset with a fixed size keeps a fixed constraint, no anchor wrapper", () => {
+  const r = inferScreen(pctScreen({ pct: { l: '10%' } }), { facts: facts({ zeroWidthAnchor: 'moves' }) });
+  const by = byIdOf(r.spec);
+  assert.ok(!walk(r.spec).some((s) => s.syn === 'anchor'));
+  assert.equal(by.get('n.0.1').abs.c, 'L');
+  assert.equal(by.get('n.0.1').abs.x, 30);
+  assert.deepEqual(r.flags.map((f) => [f.id, f.kind]), [['n.0.1', 'noAnchor']]);
+});
+
+test("facts scaleInHug 'breaks': no SCALE for the child of a hugging parent", () => {
+  const r = inferScreen(pctScreen({ hug: true }), { facts: facts({ scaleInHug: 'breaks' }) });
+  const by = byIdOf(r.spec);
+  assert.equal(by.get('n.0').sz[0], 'HUG');
+  assert.notEqual(by.get('n.0.1').abs.c, 'SCALE');
+  assert.deepEqual(r.flags.map((f) => [f.id, f.kind]), [['n.0.1', 'scaleInHug']]);
+  // not hugging on that axis: SCALE stays
+  assert.equal(byIdOf(inferScreen(pctScreen(), { facts: facts({ scaleInHug: 'breaks' }) }).spec).get('n.0.1').abs.c, 'SCALE');
 });

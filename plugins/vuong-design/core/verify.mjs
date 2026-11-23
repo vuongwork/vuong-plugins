@@ -78,7 +78,8 @@
 //   gives shrink and weightedFill no axis.
 //   R27/R28: the layout proxy must carry model 'none' and the model proxy model 'figma' (renderProxy's mark); a
 //   missing or wrong mark makes verifyScreen throw.
-//   fontSubstitution explains nothing (R10: capture measures the source in the Figma font). On a screen flagged
+//   fontSubstitution explains nothing (R10: capture measures the source in the Figma font), nor does shrinkModelled
+//   (infer's info that a shrink item is FILL + max, plan 3 Task 2; its shrink flag still explains). On a screen flagged
 //   unsafeWiden, roots at width B are `unchecked` (reason unsafeWiden), never explained.
 // Layer 3, content (modelled proxy):
 //   data: text (proxy DOM text vs source runs, whitespace normalised), icon (proxy <use> ref / glyph / inline svg),
@@ -234,7 +235,7 @@ const W = ['A', 'B'];
 const r2 = (v) => Math.round(v * 100) / 100;
 const r3 = (v) => Math.round(v * 1000) / 1000;
 const SELF_ONLY = new Set(['mixedRunHeight']);
-const NEVER_EXPLAINS = new Set(['fontSubstitution', 'unsafeWiden']);
+const NEVER_EXPLAINS = new Set(['fontSubstitution', 'unsafeWiden', 'shrinkModelled']); // shrinkModelled: info only (infer, plan 3)
 
 // ---- R66 helpers ----
 const NORM_APPLY = new Set(['auto', 'answered']);
@@ -685,7 +686,7 @@ export function verifyScreen(input, opts = {}) {
     //    container is an explained root, and only if the sizes are conserved (R24); never a position;
     //  - spaceAround (on the direct container): the item's main-axis position, only within tol of the computed
     //    space-around vs space-between difference (R23), whether or not the container is off;
-    //  - other flags (own): anything; fontSubstitution / unsafeWiden: nothing;
+    //  - other flags (own): anything; fontSubstitution / unsafeWiden / shrinkModelled (info only): nothing;
     //  - an ancestor's shrink / weightedFill (R22): a descendant's SIZE only, only if the ancestor is a root by size on
     //    the flag axis, and only through an unbroken FILL chain on that axis (or, for height under a width flag, a
     //    chain that can wrap: FILL width and FILL or text-hugging height). Never a descendant's position.

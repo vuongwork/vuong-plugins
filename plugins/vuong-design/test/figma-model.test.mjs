@@ -109,3 +109,50 @@ test('R47: SCALE constraints and anchor wrappers pass through unchanged', () => 
   assert.deepEqual([out.kids[1].w, out.kids[1].abs], [0, { x: 174, y: 20, c: 'SCALE' }]);
   assert.deepEqual(out.kids[1].kids[0].abs, { x: 0, y: 0, c: 'L' });
 });
+
+// ---- plan 3 Task 2: measured Figma facts (core/figma-facts.json); every test passes `facts` explicitly ----
+const FACTS = { version: 1, measured: null, lineHeightFrac: 'keep', textBox: 'ceil', scaleBasis: 'frame', zeroWidthAnchor: 'ok',
+  scaleInHug: 'ok', strokeOverlay: 'ok', shrinkFill: { maxWidth: 'ok', growText: 'ok' }, baseline: 'ok' };
+const facts = (o = {}) => ({ ...FACTS, ...o });
+const factSpec = () => root(
+  text('a', { w: 40.3, h: 17.4, font: font({ lh: 17.4 }), runs: [{ t: 'x' }, { t: 'y', s: { lh: 21.6 } }] }),
+  { id: 'b', t: 'F', w: 100, h: 50, sz: ['FILL', 'HUG'], paint: { border: [{ w: 2 }, { w: 2 }, { w: 2 }, { w: 2 }] }, kids: [] },
+);
+// applyFigmaModel's output for factSpec() before the facts existed (recorded from the plan-1 code)
+const PLAN1_OUT = '{"spec":{"id":"r","t":"F","w":300,"h":100,"sz":["FIXED","FIXED"],"lay":{"d":"V","p":[0,0,0,0],"pa":"S","ca":"S"},"kids":[{"id":"a","t":"T","w":41,"h":18,"sz":["HUG","HUG"],"font":{"ff":"Inter","fs":"14px","fw":"400","lh":17.4,"ls":"normal"},"runs":[{"t":"x"},{"t":"y","s":{"lh":21.6}}]},{"id":"b","t":"F","w":100,"h":50,"sz":["FILL","HUG"],"paint":{"border":[{"w":2},{"w":2},{"w":2},{"w":2}],"strokeOverlay":true},"kids":[]}],"model":"figma"},"flags":[],"substitutions":[]}';
+
+test('facts: the measured defaults (keep / ok) leave the model output byte for byte as before', () => {
+  assert.equal(JSON.stringify(applyFigmaModel(factSpec(), defaultFontMap(), { facts: facts() })), PLAN1_OUT);
+});
+
+test("facts lineHeightFrac 'round' / 'floor': a fractional line height is rounded that way, flagged figmaLineHeight, re-measured", () => {
+  const r = applyFigmaModel(factSpec(), defaultFontMap(), { facts: facts({ lineHeightFrac: 'round' }) });
+  const a = r.spec.kids[0];
+  assert.equal(a.font.lh, 17);
+  assert.equal(a.runs[1].s.lh, 22);
+  assert.equal(a.font.remeasure, true, 'the box measured at 17.4 px is stale');
+  assert.deepEqual(r.flags.filter((f) => f.kind === 'figmaLineHeight').map((f) => f.id), ['a']);
+  const f = applyFigmaModel(factSpec(), defaultFontMap(), { facts: facts({ lineHeightFrac: 'floor' }) });
+  assert.equal(f.spec.kids[0].font.lh, 17);
+  assert.equal(f.spec.kids[0].runs[1].s.lh, 21);
+  // a whole line height is not touched
+  const w = applyFigmaModel(root(text('w')), defaultFontMap(), { facts: facts({ lineHeightFrac: 'round' }) });
+  assert.equal(w.spec.kids[0].font.lh, 20);
+  assert.equal(w.spec.kids[0].font.remeasure, undefined);
+  assert.equal(w.flags.length, 0);
+});
+
+test("facts strokeOverlay 'off': no overlay; the border is taken off the FILL cell's size, flagged strokeOverlay", () => {
+  const r = applyFigmaModel(factSpec(), defaultFontMap(), { facts: facts({ strokeOverlay: 'off' }) });
+  const b = r.spec.kids[1];
+  assert.equal(b.paint.strokeOverlay, undefined);
+  assert.deepEqual([b.w, b.h], [96, 50], 'only the FILL axis (width) loses left + right border');
+  assert.deepEqual(r.flags.filter((f) => f.kind === 'strokeOverlay').map((f) => f.id), ['b']);
+});
+
+test("facts lineHeightFrac 'round': a px string line height is rounded too; 'normal' is left alone", () => {
+  const r = applyFigmaModel(root(text('p', { font: font({ lh: '17.6px' }) }), text('q', { font: font({ lh: 'normal' }) })), defaultFontMap(), { facts: facts({ lineHeightFrac: 'round' }) });
+  assert.equal(r.spec.kids[0].font.lh, '18px');
+  assert.equal(r.spec.kids[1].font.lh, 'normal');
+  assert.deepEqual(r.flags.map((f) => f.id), ['p']);
+});

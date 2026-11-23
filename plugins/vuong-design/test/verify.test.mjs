@@ -677,6 +677,16 @@ test('verifyScreen (R10): fontSubstitution explains nothing; it is kept in the r
   assert.equal(r.pass, false);
 });
 
+test('verifyScreen (plan 3 Task 2): shrinkModelled is info only and explains nothing', () => {
+  const inp = fixture();
+  shift(inp, 'n.0.0', [0, 0, 4, 0]);
+  inp.flags = [{ id: 'n.0.0', kind: 'shrinkModelled', detail: 'FILL + maxWidth 34px' }];
+  const r = verifyScreen(inp);
+  assert.ok(r.roots.length && r.roots.every((x) => x.explainedBy === undefined));
+  assert.deepEqual(r.flags, inp.flags);
+  assert.equal(r.pass, false);
+});
+
 test('verifyScreen (R10): a font override that failed in capture is a font data mismatch', () => {
   const inp = fixture();
   inp.screen.fontSubs = [{ from: 'Segoe UI', to: 'Inter', reason: 'override-failed', cause: 'system' }, { from: 'system-ui', to: 'Inter', reason: 'system' }];

@@ -13,7 +13,16 @@
 //  another font. Its HUG axes are NOT corrected here (w/h are left as Chrome measured); the proxy must let those axes
 //  hug naturally in the substitute font, then round the result with figmaTextBox. Such nodes carry a
 //  `fontSubstitution` flag. Nodes without font.sub keep the pinned, already-rounded HUG sizes.
+//  opts.facts (plan 3 Task 2) = the Figma facts measured on real Figma (figma-probe.mjs; default loadFacts()). Only the
+//  facts on how Figma draws a given spec are applied here; the layout facts (shrinkFill, scaleBasis, zeroWidthAnchor,
+//  scaleInHug) are applied by inferScreen, so both proxies render them.
+//  - lineHeightFrac 'round' | 'floor': a fractional px line height (font.lh, run s.lh) is rounded that way; the text
+//    gets font.remeasure (its box was measured at the old line height; the proxy re-measures, then pins) and a
+//    `figmaLineHeight` flag. 'keep': unchanged.
+//  - strokeOverlay 'off': a bordered FILL node gets no overlay; its border widths are taken off its size on each FILL
+//    axis (left + right, top + bottom), flag `strokeOverlay`. 'ok': the overlay above.
 import { firstFamily, isSystemFont, isAvailable } from './font-map.mjs';
+import { loadFacts } from './figma-probe.mjs';
 
 const EPS = 0.001;
 
@@ -36,6 +45,14 @@ export function resolveFamily(fontMap, list, renderedList) {
 
 export function applyFigmaModel(spec, fontMap, opts = {}) {
   const rendered = opts.rendered || {};
+  const facts = opts.facts || loadFacts();
+  const lhMode = facts.lineHeightFrac === 'round' || facts.lineHeightFrac === 'floor' ? facts.lineHeightFrac : null;
+  const roundLh = (v) => {
+    const x = typeof v === 'number' ? v : (typeof v === 'string' && /^\d+(\.\d+)?(px)?$/.test(v.trim()) ? parseFloat(v) : NaN);
+    if (!Number.isFinite(x) || Math.abs(x - Math.round(x)) <= EPS) return null;
+    const r = lhMode === 'round' ? Math.round(x) : Math.floor(x);
+    return typeof v === 'number' ? r : `${r}px`;
+  };
   const flags = [];
   const substitutions = [];
   const seen = new Set();
@@ -62,6 +79,20 @@ export function applyFigmaModel(spec, fontMap, opts = {}) {
         return { ...r, s: { ...r.s, ff: x.ff } };
       });
     }
+    if (n.t === 'T' && n.font && lhMode) {
+      let changed = false;
+      const lh = roundLh(n.font.lh);
+      if (lh != null) { o.font.lh = lh; changed = true; }
+      if (o.runs) {
+        o.runs = o.runs.map((r) => {
+          const v = r.s ? roundLh(r.s.lh) : null;
+          if (v == null) return r;
+          changed = true;
+          return { ...r, s: { ...r.s, lh: v } };
+        });
+      }
+      if (changed) { o.font.remeasure = true; flags.push({ id: n.id, kind: 'figmaLineHeight', detail: `fractional line height ${lhMode}ed` }); }
+    }
     if (n.t === 'T' && n.font) {
       if (subs.length) {
         o.font.sub = true;
@@ -75,7 +106,12 @@ export function applyFigmaModel(spec, fontMap, opts = {}) {
       if (sizes.size > 1) flags.push({ id: n.id, kind: 'mixedRunHeight', detail: `font sizes ${[...sizes].join('/')}px in one line` });
     }
     if (n.sz && n.sz.includes('FILL') && n.paint && Array.isArray(n.paint.border) && n.paint.border.some((b) => b.w > 0)) {
-      o.paint = { ...n.paint, strokeOverlay: true };
+      if (facts.strokeOverlay === 'off') {
+        const bw = (i) => (n.paint.border[i] && n.paint.border[i].w) || 0; // [t, r, b, l]
+        if (n.sz[0] === 'FILL') o.w = n.w - bw(1) - bw(3);
+        if (n.sz[1] === 'FILL') o.h = n.h - bw(0) - bw(2);
+        flags.push({ id: n.id, kind: 'strokeOverlay', detail: 'stroke in layout: border taken off the FILL size' });
+      } else o.paint = { ...n.paint, strokeOverlay: true };
     }
     if (n.kids) o.kids = n.kids.map(visit);
     return o;

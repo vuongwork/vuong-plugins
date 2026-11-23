@@ -133,6 +133,18 @@ Design system run (`ds.mjs`, 2026-11-23, after R73-R80, m5, m6, m8, empty allowl
 |---|---|---|---|---|---|---|---|
 | (a) no rules file | 20/25 | 1 | 8 (max 4.25 px) | 3 (+1) | 0 | 0 / 0 | 165 s |
 | (b) `test/fixtures/rules-accept.json` (`project.lineHeightInt: yes`, `project.srcSquash: accept-all`) | 23/25 | 1 | 1 (2.28 px) | 0 (+0) | 0 | 0 / 0 | 207 s |
+| (a) after plan 3 Task 2 (2026-11-23, measured Figma facts) | 19/25 | 0 | 8 (max 4.25 px) | 4 (+0) | 0 | 0 / 0 | 330 s (run beside the test suite) |
+| (b) after plan 3 Task 2 (2026-11-23, measured Figma facts) | 22/25 | 0 | 1 (2.28 px) | 4 (+0) | 0 | 0 / 0 | 249 s |
+
+After plan 3 Task 2 (2026-11-23): the facts in `core/figma-facts.json` match what the model already assumed for every field except shrinkFill (`maxWidth: ok, growText: ok`). So the only change is in infer. A FILL item flagged `shrink` (squeezed below its unshrunk size `flex.n`) is now FILL + maxWidth = `flex.n`: it fills when space is short and stops at its natural size, which is what CSS flex-shrink does. It carries the info flag `shrinkModelled` (verify lets it explain nothing) and keeps `shrink`. This applies to 14 items: s3 2, s4 2, s6 2, s7 2, s8 1, s11 4, s17 1. Width B now matches the source exactly. Width A keeps a residual because Figma shares a short row equally between FILL items while CSS shrinks each in proportion to its basis; `shrink` explains that residual. The numbers, against a re-run of the earlier code (identical to the rows above):
+- Unexplained roots 1 -> 0: the planora s3 `n.0.13.0` root at B is gone because of `shrinkModelled`. The `.say` row now centres an avatar of 34 px and a bubble of 302.5 px as the source does, and its linked crop at B is gone with it. Explained roots drop on s3, s4 and s11 because their width-B shrink roots no longer exist: (a) s3 5 -> 2, s4 8 -> 4, s11 15 -> 11; (b) s3 17 -> 10, s4 16 -> 7, s11 17 -> 13.
+- Crops (a) 3 (+1) -> 4 (+0):
+  - s4 avatar at B is gone (exact now).
+  - s3 and s4 avatars at A stay. Figma draws them at their 34 px and 40 px maxima where the source squashes them to 26 px and 34.5 px.
+  - New: s3 `n.0.13.1.t` and s11 `n.0.13.1.0.1` at A. Each bubble is 8 px and 14.33 px narrower than in the source (equal share), so its text rewraps. This is a real Figma difference and is left reported. s11 now fails, so pass is 20 -> 19.
+- Crops (b) 0 -> 4: the same two text crops, plus the s3 and s4 avatars at A. Their SRC_SQUASH records (26 -> 34, 34.5 -> 40) no longer change anything: FILL + max already draws the avatars at those sizes in the layout proxy. So R77 (ii) no longer credits the records (`normWhy`: the norm layout matches the layout). s3 still fails on its crops, so pass is 23 -> 22.
+- Approvals unchanged: 8 in (a), 1 in (b) (s4 chip row, 2.28 px). The lineHeightFrac, scaleBasis, zeroWidthAnchor, scaleInHug and strokeOverlay branches are inert with these facts.
+- Mutations on (b) (`--mutate --mutate-sample 2`; verify now treats `shrinkModelled` as explaining nothing): 100 caught, 0 missed, 53 skipped. The four norm mutations are each caught on 7 screens and skipped on 2, as before. 1005 s.
 
 (a) equals the plan-1 numbers above: without answers only the 13 `auto` entries of Planora apply (ROLE_MAJORITY: 9 gaps and paddings, 4 radius corners), all verified on the norm proxy. Entries without a rules file, per file (auto / ask): planora 13 / 445 (GRID4 386, LINE_HEIGHT_INT 20, COLOR_NEAR 17, ICON_FRAME 10, TYPE_SCALE 10, SRC_SQUASH 2), entry mockup 0 / 86 (GRID4 64, LINE_HEIGHT_INT 9, ICON_FRAME 6, COLOR_NEAR 4, TYPE_SCALE 3), calendar 0 / 3, calendar-v2 0 / 111, calendar-v3 0 / 89. Open questions: 168 in all (R80 removed 3 Planora GRID4 questions on stretching widths).
 Mutations on (b) (`--mutate --mutate-sample 2`: planora s0 and s9, every screen of the other files; the full corpus takes about 40 min with the norm renders): 100 caught, 0 missed, 53 skipped (no candidate); normSilent, normWrongValue (categories rotated by screen index, m6), normCropHide and normLayoutDrift each caught on all 7 screens with applied records (2 screens have none: skipped). 848 s.
@@ -149,6 +161,8 @@ Mutations (`--mutate`, full corpus, after round 10, about 21 min): 221 caught, 0
 ## Figma facts
 
 `core/figma-probe.mjs` builds a probe (`probePayload()`, plain JS for the Figma MCP `use_figma` tool, 6.7 KB, one call) that runs on the page `_vd-probe`. `readFacts` turns the measured numbers into `core/figma-facts.json`, which `loadFacts()` reads (missing file: the defaults of `figma-model.mjs`). Measured 2026-11-23 on a Figma Pro file, no errors.
+
+They are used (plan 3 Task 2) by `inferScreen(screen, { facts })`, which handles the layout facts shrinkFill, scaleBasis, zeroWidthAnchor and scaleInHug so both proxies render them, and by `applyFigmaModel(spec, fontMap, { facts })`, which handles lineHeightFrac and strokeOverlay. Both default to `loadFacts()`. Each branch flags the nodes it touches (`shrinkModelled` is info only).
 
 | Case | Measured (px unless noted) | Fact |
 |---|---|---|

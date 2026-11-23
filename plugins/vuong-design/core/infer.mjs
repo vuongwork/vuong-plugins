@@ -17,6 +17,24 @@
 // axis is in % (capture's INode.pct) and whose boxes at A and B keep their share of the parent; never from geometry
 // alone. Figma SCALE is relative to the parent frame's box; CSS % to the containing block's padding box, so a bordered
 // or non-parent containing block fails the fit and keeps the fixed constraints (visible as deviations).
+//
+// inferScreen(screen, { facts }): facts = the Figma facts measured on real Figma (figma-probe.mjs, default loadFacts()).
+// The layout facts are applied here, where the boxes at A and B are, so both proxies render the spec that goes to
+// Figma (applyFigmaModel keeps only lineHeightFrac and strokeOverlay). Each branch flags the node:
+//  - shrinkFill (plan 3 Task 2): an item flagged `shrink` (capture's flex.n = its unshrunk main size) that infer made
+//    FILL on its container's main axis: maxWidth and growText 'ok' -> FILL + max = flex.n (horizontal main axis only:
+//    spec min/max are widths), i.e. it fills when space is short and stops at its natural size, like flex-shrink;
+//    growText alone 'ok' -> FILL without a max; maxWidth alone or neither -> unchanged. Flag `shrinkModelled`
+//    (info only: verify lets it explain nothing). The `shrink` flag stays: Figma shares a short row equally among FILL
+//    items, CSS shrinks in proportion to the basis, so the size at the squeezed width still differs (main-axis size).
+//    No new spec field: flex.n is read from the source node when the item is sized.
+//  - scaleBasis 'padding': SCALE (and the SCALE anchor wrapper) only when the parent has no border; otherwise the best
+//    fixed constraint, flag `scaleBasis`.
+//  - zeroWidthAnchor 'moves': no zero-size anchor wrapper; the node keeps the best fixed constraint, flag `noAnchor`.
+//  - scaleInHug 'breaks': no SCALE (nor anchor) for the child of a parent that hugs on that axis (hugOK: content +
+//    padding at both widths; the root never hugs its width), flag `scaleInHug`.
+
+import { loadFacts } from './figma-probe.mjs';
 
 const EPS = 0.75;  // geometric equality tolerance
 const GROW = 0.75; // "changed between widths"
@@ -65,8 +83,18 @@ function lnode(n, par = null) {
   return { id: n.id, src: n, par, A: n.rA, B: n.rB || n.rA, kids: (n.kids || []).map((k) => lnode(k, n)) };
 }
 const SPACE_AROUND = /^(space-around|space-evenly)$/;
+const bordered = (n) => !!n && !!n.paint && Array.isArray(n.paint.border) && n.paint.border.some((b) => b && b.w > 0);
+// a flex item squeezed below its unshrunk main size while its container does not overflow -> { ax: 0|1, size, n }
+const shrunk = (L) => {
+  const fx = L.src && L.src.flex;
+  if (!fx || !(fx.s > 0) || fx.n == null || (L.par && L.par.flexBox && L.par.flexBox.ov)) return null;
+  const ax = fx.ax === 'y' ? 1 : 0, size = L.A[ax + 2];
+  return fx.n - size > 1 ? { ax, size, n: fx.n } : null;
+};
 
-export function inferScreen(screen) {
+export function inferScreen(screen, opts = {}) {
+  const facts = opts.facts || loadFacts();
+  const sf = facts.shrinkFill || {};
   const stats = { grouping: 0, pushSplit: 0, spaceBetween: 0, absOverlap: 0, absOverflow: 0, absTransform: 0, wrappers: 0, wrapRows: 0 };
   const flags = [];
   const flag = (id, kind, detail) => flags.push({ id, kind, detail });
@@ -229,11 +257,8 @@ export function inferScreen(screen) {
     if (p.bgImage && RASTER_BG.test(p.bgImage)) why.push(`background-image: ${p.bgImage}`);
     if (why.length) flag(n.id, 'raster', why.join('; '));
     // shrink: a flex item squeezed below its unshrunk size while its container does not overflow
-    const fx = n.flex;
-    if (fx && fx.s > 0 && fx.n != null && !(L.par && L.par.flexBox && L.par.flexBox.ov)) {
-      const size = fx.ax === 'y' ? L.A[3] : L.A[2];
-      if (fx.n - size > 1) flag(n.id, 'shrink', `flex-shrink ${fx.s}: ${r2(size)}px instead of ${r2(fx.n)}px`);
-    }
+    const sh = shrunk(L);
+    if (sh) flag(n.id, 'shrink', `flex-shrink ${n.flex.s}: ${r2(sh.size)}px instead of ${r2(sh.n)}px`);
     const fb = n.flexBox;
     if (fb && SPACE_AROUND.test(fb.jc) && (n.kids || []).length >= 2) flag(n.id, 'spaceAround', `justify-content: ${fb.jc}`);
     if (isTextSrc(n)) {
@@ -504,6 +529,16 @@ export function inferScreen(screen) {
         const [f, cs] = fills[0];
         if ((L.B[Z] - L.A[Z]) - (f.B[Z] - f.A[Z]) > GROW) cs.max = r2(f.B[Z]);
       }
+      // facts.shrinkFill: a squeezed FILL item -> FILL + max at its unshrunk size (header)
+      if (sf.growText === 'ok') {
+        for (const [f, cs] of fills) {
+          const sh = shrunk(f);
+          if (!sh || sh.ax !== P) continue;
+          const withMax = sf.maxWidth === 'ok' && P === 0;
+          if (withMax) cs.max = r2(sh.n);
+          flag(f.id, 'shrinkModelled', withMax ? `FILL + maxWidth ${r2(sh.n)}px` : 'FILL');
+        }
+      }
       if (fills.length > 1) {
         const spread = (M) => Math.max(...fills.map(([f]) => f[M][Z])) - Math.min(...fills.map(([f]) => f[M][Z]));
         const eqA = spread('A') <= 1, eqB = spread('B') <= 1;
@@ -543,6 +578,18 @@ export function inferScreen(screen) {
       const px = [constraint(lA, rA, lB, rB, k.A[2], k.B[2], L.A[2], L.B[2], ['L', 'R', 'LR', 'C']),
         constraint(tA, bA, tB, bB, k.A[3], k.B[3], L.A[3], L.B[3], ['T', 'B', 'TB', 'C'])];
       const pm = [pctMode(L, k, 0, lA, rA, lB, rB), pctMode(L, k, 1, tA, bA, tB, bB)];
+      // Figma facts on SCALE and anchors (header): fall back to the best fixed constraint, one flag per kind
+      const fell = new Set();
+      for (const ax of [0, 1]) {
+        if (!pm[ax]) continue;
+        let kind = null;
+        if (facts.scaleBasis === 'padding' && bordered(L.src)) kind = 'scaleBasis';
+        else if (facts.zeroWidthAnchor === 'moves' && pm[ax] !== 'SCALE') kind = 'noAnchor';
+        else if (facts.scaleInHug === 'breaks' && L.par && inf.hugOK[ax]) kind = 'scaleInHug';
+        if (!kind) continue;
+        if (!fell.has(kind)) flag(k.id, kind, `${ax ? 'y' : 'x'}: ${pm[ax] === 'SCALE' ? 'SCALE' : 'anchor'} -> ${px[ax]}`);
+        fell.add(kind); pm[ax] = null;
+      }
       const con = [0, 1].map((ax) => (pm[ax] === 'SCALE' ? 'SCALE' : px[ax]));
       cs.abs = { x: r2(lA), y: r2(tA), c: con[0] };
       if (con[1] !== 'T') cs.abs.cy = con[1];

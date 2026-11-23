@@ -177,3 +177,19 @@ They are used (plan 3 Task 2) by `inferScreen(screen, { facts })`, which handles
 | `base` (22 px and 12.5 px text) | derived baselines 1001.62 px and 1002.01 px, offset 0.39 px (<= 0.5 px) | `baseline: ok` |
 
 Every fact matches the current assumptions, so nothing in the model changes; the numbers are recorded so a later Figma change shows up by re-running the probe.
+
+## Figma encoding
+
+`core/figma-encode.mjs` (plan 3 Task 4) turns each target spec (`spec-norm-<s>.json`) into compact data for the Figma builder: one-letter keys, Figma defaults left out, shared tables (`C` colours, `F` fonts, `I` icons, `V` variable names, `S` style names, `M` image sources), variable bindings as indices into `V` from `token-map.json`, and the spec id `o` on every node. The full format is in the file's header comment. `planBatches` packs screens in order into `use_figma` calls of at most 50 000 bytes (UTF-8, builder + data). Each batch carries only the table entries it uses. A screen too big to fit on its own throws `OversizeError` (screen, bytes); it is never cut.
+
+Planora (18 screens, ds run with `vd-rules.json`, 2026-11-23; fixture `test/fixtures/figma-encode-planora.json.gz`):
+
+| Measure | Value |
+|---|---|
+| Encoded data per screen, alone with its own tables | 8.96 KB on average (min 4.73 KB s13, max 17.13 KB s7) |
+| `spec-norm` JSON per screen, for comparison | 13.47 KB on average |
+| Batches with an 8 KB stand-in builder | 4: s0-s3 44.95 KB, s4-s7 47.87 KB, s8-s11 43.46 KB, s12-s17 45.10 KB |
+| Token-map entries bound / not bound | 2785 / 1 (`conflict`: two border sides with the same colour but different tokens; Figma has one stroke paint) |
+| Nodes with values the format cannot carry (`raw`) | 0 |
+
+The spike's format was about 8 KB per screen. The batch count will change once the real builder (Task 5, at most 10 KB) replaces the stand-in.

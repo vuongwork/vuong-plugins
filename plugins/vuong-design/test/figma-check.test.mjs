@@ -143,7 +143,7 @@ test('figmaProxy: boxes and DOM per vd id, effective opacity, unread checks, fon
   D3.screens[0].T.k[1].im = { m: 0 }; D3.M = ['data:image/png;base64,AAAA'];
   const p3 = figmaProxy(dec(screenRes(), D3), D3, { ...SPEC, kids: [{ ...SPEC.kids[0], kids: [SPEC.kids[0].kids[0], { id: 'n.0.1', t: 'V', icon: { svg: '<svg/>' } }] }, SPEC.kids[1]] });
   assert.deepEqual(p3.unread.slice(4).sort(), ['image', 'stroke-style', 'svg']);
-  assert.equal(figmaProxy(dec(), Dof(), { ...SPEC, kids: [{ ...SPEC.kids[0], kids: [SPEC.kids[0].kids[0], { id: 'n.0.1', t: 'V' }] }, SPEC.kids[1]] }).unread.includes('icon'), false);
+  assert.equal(figmaProxy(dec(screenRes()), Dof(), { ...SPEC, kids: [{ ...SPEC.kids[0], kids: [SPEC.kids[0].kids[0], { id: 'n.0.1', t: 'V' }] }, SPEC.kids[1]] }).unread.includes('icon'), false);
   assert.ok(p3.A.dom['n.0'].stroke[0].includes('dashed'));
   // no readback at all: empty boxes (verify counts every node unchecked)
   assert.deepEqual(figmaProxy(null, null, SPEC).A.boxes, {});

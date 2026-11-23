@@ -133,6 +133,10 @@ test('ingest: a vars batch with errors fails; an edited screen is skippedEdited;
   assert.equal(st.batches['vars-01'].status, 'failed');
   assert.deepEqual(st.batches['vars-01'].errors, v.errors);
   assert.match(q.lines.join('\n'), /vars-01: failed \(1 errors: variable color\/c01: boom\)/);
+  // F3: only the fields present are printed
+  const q0 = quiet();
+  await main(['ingest', '--out', h.out, '--result', save(h.d, 'v0.json', { ...res['vars-01'], errors: [{ msg: 'only a message' }] })], { log: q0.log });
+  assert.match(q0.lines.join('\n'), /vars-01: failed \(1 errors: only a message\)/);
   const b = JSON.parse(JSON.stringify(res['batch-01']));
   b.screens[1] = { screen: 's1', root: '1:99', edited: true, sig: 'abcd1234', extra: ['1:120'] };
   assert.equal(await main(['ingest', '--out', h.out, '--result', save(h.d, 'b.json', b), '--batch', '1'], { log: () => {} }), 0);
@@ -267,7 +271,7 @@ test('ingest: a vars result with malformed errors items exits 2 before anything 
   for (const errors of [['boom'], [{ kind: 'variable', name: 'x' }], [{ msg: 3 }]]) {
     const q = quiet();
     assert.equal(await main(['ingest', '--out', h.out, '--result', save(h.d, 'v.json', { ...res['vars-01'], errors })], { log: q.log }), 2);
-    assert.match(q.lines.join('\n'), /errors\[0\]: not \{ kind, name, msg \}/);
+    assert.match(q.lines.join('\n'), /errors\[0\]: not \{ msg, kind\?, name\? \}/);
   }
   assert.equal(readFileSync(join(h.F, 'state.json'), 'utf8'), before);
   assert.equal(existsSync(join(h.F, 'result-vars-01.json')), false);
@@ -282,6 +286,10 @@ test('plan warns when a vars batch failed and screen batches are still scheduled
   const q = quiet();
   assert.equal(await main(['plan', '--ds', h.ds, '--out', h.out], { log: q.log }), 0);
   assert.ok(q.lines.some((l) => /^warning: vars-01 failed when last sent \(1 errors\); screen batches are still scheduled/.test(l)), q.lines.join('\n'));
+  // F1: a second plan with no ingest in between still warns
+  const q1 = quiet();
+  await main(['plan', '--ds', h.ds, '--out', h.out], { log: q1.log });
+  assert.ok(q1.lines.some((l) => /^warning: vars-01 failed when last sent \(1 errors\)/.test(l)), q1.lines.join('\n'));
   const st = readJson(h.F, 'state.json');
   assert.equal(st.run.warnings.length, 1);
   assert.deepEqual(st.batches['vars-01'].lastFailed, [{ kind: 'variable', name: 'color/c01', msg: 'boom' }]);

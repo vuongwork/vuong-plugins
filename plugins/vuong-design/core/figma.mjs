@@ -133,7 +133,7 @@ async function plan(argv, log) {
     const keep = p && p.status === 'done' && p.hash === b.hash && !o.redo && Object.values(files).every((f) => existsSync(join(F, f)));
     if (keep) st.batches[b.key] = p;
     else {
-      const lastFailed = p && p.status === 'failed' ? (p.errors || p.lastFailed || []) : null;
+      const lastFailed = !p ? null : p.status === 'failed' ? (p.errors || []) : (p.lastFailed || null); // kept across plans until a good ingest
       writeFileSync(join(F, files.file), b.code);
       if (b.data) writeFileSync(join(F, files.data), JSON.stringify(b.data));
       if (p && p.status === 'done' && p.hash !== b.hash) changed.push(b.key);
@@ -229,7 +229,7 @@ export function validateVarsBatch(res, entry, index) {
   if (res.batch !== index) bad.push(`batch is ${JSON.stringify(res.batch)}, expected ${index} (vars batches count from 0)`);
   for (const k of ['collections', 'variables', 'textStyles', 'effectStyles']) if (!isObj(res[k])) bad.push(`${k} is not an object`);
   if (!isArr(res.errors)) bad.push('errors is not an array');
-  else res.errors.forEach((x, i) => { if (!isObj(x) || typeof x.msg !== 'string' || (x.kind !== undefined && typeof x.kind !== 'string') || (x.name !== undefined && typeof x.name !== 'string')) bad.push(`errors[${i}]: not { kind, name, msg }`); });
+  else res.errors.forEach((x, i) => { if (!isObj(x) || typeof x.msg !== 'string' || (x.kind !== undefined && typeof x.kind !== 'string') || (x.name !== undefined && typeof x.name !== 'string')) bad.push(`errors[${i}]: not { msg, kind?, name? }`); });
   if (!isArr(res.fontMissing)) bad.push('fontMissing is not an array');
   else res.fontMissing.forEach((x, i) => { if (!isObj(x)) bad.push(`fontMissing[${i}]: not an object`); });
   return bad;
@@ -266,7 +266,7 @@ async function ingest(argv, log) {
     b.result = file;
     if (res.errors.length) b.errors = res.errors; else { delete b.errors; delete b.lastFailed; }
     b.fontMissing = res.fontMissing.length;
-    log(`${key}: ${b.status}${res.errors.length ? ` (${res.errors.length} errors: ${res.errors.slice(0, 3).map((x) => `${x.kind} ${x.name}: ${x.msg}`).join('; ')})` : ''}`);
+    log(`${key}: ${b.status}${res.errors.length ? ` (${res.errors.length} errors: ${res.errors.slice(0, 3).map((x) => [x.kind, x.name].filter((v) => v != null).join(' ') + (x.kind != null || x.name != null ? ': ' : '') + x.msg).join('; ')})` : ''}`);
   } else {
     let failed = 0;
     for (const s of res.screens) {

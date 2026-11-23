@@ -73,6 +73,7 @@
 // is caught (skipped ones do not count).
 import { normColor } from './verify.mjs';
 import { runScreen } from './pipeline.mjs';
+import { ordOf, decode, actualNodes } from './figma-check.mjs';
 
 export const KINDS = ['moveShape', 'moveText', 'swapIcon', 'deleteLeaf', 'hideLeaf', 'thinStrokeSmall', 'thinStroke4000', 'drift', 'gap',
   'radiusLarge', 'fontLarge', 'svgLarge', 'imageLarge', 'normSilent', 'normWrongValue', 'normCropHide', 'normLayoutDrift'];
@@ -467,4 +468,94 @@ export async function runMutations(browser, screen, inferred, fontMap, opts = {}
     ...(normBase ? { normBaseline: { pass: normBase.report.pass, failures: failures(normBase.report).length, norm: normBase.report.norm } } : {}),
     allCaught: ran.length ? ran.every((r) => r.caught === true) : null, // R34 (M3): null when no kind ran
   };
+}
+
+// ---- plan 3 Task 7: planted errors on the Figma readback (figma.mjs check --mutate) ----
+// The readback (a BatchResult screen of figma-runtime.js) is changed as if Figma had built the node wrong, and the
+// screen is verified again on it; the screenshot and its crops stay as measured. Targets, first eligible in readback
+// order (ordOf: pre-order of the encoded tree), source nodes only, never the screen root:
+//  - figMove: the first source leaf's box moves 3px right (at A, and at B with it: B = A + dB).
+//  - figText: the first text node with visible text gets its first non-blank character replaced ('x', 'y' for an x).
+//  - figFill: the first frame / image source node with a solid fill gets that colour inverted (each channel 255 - c;
+//    magenta when that is too close); no such node: the root gets a magenta fill.
+//  - figDrop: the last source leaf is removed from `nodes` (entry 0, as a node the runtime could not read back).
+// runFigMutations({ id, base (report on the real readback), screen (the screen result), D (batch data), tree (source
+//   tree), spec (spec-norm tree), run: async (screen result) -> report }) -> { id, baseline, results, allCaught } as
+//   runMutations: caught = a failure the baseline does not have (same keys) on the target, its spec ancestors or
+//   descendants.
+export const FIG_KINDS = ['figMove', 'figText', 'figFill', 'figDrop'];
+const invertHex = (h) => {
+  const m = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(h);
+  if (!m) return '#ff00ff';
+  const v = parseInt(m[1], 16), ch = [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+  const inv = ch.map((c) => 255 - c);
+  if (inv.every((c, i) => Math.abs(c - ch[i]) < 64)) return `#ff00ff${m[2] || ''}`;
+  return `#${inv.map((c) => c.toString(16).padStart(2, '0')).join('')}${m[2] || ''}`;
+};
+const figActual = (sres, D) => actualNodes(decode({ screens: [clone(sres)] }, D).screens[0], D);
+
+export function chooseFig(kind, sres, D, tree) {
+  const T = D.screens.find((x) => x.screen === sres.screen).T;
+  const src = new Map();
+  const idx = (n) => { src.set(n.id, n); (n.kids || []).forEach(idx); };
+  idx(tree);
+  const act = figActual(sres, D);
+  const cands = ordOf(T).filter((o) => o !== T.o && src.has(o) && act.has(o));
+  const leaves = cands.filter((o) => isLeaf(src.get(o)));
+  if (kind === 'figMove') return leaves[0] || null;
+  if (kind === 'figDrop') return leaves[leaves.length - 1] || null;
+  if (kind === 'figText') return cands.find((o) => act.get(o).e.t === 'T' && /\S/.test(act.get(o).text || '')) || null;
+  if (kind === 'figFill') {
+    const o = cands.find((x) => { const n = act.get(x); return n.fills && n.e.t !== 'V' && n.fills.some((f) => /^#/.test(f)); });
+    return o || (act.has(T.o) ? T.o : null);
+  }
+  return null;
+}
+
+export function mutateFig(kind, sres, D, o) {
+  const T = D.screens.find((x) => x.screen === sres.screen).T;
+  const i = ordOf(T).indexOf(o);
+  const out = clone(sres);
+  delete out.N;
+  const t = out.nodes[i];
+  if (kind === 'figDrop') { out.nodes[i] = 0; return out; }
+  const [fid, A, dB, d0] = t;
+  if (kind === 'figMove') { out.nodes[i] = [fid, [A[0] + MOVE, ...A.slice(1)], ...t.slice(2)]; return out; }
+  const n = figActual(sres, D).get(o);
+  const d = { ...(d0 || {}) };
+  if (kind === 'figText') {
+    const k = n.text.search(/\S/), c = n.text[k];
+    d.text = n.text.slice(0, k) + (c === 'x' ? 'y' : 'x') + n.text.slice(k + 1);
+  }
+  if (kind === 'figFill') {
+    const j = n.fills.findIndex((f) => /^#/.test(f));
+    d.fills = j >= 0 ? n.fills.map((f, x) => (x === j ? invertHex(f) : f)) : ['#ff00ff', ...n.fills];
+  }
+  out.nodes[i] = [fid, A, dB || 0, d];
+  return out;
+}
+
+export async function runFigMutations({ id, base, screen: sres, D, tree, spec, run, kinds = FIG_KINDS }) {
+  const before = new Set(failures(base).map((f) => f.key));
+  const results = [];
+  for (const kind of kinds) {
+    const o = sres && sres.nodes ? chooseFig(kind, sres, D, tree) : null;
+    if (!o) { results.push({ kind, target: null, caught: null, by: [], skipped: sres && sres.nodes ? 'no candidate' : 'no readback' }); continue; }
+    const rep = await run(mutateFig(kind, sres, D, o));
+    const hit = new Set([o]);
+    const e = find(spec, o);
+    if (e) {
+      for (const x of walk(e.n)) hit.add(x.n.id);
+      for (const a of walk(spec)) if (a.n.kids && walk(a.n).some((x) => x.n.id === o)) hit.add(a.n.id);
+    }
+    const fresh = failures(rep).filter((f) => !before.has(f.key));
+    const caughtBy = fresh.filter((f) => hit.has(f.id));
+    const by = [...new Set(caughtBy.map((f) => f.check))];
+    results.push({
+      kind, target: o, caught: by.length > 0, by, found: caughtBy.map((f) => f.key),
+      ...(fresh.length > caughtBy.length ? { elsewhere: fresh.filter((f) => !hit.has(f.id)).map((f) => f.key) } : {}),
+    });
+  }
+  const ran = results.filter((r) => r.caught !== null);
+  return { id, baseline: { pass: base.pass, failures: before.size }, results, allCaught: ran.length ? ran.every((r) => r.caught === true) : null };
 }

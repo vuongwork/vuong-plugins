@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { encodeScreen, planBatches, newTables } from '../core/figma-encode.mjs';
 import { makeFakeFigma, DEFAULT_FONTS } from './fake-figma.mjs';
+import { ordOf, decode } from '../core/figma-check.mjs';
 
 const RUNTIME = readFileSync(new URL('../core/figma-runtime.js', import.meta.url), 'utf8');
 const AsyncFunction = (async () => {}).constructor;
@@ -63,21 +64,7 @@ const fakeFor = (over = {}) => makeFakeFigma({ variables: V.filter((v) => v !== 
 // by '<o>#stroke'. 0 = not in the result (see errors). Otherwise [fid, A, dB?, d?]: fid = the number after the root
 // id's prefix 'P:' (a string when the prefix differs), A = [x, y, w, h] at width A, dB = B - A per value (0 / absent =
 // B equals A), d = the fields whose actual value differs from the encoding.
-const ordOf = (e, a = []) => { a.push(e.o); (e.k || []).forEach((k) => ordOf(k, a)); if (e.bd && e.bd.o) a.push(e.o + '#stroke'); return a; };
-function decode(res, D) {
-  for (const s of res.screens) {
-    if (!s.nodes) continue;
-    const T = D.screens.find((x) => x.screen === s.screen).T, pf = s.root.split(':')[0] + ':';
-    s.N = {};
-    ordOf(T).forEach((o, i) => {
-      const t = s.nodes[i];
-      if (!t) return;
-      const [f, A, dB, d] = t;
-      s.N[o] = { fid: typeof f === 'number' ? pf + f : f, A, B: dB ? A.map((v, j) => Math.round((v + dB[j]) * 100) / 100 + 0) : A, d };
-    });
-  }
-  return res;
-}
+// ordOf / decode: core/figma-check.mjs (moved there in plan 3 Task 7; check reconstructs the actual values from it)
 const runOne = async (fig, encs = [encFor()], D0 = {}) => {
   const [b] = planBatches(encs, { runtime: RUNTIME });
   const D = { ...dataOf(b), ...D0 };

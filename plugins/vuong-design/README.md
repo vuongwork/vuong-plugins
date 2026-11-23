@@ -251,3 +251,64 @@ Numbers are rounded to 0.01.
 - **Scopes** (always explicit, never `ALL_SCOPES`): colour -> `FRAME_FILL SHAPE_FILL TEXT_FILL STROKE_COLOR EFFECT_COLOR`; `space` -> `GAP` (Figma has no padding scope); `size` -> `WIDTH_HEIGHT`; `radius` -> `CORNER_RADIUS`; `border` -> `STROKE_FLOAT`; `opacity` -> `OPACITY` (value 0..1 as in the token); `font.size` -> `FONT_SIZE`; `font.lineHeight` -> `LINE_HEIGHT`; `font.letterSpacing` -> `LETTER_SPACING`. A role takes the scopes of its primitive.
 - **Values**: colours as `{r, g, b, a}` (0..1); dimensions in px. Text styles: nearest face of the family (same rule as the runtime; substitutions in `fontMissing`), line height PIXELS from `$extensions['vuong-design'].lineHeightPx` else PERCENT = ratio x 100, letter spacing PIXELS, case from `textTransform`. Effect styles: one `DROP_SHADOW` / `INNER_SHADOW` per layer.
 - **Idempotent**: found by name, created when missing, updated when a value, scope set or description differs, never deleted. Result per batch: `{ batch, collections, variables, textStyles, effectStyles: { created, updated, unchanged }, created: { ...: [{ name, id }] }, fontMissing, errors, skipped? }`; sum the counts over the batches. Tokens the payload cannot express (`skipped`: a shadow that did not parse, a colour space other than srgb) are listed in the first batch's result.
+
+## Figma CLI
+
+`core/figma.mjs` (plan 3 Task 7) turns a `ds.mjs` output folder into `use_figma` calls, takes the results back and checks the real Figma screens with the plan 1-2 verifier. The script never calls Figma itself: the AI sends each batch.
+
+```
+node core/figma.mjs plan   --ds <ds output> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo]
+node core/figma.mjs ingest --out <dir> --result <file> [--batch vars-NN | batch-NN | N]
+node core/figma.mjs check  --out <dir> [--mutate] [--allowlist <json>] [--html <file> --root <sel> ...capture options] [--tol-* <px>]
+```
+
+- **plan** encodes every screen (`spec-norm-<id>.json`, `token-map.json`, `tokens.json`, `ir.json`), writes the variable batches (`varsPayload`) and the screen batches (`planBatches`, each at most 50 000 bytes), and prints the estimate: `use_figma` calls (vars + screen batches still to send), `get_screenshot` calls (one per screen), total KB. It lists the batches for this run, in order, while the calls fit `--max-calls` (default 40). It stops at a batch boundary (`state.run.stopBefore`) and warns when the plan needs more. A batch already `done` with the same code is kept and not written again, unless `--redo`. The same input gives the same numbering. `--force <screen>` (repeatable or comma-separated) puts the screen in `D.force`: the runtime rebuilds it even when it was edited by hand. `--ds` must be the folder of one HTML file (in corpus mode, `<out>/<file stem>`).
+- **ingest** validates a result against the BatchResult shape of its batch (README "Figma runtime"; vars batches: "Figma variables"), copies it to `result-<key>.json` and merges it into `state.json`.
+  - Malformed JSON or a wrong shape → exit 2, state unchanged. Wrong shapes: a wrong batch number, a screen missing or not in the batch, `nodes` not the length of the encoding, an entry that is not `0` or `[fid, A, dB?, d?]`.
+  - A vars batch with a non-empty `errors` is `failed`, its errors kept. A screen batch is `failed` when a screen's root failed, else `done`.
+  - Per screen: `done`, `skippedEdited` (`edited: true`: the frame was changed by hand and kept), or `failed`. `extra` frames are recorded.
+  - The batch is told by the result's `batch` (a vars result counts from 0); `--batch` overrides it.
+- **check** captures the source page again. It takes the ds run's `--html`, `--root`, `--widen`, `--no-webfonts` from its `report.json`; flags override them, and `--name`, `--widen-by`, `--viewport` must be given again if the ds run used them. It rebuilds the inferred, modelled and target specs (exit 2 when a target differs from `spec-norm-<id>.json`: the page changed since `ds.mjs` ran) and renders the local proxies as `pipeline.runScreen` does. Then it runs `verifyScreen` with the Figma readback as the proxy of what was built (`figma-check.mjs figmaProxy`, mark `figma-real`):
+  - Role: the modelled proxy on a screen without applied norm records (as plan 1); the norm proxy on a screen with them (as plan 2, so the records explain what they change; the R75 Figma-model layer then compares real Figma with the norm layout proxy).
+  - Boxes: A from the readback, B = A + dB. DOM per node from the reconstructed actual values (actual = encoded intent unless `d` says otherwise), in the shape of the proxy DOM.
+  - Crops at width A on `shot-<screen>.png`. The screenshot's scale is its width / W_A; it is rescaled to the proxy's device scale 2. Request it at 2x: a 1x image loses too much detail for the crops. No screenshot → `crop` skipped, the screen fails.
+  - What the readback cannot observe is listed as skipped `figma-<name>`, reported and never failing:
+    - `figma-crop-B`: the screenshot is at width A;
+    - `figma-effect`: shadows, background images;
+    - `figma-text-decoration`, `figma-text-transform`: runtime M5;
+    - when present, `figma-svg` (inline svg markup), `figma-image` (fit, position, source), `figma-stroke-style` (dash pattern).
+
+    Outline is `none`: Figma has none, so a source outline is a finding.
+  - A node missing from the readback (entry `0`), or a screen not built, failed or `skippedEdited`: no Figma box, the nodes are unchecked and the screen fails.
+  - report.json and report.html get a Figma section per screen: build state, proxy vs Figma (the largest |box delta| between the local norm, or modelled, proxy and Figma at A and B, with the worst nodes), unread checks, `fontMissing`, `unbound`, build errors, `unsupported`.
+  - `--mutate`: the four readback mutations of `mutate.mjs`, each verified again on the same screenshot: `figMove` (box +3 px), `figText` (one character), `figFill` (fill colour), `figDrop` (node removed). A missed one fails the run.
+
+Exit codes: 0 every screen passes the gate (and no mutation was missed), 1 otherwise, 2 usage, setup or malformed input.
+
+AI workflow (one Figma file the user named; never two writers on the same file):
+1. Run `ds.mjs`, then `figma.mjs plan --ds <ds out> --out <dir>`. Tell the user the estimate before the first write.
+2. For each batch of this run, in order (`vars-*` first): send the file's content as the code of `use_figma`, save the returned JSON as a file, run `figma.mjs ingest --out <dir> --result <file>`. For a `failed` batch: read its errors, fix, run `plan` again (done batches are kept), resend.
+3. For each built screen: `get_screenshot` of its frame (`root` in `state.json`) with `maxDimension` = 2 × the larger side of the frame (2x). Download it with curl as `<dir>/figma/shot-<screen>.png`.
+4. Run `figma.mjs check --out <dir> [--mutate]` and open `<dir>/figma/report.html`.
+5. Over `--max-calls`: after ingesting, run `plan` again; it continues with the batches not yet done.
+
+Files in `<out>/figma/`:
+
+| File | Written by | Content |
+|---|---|---|
+| `vars-NN.js` | plan | variables and styles, `use_figma` code (run in order) |
+| `batch-NN.js`, `batch-NN.data.json` | plan | one screen batch: runtime + data, and the data D alone (check decodes the readback with it) |
+| `state.json` | plan, ingest | progress (shape below) |
+| `result-<key>.json` | ingest | the BatchResult as returned |
+| `shot-<screen>.png` | the AI | `get_screenshot` of the screen frame at 2x |
+| `report.json`, `report.html` | check | as layout.mjs, plus `figma` per screen |
+
+`state.json`:
+```
+{ version: 1, ds, file, page, source: { html, root, widen, webFonts }, force: [screen], order: [key],
+  batches: { [key]: { kind: 'vars' | 'screens', n?, file, data?, screens, bytes, hash,
+                      status: 'pending' | 'done' | 'failed', result?, errors?, fontMissing? } },
+  screens: { [id]: { batch, status: 'pending' | 'done' | 'failed' | 'skippedEdited', result?, root?, sig?,
+                     edited?, skippedEdited?, extra?, errors?, fontMissing?, unbound?: { [reason]: n } } },
+  run: { maxCalls, calls: { useFigma, screenshot, total }, kb, send: [key], sendCalls, stopBefore } }
+```

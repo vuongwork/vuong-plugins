@@ -39,7 +39,8 @@
 //   count (sibs: when a sibling is removed the ids shift and another container with the same tag and class takes the
 //   id) and the hash of its first text descendant (th). An approved entry with an empty reason is allowed by 'approved'.
 //   allowlistEntry(kind, finding, where) drafts one (approved: false) for the user to review. R44: report.cropLinked (crops on
-//   an unexplained size root) are allowed only with that root's entry (open.cropsLinked / allowed.cropsLinked). Unchecked nodes, skipped layers
+//   an unexplained size root) are allowed only with that root's entry (open.cropsLinked / allowed.cropsLinked). Plan 3 Task 7: a skipped
+//   'figma-<name>' (a check the Figma readback cannot observe, figma.mjs check) never fails the gate. Unchecked nodes, skipped layers
 //   and data findings can never be allowlisted, nor (R66) an unexplained root of layer 'norm' (a change of the target spec
 //   that no report entry explains). `file` is the HTML file's path relative to the corpus dir (R51; with
 //   --html its base name).
@@ -51,7 +52,7 @@ import { captureScreens } from './capture.mjs';
 import { inferScreen } from './infer.mjs';
 import { applyFigmaModel } from './figma-model.mjs';
 import { buildProxyHtml, renderProxy } from './proxy.mjs';
-import { verifyScreenWithImages } from './verify.mjs';
+import { verifyScreenWithImages, figmaSkip } from './verify.mjs';
 import { defaultFontMap } from './font-map.mjs';
 import { applyNorm } from './apply-norm.mjs';
 
@@ -210,7 +211,8 @@ export function gate(report, allowlist = [], where = {}) {
   // R44: a crop attached to an unexplained root passes or fails with that root's allowlist entry, never its own
   const rootAllowed = (x) => roots.allowed.some((r) => r.id === x.root && r.width === x.width);
   const linked = { open: (report.cropLinked || []).filter((x) => !rootAllowed(x)), allowed: (report.cropLinked || []).filter(rootAllowed) };
-  const pass = report.unchecked.length === 0 && report.skipped.length === 0 && report.data.length === 0 &&
+  // plan 3 Task 7: skipped 'figma-<name>' (a check the Figma readback cannot observe) is reported, never failing
+  const pass = report.unchecked.length === 0 && report.skipped.every(figmaSkip) && report.data.length === 0 &&
     roots.open.length === 0 && approvals.open.length === 0 && crops.open.length === 0 && linked.open.length === 0;
   return {
     pass,

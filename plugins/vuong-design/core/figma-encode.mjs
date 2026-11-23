@@ -20,9 +20,11 @@
 //   (primitive.color.c01 -> color/c01; role tokens keep their tier: role.text-muted -> role/text-muted); text style =
 //   `type/<name>` of primitive.typography.<name>; effect style = `shadow/<name>` of primitive.shadow.<name> (a role
 //   path is resolved through its alias first).
-// planBatches(encs, { limit = PAYLOAD_LIMIT, runtime, page? }) -> [{ n, screens, bytes, code }]
+// planBatches(encs, { limit = PAYLOAD_LIMIT, runtime, page?, force? }) -> [{ n, screens, bytes, code, data (= D) }]
+//   force (plan 3 Task 7, figma.mjs --force): screen ids the runtime rebuilds even when edited; D.force = the ones in
+//   that batch (absent when none).
 //   Screens in order, greedily, while UTF-8 bytes of `code` <= limit. code = runtime with its single `__DATA__`
-//   replaced by the JSON of the batch data D = { batch: n, page?, C, F, I, V, S, M, screens: [{ screen, file, W, T }] }.
+//   replaced by the JSON of the batch data D = { batch: n, page?, force?, C, F, I, V, S, M, screens: [{ screen, file, W, T }] }.
 //   Each batch has its own tables, holding only what its screens use (indices remapped, first-use order). A screen
 //   that does not fit alone throws OversizeError { screen, bytes } (bytes = runtime + that screen alone); nothing is cut.
 //
@@ -632,7 +634,7 @@ export function encodeScreen(spec, ctx = {}) {
 }
 
 // ---------------- batches ----------------
-function batchData(encs, n, page) {
+function batchData(encs, n, page, force) {
   const tb = newTables();
   const screens = encs.map((enc) => {
     const T = structuredClone(enc.T);
@@ -641,17 +643,20 @@ function batchData(encs, n, page) {
   });
   const D = { batch: n };
   if (page !== undefined) D.page = page;
+  const f = (force || []).filter((x) => encs.some((enc) => enc.screen === x));
+  if (f.length) D.force = f;
   Object.assign(D, tb, { screens });
   return D;
 }
 
 export function planBatches(encs, opts = {}) {
-  const { limit = PAYLOAD_LIMIT, runtime, page } = opts;
+  const { limit = PAYLOAD_LIMIT, runtime, page, force } = opts;
   if (typeof runtime !== 'string' || runtime.split('__DATA__').length !== 2) throw new Error('planBatches: runtime must contain __DATA__ exactly once');
   const [pre, post] = runtime.split('__DATA__');
   const build = (group, n) => {
-    const code = pre + JSON.stringify(batchData(group, n, page)) + post;
-    return { n, screens: group.map((e) => e.screen), bytes: Buffer.byteLength(code, 'utf8'), code };
+    const data = batchData(group, n, page, force);
+    const code = pre + JSON.stringify(data) + post;
+    return { n, screens: group.map((e) => e.screen), bytes: Buffer.byteLength(code, 'utf8'), code, data };
   };
   const out = [];
   let group = [], cur = null;

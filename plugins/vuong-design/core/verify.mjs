@@ -77,7 +77,11 @@
 //   the deviation is a height (wrap; never the reverse) (R17, M1). A container without a known direction (spec lay.d)
 //   gives shrink and weightedFill no axis.
 //   R27/R28: the layout proxy must carry model 'none' and the model proxy model 'figma' (renderProxy's mark); a
-//   missing or wrong mark makes verifyScreen throw.
+//   missing or wrong mark makes verifyScreen throw. Plan 3 Task 7 (R-P4): the Figma readback (figma-check.mjs
+//   figmaProxy: model 'figma', mark 'figma-real') plays the proxy of what is built: the modelled proxy, or the norm proxy
+//   in place of mark 'norm'. Its `unread` list (checks the readback cannot observe) is recorded as skipped
+//   'figma-<name>', which never fails a screen (figmaSkip); a run prop the DOM leaves undefined is not compared.
+//   measureCrops opts.widths limits the crops to those widths (the Figma screenshot is at width A).
 //   fontSubstitution explains nothing (R10: capture measures the source in the Figma font), nor does shrinkModelled
 //   (infer's info that a shrink item is FILL + max, plan 3 Task 2; its shrink flag still explains). On a screen flagged
 //   unsafeWiden, roots at width B are `unchecked` (reason unsafeWiden), never explained.
@@ -289,6 +293,8 @@ const leafPaths = (s) => {
   return out;
 };
 
+// plan 3 Task 7: a check the Figma readback cannot observe (skipped 'figma-<name>') does not fail a screen
+export const figmaSkip = (k) => String(k).startsWith('figma-');
 const isTextSrc = (n) => !n.icon && (n.kind === 'text' || (n.kind === 'pseudo' && !!n.runs));
 const runsText = (runs) => (runs || []).map((r) => (r.br ? '\n' : r.t ?? '')).join('');
 const normWs = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
@@ -350,6 +356,7 @@ function runStyleDiff(src, dom) {
   if (a.length !== b.length || a.some((x, i) => x[0] !== b[i][0])) return [];
   const out = [];
   RUN_PROPS.forEach((prop, k) => {
+    if (dom.length && dom.every((r) => r[k + 1] === undefined)) return; // plan 3 T7: not observed (Figma readback: decoration, case)
     const i = a.findIndex((x, j) => x[k + 1] !== b[j][k + 1]);
     if (i >= 0) out.push({ prop, expected: a[i][k + 1], actual: b[i][k + 1], at: i });
   });
@@ -394,7 +401,7 @@ export function verifyScreen(input, opts = {}) {
   const NP = norm ? norm.proxy || {} : null;
   for (const M of norm ? W : []) {
     const P = NP[M];
-    if (!P || P.model !== 'figma' || P.mark !== 'norm' || P === proxy[M]) {
+    if (!P || P.model !== 'figma' || (P.mark !== 'norm' && P.mark !== 'figma-real') || P === proxy[M]) {
       throw new Error(`verifyScreen: the norm proxy at ${M} must be renderProxy's result for the normalised spec with mark 'norm' (model ${JSON.stringify(P && P.model)}, mark ${JSON.stringify(P && P.mark)})`);
     }
   }
@@ -1438,6 +1445,10 @@ export function verifyScreen(input, opts = {}) {
     };
   }
 
+  // plan 3 Task 7: a Figma readback proxy (mark 'figma-real', in the modelled or the norm role) lists what the readback
+  // cannot observe (P.unread); those checks become skipped 'figma-<name>', reported but never failing (pass, gate)
+  const FP = P3.A && P3.A.mark === 'figma-real' ? P3.A : null;
+  for (const k of FP ? FP.unread || [] : []) { const i = skipped.indexOf(k); if (i >= 0) skipped.splice(i, 1); skipped.push(`figma-${k}`); }
   const checked = list.length - unchecked.length;
   const nodes = list.map(({ n }) => {
     const [dA, dB] = W.map((M) => MD[M].get(n.id) || null), [lA, lB] = W.map((M) => LD[M].get(n.id) || null);
@@ -1447,7 +1458,7 @@ export function verifyScreen(input, opts = {}) {
     const ids = list.filter(({ n }) => !uncheckedReasons[n.id]);
     return ids.length ? r3(ids.filter(({ n }) => within(n, MD[M].get(n.id))).length / ids.length) : 0;
   });
-  const pass = unchecked.length === 0 && roots.every((r) => r.explainedBy) && skipped.length === 0 &&
+  const pass = unchecked.length === 0 && roots.every((r) => r.explainedBy) && skipped.every(figmaSkip) &&
     crop.length === 0 && cropLinked.length === 0 && data.length === 0 && needsApproval.length === 0;
   return {
     id: screen.id, checked, total: list.length, unchecked, uncheckedReasons, nodes, roots, modelDeltas, modelFollowers, modelDrift, needsApproval,
@@ -1478,6 +1489,7 @@ export async function measureCrops(browser, screen, proxy, opts = {}) {
   if (!base && (!screen.png || !screen.png[0] || !screen.png[1])) throw new Error('measureCrops: screen.png is missing (captureScreens with { png: true })');
   const out = [];
   for (const [i, M] of W.entries()) {
+    if (opts.widths && !opts.widths.includes(M)) continue; // plan 3 T7: the Figma screenshot exists at width A only
     const P = proxy[M];
     if (!P || !P.png) throw new Error(`measureCrops: proxy PNG at ${M} is missing`);
     const pairs = [];

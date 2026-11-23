@@ -8,6 +8,10 @@
 //   source box and the proxy box, padded by PAD css px); the node's box is outlined in each. Normalisation (spec §9):
 //   capture's font substitutions (from -> to, reason), the model's substitutions (fontSubstitution flags) and the
 //   number of 'normal' line heights made explicit (R14), with the original-font screen next to the measured one.
+//   over (plan 3 Task 7, figma.mjs check): { [kind]: entry key, label } shows that kind's crops on another proxy of the
+//   entry (the Figma readback, entry.figma; no image where that proxy has no PNG, e.g. Figma at width B).
+//   A view with `figma` (figma.mjs) gets a Figma section: build state, proxy vs Figma, unread checks, fonts, unbound,
+//   errors; skipped 'figma-*' entries are listed there, not as skipped layers.
 // renderReportHtml({ title, generated, args, screens: [view] }) -> HTML string (pure, sync).
 // Crop jobs: imgs = PNG buffers (device scale 2, clipped to the screen root); window in CSS px relative to the root.
 const DSF = 2;
@@ -73,7 +77,7 @@ export function describeNode(n) {
   return `${n.tag || n.kind || ''}${cls}${text ? ` "${text.length > 40 ? `${text.slice(0, 40)}…` : text}"` : ''}`;
 }
 
-export async function screenView(browser, file, entry, g, summary) {
+export async function screenView(browser, file, entry, g, summary, over = {}) {
   const { screen, report } = entry;
   const idx = nodeIndex(screen.tree);
   const flagsOf = (id) => report.flags.filter((f) => f.id === id).map((f) => `${f.kind}${f.detail ? ` (${f.detail})` : ''}`);
@@ -81,12 +85,15 @@ export async function screenView(browser, file, entry, g, summary) {
   const add = (kind, x, proxyName, allowedBy) => {
     const i = x.width === 'A' ? 0 : 1, n = idx.get(x.id);
     const src = n ? (i ? n.rB : n.rA) : null;
-    const P = entry[proxyName][x.width];
+    // plan 3 Task 7: over = { [kind]: entry key } shows that kind on another proxy (figma.mjs: the Figma readback)
+    const pn = over[kind] && entry[over[kind]] ? over[kind] : proxyName;
+    const P = entry[pn][x.width];
     const box = P && P.boxes[x.id];
+    const isFig = !!entry.figma && entry[pn] === entry.figma;
     items.push({
-      kind, id: x.id, width: x.width, node: describeNode(n), proxy: proxyName === 'layout' ? 'layout proxy' : proxyName === 'norm' ? 'normalised proxy' : 'modelled proxy',
+      kind, id: x.id, width: x.width, node: describeNode(n), proxy: isFig ? (over.label || 'Figma') : pn === 'layout' ? 'layout proxy' : pn === 'norm' ? 'normalised proxy' : 'modelled proxy',
       src, box, x, allowedBy, flags: flagsOf(x.id),
-      job: src || box ? { win: union(src, box), i, P } : null,
+      job: (src || box) && P && P.png ? { win: union(src, box), i, P } : null, // no image: the Figma screenshot is at A only
     });
   };
   // R66: a root of layer 'norm' is shown on the normalised proxy
@@ -249,7 +256,8 @@ function verdictFail(v, s) {
   const nData = Object.values(s.data || {}).reduce((a, b) => a + b, 0);
   if (nData) parts.push(plural(nData, 'data finding', 'data findings'));
   if (s.unchecked) parts.push(`${plural(s.unchecked, 'node', 'nodes')} could not be checked`);
-  if (s.skipped && s.skipped.length) parts.push(`${plural(s.skipped.length, 'layer', 'layers')} skipped`);
+  const sk = (s.skipped || []).filter((k) => !String(k).startsWith('figma-')); // figma-*: readback limits, never failing
+  if (sk.length) parts.push(`${plural(sk.length, 'layer', 'layers')} skipped`);
   const approve = s.needsApproval
     ? `${s.needsApproval === 1 ? '1 item needs' : `${s.needsApproval} items need`} your approval (Figma model limitation).`
     : 'Nothing for you to approve.';
@@ -276,7 +284,9 @@ function renderScreen(v, g) {
     `Checked ${s.checked} of ${plural(s.total, 'node', 'nodes')}. Figma spec size ${kb(s.specBytes)}${s.payloadOver50k ? ' (over the 50 KB limit)' : ''}. ` +
     `Reference: pixel difference ${(s.pixel || []).map((p, i) => `${pct(p)} at ${i ? 'B' : 'A'}`).join(' / ')} (for reference only, not used for pass/fail).</p>`);
   if (v.unchecked.length) parts.push(`<h3>Unchecked</h3><ul>${v.unchecked.map((u) => `<li><code>${esc(u.id)}</code> ${esc(u.node)}: ${esc(u.reason)}</li>`).join('')}</ul>`);
-  if (v.skipped.length) parts.push(`<h3>Skipped layers</h3><p>${esc(v.skipped.join(', '))}</p>`);
+  const skippedReal = v.skipped.filter((k) => !String(k).startsWith('figma-'));
+  if (skippedReal.length) parts.push(`<h3>Skipped layers</h3><p>${esc(skippedReal.join(', '))}</p>`);
+  if (v.figma) parts.push(renderFigma(v));
   for (const kind of ['root', 'approval', 'crop']) {
     const its = v.items.filter((i) => i.kind === kind);
     if (its.length) parts.push(`<details open><summary><h3>${KIND_TITLE[kind]} (${its.length})</h3></summary>${its.map((it) => renderItem(v, it, g)).join('')}</details>`);
@@ -305,6 +315,34 @@ function renderScreen(v, g) {
   }
   parts.push('</section>');
   return parts.join('\n');
+}
+
+// plan 3 Task 7 (figma.mjs check): the Figma section of a screen
+const FIG_UNREAD = {
+  'crop-B': 'image crops at width B (the screenshot is at width A)', effect: 'shadows and background images (effects are not read back)',
+  'text-decoration': 'text decoration of runs', 'text-transform': 'text case of runs', svg: 'inline svg markup (only "has vectors" is read back)',
+  image: 'image fit, position and source (only the image paint is read back)', 'stroke-style': 'dashed / dotted stroke style (dash pattern not read back)',
+};
+function renderFigma(v) {
+  const f = v.figma, out = ['<h3>Figma</h3>'];
+  const st = f.status === 'skippedEdited' ? 'edited by hand in Figma, kept (skippedEdited): not checked; rerun with --force to overwrite'
+    : f.status === 'done' ? `built (frame ${esc(f.root)}, ${esc(f.batch)}), checked as the ${f.role === 'norm' ? 'normalised' : 'modelled'} proxy`
+      : f.status === 'failed' ? 'the build failed: not checked' : 'not built yet: not checked';
+  out.push(`<p>${st}.${f.readback && f.readback.missing ? ` ${plural(f.readback.missing, 'node was', 'nodes were')} not read back (unchecked).` : ''}` +
+    `${f.shot ? ` Screenshot ${esc(f.shot.file)} at scale ${num(f.shot.scale)}${f.shot.rescaled ? ' (rescaled to 2 for the crops)' : ''}.` : ' No screenshot: crops not checked.'}` +
+    `${f.extra && f.extra.length ? ` Further copies of this frame in Figma, left alone: ${esc(f.extra.join(', '))}.` : ''}</p>`);
+  const pv = f.proxyVsFigma;
+  if (pv) {
+    out.push(`<p>Proxy vs Figma (${esc(pv.ref)} proxy box minus Figma box, per node): largest ${['A', 'B'].map((M) => `${pv[M].max == null ? 'n/a' : px(pv[M].max)} at ${M}`).join(', ')}.</p>`);
+    const rows = ['A', 'B'].flatMap((M) => pv[M].worst.map((w) => `<tr><td><code>${esc(w.id)}</code></td><td>${M}</td><td>${esc(describeDelta(w.delta))}</td></tr>`));
+    if (rows.length) out.push(`<table><tr><th>node</th><th>width</th><th>Figma vs proxy</th></tr>${rows.join('')}</table>`);
+  }
+  if (f.unread && f.unread.length) out.push(`<p class="muted">Not observable in the Figma readback (listed as skipped figma-*, never failing): ${esc(f.unread.map((k) => FIG_UNREAD[k] || k).join('; '))}.</p>`);
+  if (f.fontMissing.length) out.push(`<p>Fonts missing in Figma: ${esc(f.fontMissing.map((m) => `${m.o}: ${m.family} ${m.style} -> ${m.used}`).join('; '))}</p>`);
+  if (f.unbound.length) out.push(`<p>Not bound to a variable or style: ${esc(f.unbound.map((u) => `${u.o} ${u.prop} ${u.name} (${u.reason})`).slice(0, 20).join('; '))}${f.unbound.length > 20 ? ' …' : ''}</p>`);
+  if (f.errors.length) out.push(`<p>Build errors: ${esc(f.errors.map((x) => `${x.o}: ${x.msg}`).slice(0, 20).join('; '))}</p>`);
+  if (f.unsupported.length) out.push(`<p>Values the builder could not carry (unsupported): ${esc(f.unsupported.join(', '))}</p>`);
+  return out.join('\n');
 }
 
 const HOWTO = `<details class="howto"><summary><strong>How to read this report</strong></summary>

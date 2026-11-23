@@ -73,7 +73,7 @@ if(e.es!=U)await sty(o,'es',e.es,id=>n.setEffectStyleIdAsync(id))},
 fail=(o,x)=>{S.er.push({o,msg:String(x&&x.message||x).slice(0,200)});S.bad.add(o)},
 pf_=o=>S.er.push({o,msg:'parent failed'}),skip=e=>{(e.k||[]).forEach(k=>{pf_(k.o);skip(k)});if(e.bd&&e.bd.o)pf_(e.o+'#stroke')},
 frame=()=>{const n=F.createFrame();n.fills=[];n.clipsContent=false;return n},
-pd=(n,k,v)=>n.setSharedPluginData('vd',k,v),gd=(n,k)=>n.getSharedPluginData('vd',k),
+NS='vuongdesign',pd=(n,k,v)=>n.setSharedPluginData(NS,k,v),gd=(n,k)=>n.getSharedPluginData(NS,k),
 mk=async(e,par,sc)=>{const o=e.o,v=e.v||{},gl=!!(e.ic&&e.ic.g!=U),T=e.t=='T'||gl,l=e.l,s=e.s||'XX',ia=isAL(par)&&!e.a,rs=()=>n.resize(Math.max(e.w,.01),Math.max(e.h,.01));
 let n;
 try{n=T?F.createText():e.t=='V'?F.createNodeFromSvg(svg(e)):F.createFrame();

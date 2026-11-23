@@ -8,7 +8,8 @@
 //  - fontName / setRangeFontName with a font not loaded, characters while a font of the node is not loaded;
 //  - a SOLID paint whose color has a key other than r, g, b (e.g. `a`) or a channel outside 0..1, opacity outside 0..1;
 //  - loadFontAsync of a font that listAvailableFontsAsync does not list; setTextStyleIdAsync / setEffectStyleIdAsync
-//    with an unknown id; any use of a removed node; figma.notify (throws inside use_figma).
+//    with an unknown id; any use of a removed node; figma.notify (throws inside use_figma);
+//  - a shared plugin data namespace that is not at least 3 alphanumeric characters (e.g. 'vd').
 // Real-Figma behaviours mimicked: created nodes start on the current page; createFrame starts white and clipping;
 // resize() on an auto-layout frame sets its layoutSizing to FIXED; fills / strokes getters return frozen copies.
 // makeFakeFigma({ fonts, variables, textStyles, effectStyles, throwIf, ignore, idPrefix, idStart }) -> figma, plus figma._log (ops in call order:
@@ -194,8 +195,10 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
       if (isAL(this)) { this._lsh = 'FIXED'; this._lsv = 'FIXED'; }
     }
     remove() { this._ok(); if (this.parent) this.parent._kids.splice(this.parent._kids.indexOf(this), 1); this.parent = null; this._removed = true; }
-    setSharedPluginData(ns, k, v) { this._ok(); this._pd[ns + '/' + k] = String(v); }
-    getSharedPluginData(ns, k) { this._ok(); return this._pd[ns + '/' + k] || ''; }
+    // real Figma: 'The namespace must be at least 3 alphanumeric characters' (plugin-api d.ts, PluginDataMixin)
+    _ns(ns) { if (!/^[A-Za-z0-9]{3,}$/.test(ns)) throw new Error('in setSharedPluginData: The namespace must be at least 3 alphanumeric characters'); }
+    setSharedPluginData(ns, k, v) { this._ok(); this._ns(ns); this._pd[ns + '/' + k] = String(v); }
+    getSharedPluginData(ns, k) { this._ok(); this._ns(ns); return this._pd[ns + '/' + k] || ''; }
     setBoundVariable(field, v) {
       this._ok();
       if (!NUM_FIELDS.has(field)) throw new Error('setBoundVariable: field ' + field + ' is not bindable');

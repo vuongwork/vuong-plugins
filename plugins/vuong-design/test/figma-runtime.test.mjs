@@ -71,7 +71,7 @@ const runOne = async (fig, encs = [encFor()], D0 = {}) => {
   return decode(await run(codeOf(D), fig), D);
 };
 const page = (fig, name = 'Screens') => fig.root.children.find((p) => p.name === name);
-const byVd = (root) => { const m = {}; const w = (n) => { const id = n.getSharedPluginData('vd', 'id'); if (id) m[id] = n; (n.children || []).forEach(w); }; w(root); return m; };
+const byVd = (root) => { const m = {}; const w = (n) => { const id = n.getSharedPluginData('vuongdesign', 'id'); if (id) m[id] = n; (n.children || []).forEach(w); }; w(root); return m; };
 const allIds = (e, out = []) => { out.push(e.o); (e.k || []).forEach((k) => allIds(k, out)); return out; };
 
 test('runtime source: __DATA__ once, at most 15 KB, no console / notify', () => {
@@ -80,6 +80,17 @@ test('runtime source: __DATA__ once, at most 15 KB, no console / notify', () => 
   const bytes = Buffer.byteLength(RUNTIME, 'utf8');
   assert.ok(bytes <= 15360, `runtime is ${bytes} bytes`);
   assert.ok(!/console\.|figma\.notify/.test(RUNTIME));
+});
+
+test('plugin data uses a namespace real Figma accepts (the fake rejects one shorter than 3 alphanumeric characters)', async () => {
+  const fig = fakeFor();
+  const f = fig.createFrame();
+  assert.throws(() => f.setSharedPluginData('vd', 'id', 'x'), /at least 3 alphanumeric/);
+  assert.throws(() => f.setSharedPluginData('vuong_design', 'id', 'x'), /at least 3 alphanumeric/);
+  f.remove();
+  const [s] = (await runOne(fig)).screens;
+  assert.deepEqual(s.errors, []);
+  assert.equal(page(fig).children[0].getSharedPluginData('vuongdesign', 'screen'), 's0');
 });
 
 test('variables bind: padding, gap, fill, stroke and text style; result lists the bound names', async () => {
@@ -170,12 +181,12 @@ test('every built node has vd/id; the root has vd/screen, vd/file and vd/sig; ev
   assert.equal(res.batch, 1);
   assert.equal(res.page, 'Screens');
   assert.equal(root.name, 's0');
-  assert.equal(root.getSharedPluginData('vd', 'screen'), 's0');
-  assert.equal(root.getSharedPluginData('vd', 'file'), 'f.html');
-  assert.match(root.getSharedPluginData('vd', 'sig'), /^[0-9a-f]{8}$/);
-  assert.equal(s.sig, root.getSharedPluginData('vd', 'sig'));
+  assert.equal(root.getSharedPluginData('vuongdesign', 'screen'), 's0');
+  assert.equal(root.getSharedPluginData('vuongdesign', 'file'), 'f.html');
+  assert.match(root.getSharedPluginData('vuongdesign', 'sig'), /^[0-9a-f]{8}$/);
+  assert.equal(s.sig, root.getSharedPluginData('vuongdesign', 'sig'));
   assert.equal(s.root, root.id);
-  const w = (n) => { if (n.type !== 'VECTOR') assert.ok(n.getSharedPluginData('vd', 'id'), `${n.type} ${n.name} has vd/id`); (n.children || []).forEach(w); };
+  const w = (n) => { if (n.type !== 'VECTOR') assert.ok(n.getSharedPluginData('vuongdesign', 'id'), `${n.type} ${n.name} has vd/id`); (n.children || []).forEach(w); };
   w(root);
   assert.deepEqual(Object.keys(s.N).sort(), [...allIds(enc.T), 'n.0#stroke'].sort());
   for (const [o, r] of Object.entries(s.N)) {
@@ -239,7 +250,7 @@ test('a new screen goes right of the existing page content', async () => {
   const other = fig.createFrame(); other.x = 100; other.resize(500, 50);
   fig._pageSets = 0;
   await runOne(fig);
-  const root = p.children.find((c) => c.getSharedPluginData('vd', 'screen') === 's0');
+  const root = p.children.find((c) => c.getSharedPluginData('vuongdesign', 'screen') === 's0');
   assert.deepEqual([root.x, root.y], [680, 0]);
 });
 
@@ -267,14 +278,14 @@ test('edited frame is kept: a hand edit changes the signature, the rerun keeps t
 test('a frame without a signature (interrupted run) is replaced, not kept', async () => {
   const fig = fakeFor();
   await runOne(fig);
-  page(fig).children[0].setSharedPluginData('vd', 'sig', '');
+  page(fig).children[0].setSharedPluginData('vuongdesign', 'sig', '');
   const r2 = await runOne(fig);
   assert.equal(r2.screens[0].edited, undefined);
   assert.equal(page(fig).children.length, 1);
 });
 
 test('an error in one node is reported; the node and its children are missing, the other nodes are built', async () => {
-  const fig = fakeFor({ throwIf: (op, n) => op === 'resize' && n.getSharedPluginData('vd', 'id') === 'n.0' });
+  const fig = fakeFor({ throwIf: (op, n) => op === 'resize' && n.getSharedPluginData('vuongdesign', 'id') === 'n.0' });
   const [s] = (await runOne(fig)).screens;
   assert.deepEqual(s.errors.map((e) => e.o), ['n.0', 'n.0.0', 'n.0.1', 'n.0.g0', 'n.0#stroke'], 'the overlay of the failed node is listed too');
   assert.equal(s.errors[4].msg, 'parent failed');
@@ -357,7 +368,7 @@ test('readback diff: ignored fills show the actual paint, and the lost fill bind
 });
 
 test('compact nodes: one entry per node in the fixed order, numeric fids, B as a delta, 0 for a failed node', async () => {
-  const fig = fakeFor({ throwIf: (op, n) => op === 'resize' && n.getSharedPluginData('vd', 'id') === 'n.2' });
+  const fig = fakeFor({ throwIf: (op, n) => op === 'resize' && n.getSharedPluginData('vuongdesign', 'id') === 'n.2' });
   const enc = encFor();
   const [s] = (await runOne(fig, [enc])).screens;
   const order = ordOf(enc.T);
@@ -392,12 +403,12 @@ test('a bound glyph fontSize (a VariableAlias[] on TEXT in real Figma) and bound
 });
 
 test('a failure at screen level (root resize at width B) is isolated: the screen reports it, the next screen is built', async () => {
-  const fig = fakeFor({ throwIf: (op, n) => op === 'resize' && n.getSharedPluginData('vd', 'screen') === 's0' && n.width === 304 && n.parent && n.parent.type === 'PAGE' && n.children.length > 0 && n.getSharedPluginData('vd', 'id') === 'n' && fig._armed });
+  const fig = fakeFor({ throwIf: (op, n) => op === 'resize' && n.getSharedPluginData('vuongdesign', 'screen') === 's0' && n.width === 304 && n.parent && n.parent.type === 'PAGE' && n.children.length > 0 && n.getSharedPluginData('vuongdesign', 'id') === 'n' && fig._armed });
   fig._armed = false;
   const tables = newTables(V);
   const encs = [encFor('s0', spec(), tables), encFor('s1', spec(), tables)];
   await runOne(fig, encs);
-  const s0old = page(fig).children.find((c) => c.getSharedPluginData('vd', 'screen') === 's0');
+  const s0old = page(fig).children.find((c) => c.getSharedPluginData('vuongdesign', 'screen') === 's0');
   fig._armed = true;
   const res = await runOne(fig, encs);
   const [a, b] = res.screens;
@@ -406,12 +417,12 @@ test('a failure at screen level (root resize at width B) is isolated: the screen
   assert.deepEqual(a.errors.map((e) => e.o), ['n']);
   assert.match(a.errors[0].msg, /fake failure/);
   assert.ok(b.nodes && b.errors.length === 0, 's1 is still built');
-  const s0 = page(fig).children.filter((c) => c.getSharedPluginData('vd', 'screen') === 's0');
+  const s0 = page(fig).children.filter((c) => c.getSharedPluginData('vuongdesign', 'screen') === 's0');
   assert.deepEqual(s0, [s0old], 'the old s0 frame is kept, the half-built one removed');
 });
 
 test('a failed root keeps the old frame; extra copies of a screen are reported and never deleted', async () => {
-  const fig = fakeFor({ throwIf: (op, n) => fig._armed && op === 'resize' && n.getSharedPluginData('vd', 'id') === 'n' });
+  const fig = fakeFor({ throwIf: (op, n) => fig._armed && op === 'resize' && n.getSharedPluginData('vuongdesign', 'id') === 'n' });
   fig._armed = false;
   await runOne(fig);
   const old = page(fig).children[0];
@@ -422,7 +433,7 @@ test('a failed root keeps the old frame; extra copies of a screen are reported a
   // a duplicated copy (same vd/screen + vd/file)
   fig._armed = false;
   const dup = fig.createFrame();
-  dup.setSharedPluginData('vd', 'screen', 's0'); dup.setSharedPluginData('vd', 'file', 'f.html'); dup.x = 2000;
+  dup.setSharedPluginData('vuongdesign', 'screen', 's0'); dup.setSharedPluginData('vuongdesign', 'file', 'f.html'); dup.x = 2000;
   const [s2] = (await runOne(fig)).screens;
   assert.deepEqual(s2.extra, [dup.id]);
   assert.ok(!dup.removed, 'the copy is kept');

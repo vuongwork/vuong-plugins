@@ -13,7 +13,8 @@
 // Real-Figma behaviours mimicked: created nodes start on the current page; createFrame starts white and clipping;
 // resize() on an auto-layout frame sets its layoutSizing to FIXED; fills / strokes getters return frozen copies.
 // makeFakeFigma({ fonts, variables, textStyles, effectStyles, throwIf, ignore, idPrefix, idStart }) -> figma, plus figma._log (ops in call order:
-// ['append', parentId, childId], ['constraints', id], ['layoutPositioning', id, value]), figma._loads (font key -> n).
+// ['append', parentId, childId, child width, child height], ['constraints', id], ['layoutPositioning', id, value],
+// ['pos', id] for x / y / relativeTransform), figma._loads (font key -> n).
 // fonts: ['Family|Style', ...]; variables: names; textStyles / effectStyles: names; throwIf(op, node) -> true makes
 // that call throw (op: 'resize'), to test error isolation.
 // Variables and styles (plan 3 Task 6): figma.variables.createVariableCollection / createVariable / getLocalVariablesAsync /
@@ -157,6 +158,11 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
     set strokes(v) { this._ok(); this._strokes = checkPaints(v); this._pb('strokes', v); }
     // real Figma mirrors bound paints in boundVariables.fills / strokes as a VariableAlias[]
     _pb(k, ps) { const a = ps.filter((p) => p.boundVariables && p.boundVariables.color).map((p) => p.boundVariables.color); const b = { ...this.boundVariables }; if (a.length) b[k] = a; else delete b[k]; this.boundVariables = b; }
+    // x / y (and relativeTransform, which sets them) log ['pos', id] once the node is born: the placing order test
+    get x() { return this._x; }
+    set x(v) { this._x = v; if (this._born) log.push(['pos', this.id]); }
+    get y() { return this._y; }
+    set y(v) { this._y = v; if (this._born) log.push(['pos', this.id]); }
     get constraints() { return this._c; }
     set constraints(v) { this._ok(); this._c = { ...v }; if (this._born) log.push(['constraints', this.id]); }
     get layoutPositioning() { return this._lp; }
@@ -219,7 +225,7 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
     appendChild(c) {
       this._ok(); c._ok();
       if (c.parent) c.parent._kids.splice(c.parent._kids.indexOf(c), 1);
-      this._kids.push(c); c.parent = this; log.push(['append', this.id, c.id]);
+      this._kids.push(c); c.parent = this; log.push(['append', this.id, c.id, c.width, c.height]);
     }
   }
 

@@ -72,7 +72,7 @@ if(e.sh)n.effects=e.sh.map(([c,x,y,b,s,i])=>({type:i?'INNER_SHADOW':'DROP_SHADOW
 if(e.es!=U)await sty(o,'es',e.es,id=>n.setEffectStyleIdAsync(id))},
 fail=(o,x)=>{S.er.push({o,msg:String(x&&x.message||x).slice(0,200)});S.bad.add(o)},
 pf_=o=>S.er.push({o,msg:'parent failed'}),skip=e=>{(e.k||[]).forEach(k=>{pf_(k.o);skip(k)});if(e.bd&&e.bd.o)pf_(e.o+'#stroke')},
-frame=()=>{const n=F.createFrame();n.fills=[];n.clipsContent=false;return n},
+frame=()=>{const n=F.createFrame();n.fills=[];n.clipsContent=false;n.resize(.01,.01);return n},
 NS='vuongdesign',pd=(n,k,v)=>n.setSharedPluginData(NS,k,v),gd=(n,k)=>n.getSharedPluginData(NS,k),
 mk=async(e,par,sc)=>{const o=e.o,v=e.v||{},gl=!!(e.ic&&e.ic.g!=U),T=e.t=='T'||gl,l=e.l,s=e.s||'XX',ia=isAL(par)&&!e.a,rs=()=>n.resize(Math.max(e.w,.01),Math.max(e.h,.01));
 let n;
@@ -108,9 +108,9 @@ for(const k of e.k||[])await mk(k,n,sc);
 if(e.bd&&e.bd.o){const id=o+'#stroke';// strokeOverlay
 try{const w=frame();w.name='stroke';pd(w,'id',id);radius(w,e,id);stroke(w,e,id);n.appendChild(w);S.reg.push([id,w,e,1]);S.late.push([w,0,n])}catch(x){fail(id,x)}}
 return n},
-// after the tree: absolute, transform, constraints
+// after the tree: every late node ABSOLUTE first (ab), then deepest first transform / position, constraints
+ab=([n,e,p])=>{if((!e||e.a)&&isAL(p))n.layoutPositioning='ABSOLUTE'},
 place=([n,e,p])=>{const a=e&&e.a,x=a?a[0]:n.x,y=a?a[1]:n.y;
-if((a||!e)&&isAL(p))n.layoutPositioning='ABSOLUTE';
 if(!e){n.x=n.y=0;n.resize(p.width,p.height);n.constraints={horizontal:'STRETCH',vertical:'STRETCH'};return}
 if(e.tf){const[A,B,C,E,tx,ty,ox,oy]=e.tf;n.relativeTransform=[[A,C,x+ox+tx-A*ox-C*oy],[B,E,y+oy+ty-B*ox-E*oy]]}else{n.x=x;n.y=y}
 if(a)n.constraints={horizontal:K[a[2]]||'MIN',vertical:K[a[3]]||'MIN'}},
@@ -163,7 +163,7 @@ if(M0[1])res.extra=M0.slice(1).map(c=>c.id);
 if(t&&gd(t,'sig')&&gd(t,'sig')!=sig(t)&&(D.force||[]).indexOf(sc.screen)<0)return{...res,root:t.id,edited:true,sig:gd(t,'sig')};// no sig = interrupted build
 const x=t?t.x:pg.children.reduce((m,c)=>Math.max(m,c.x+c.width+80),0),y=t?t.y:0,root=S.root=await mk(sc.T,null,sc);
 if(root){root.name=sc.screen;
-for(const l of S.late)try{place(l)}catch(z){fail(gd(l[0],'id'),z)}
+const L=S.late.reverse();for(const f of[ab,place])for(const l of L)try{f(l)}catch(z){fail(gd(l[0],'id'),z)}
 root.x=x;root.y=y;
 const box=()=>{const R=root.absoluteBoundingBox,m={};
 for(const[o,n]of S.reg)if(!S.bad.has(o))try{const b=n.absoluteBoundingBox;m[o]=[b.x-R.x,b.y-R.y,b.width,b.height].map(r2)}catch(z){fail(o,z)}

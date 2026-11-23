@@ -473,3 +473,48 @@ test('Planora: the first batch builds on the fake with no errors and every encod
   t.diagnostic(`batch 1 result: ${bytes} B; with a dB on every node (upper bound for real Figma): ${worst} B`);
   t.diagnostic(`Planora: ${batches.length} batches (${batches.map((b) => b.bytes).join(' / ')} B); batch 1 result ${bytes} B for ${res.screens.length} screens`);
 });
+
+// T8 item A: an absolute HUG frame with a MAX constraint keeps its bottom edge when its height changes, so nothing
+// below it may still change size once it is placed: every node leaves the flow (ABSOLUTE) before any position or
+// constraint is set, positions / transforms / constraints go deepest first, and an overlay is never 100 x 100 in a flow
+const absHugSpec = () => {
+  const sp = spec();
+  sp.kids[2] = {
+    id: 'n.2', t: 'F', w: 272, h: 37, sz: ['FIXED', 'HUG'], abs: { x: 16, y: 188, c: 'LR', cy: 'B' },
+    lay: { d: 'V', p: [0, 0, 0, 0], g: 0, pa: 'S', ca: 'S' },
+    kids: [{
+      id: 'n.2.0', t: 'F', w: 272, h: 37, sz: ['FILL', 'HUG'], lay: { d: 'H', p: [4, 0, 12, 2], g: 6, pa: 'S', ca: 'C' },
+      paint: { border: [1, 1, 1, 1].map((w) => ({ w, style: 'solid', color: 'rgb(220, 230, 224)' })), strokeOverlay: true },
+      kids: [
+        { id: 'n.2.0.0', t: 'F', w: 10, h: 10, sz: ['FIXED', 'FIXED'], paint: { bg: 'rgb(1, 2, 3)', transform: { value: 'matrix(0.707107, 0.707107, -0.707107, 0.707107, 0, 0)', origin: '5px 5px' } } },
+        { id: 'n.2.0.1', t: 'F', w: 4, h: 4, sz: ['FIXED', 'FIXED'], abs: { x: 0, y: 0, c: 'R', cy: 'B' } },
+      ],
+    }],
+  };
+  return sp;
+};
+
+test('placing: every late node is ABSOLUTE before any position / constraint, then deepest first; overlays join a flow at 0.01 px', async () => {
+  const fig = fakeFor();
+  const [s] = (await runOne(fig, [encFor('s0', absHugSpec())])).screens;
+  assert.deepEqual(s.errors, []);
+  const N = byVd(page(fig).children[0]);
+  const log = fig._log, id = (o) => N[o].id;
+  const lastAppend = log.map((x) => x[0]).lastIndexOf('append');
+  const after = log.map((x, i) => [x, i]).filter(([, i]) => i > lastAppend);
+  const absAt = after.filter(([x]) => x[0] === 'layoutPositioning' && x[2] === 'ABSOLUTE').map(([, i]) => i);
+  const firstPlace = Math.min(...after.filter(([x]) => x[0] === 'constraints' || x[0] === 'pos').map(([, i]) => i));
+  assert.ok(absAt.length >= 5, 'g0, n.2, n.2.0.1 and both overlays go ABSOLUTE');
+  assert.ok(Math.max(...absAt) < firstPlace, 'every ABSOLUTE before the first position or constraint');
+  const at = (k, o) => log.findIndex((x, i) => i > lastAppend && x[0] === k && x[1] === id(o));
+  for (const o of ['n.2.0#stroke', 'n.2.0.1']) assert.ok(at('constraints', o) < at('constraints', 'n.2'), `${o} is placed before its ancestor n.2`);
+  assert.ok(at('pos', 'n.2.0.0') < at('pos', 'n.2'), 'the transform below n.2 is set before n.2 is positioned');
+  // the overlay is appended to its cell already at 0.01 x 0.01, not at createFrame's 100 x 100
+  for (const o of ['n.0#stroke', 'n.2.0#stroke']) {
+    const ap = log.find((x) => x[0] === 'append' && x[2] === id(o) && x[1] !== page(fig).id);
+    assert.deepEqual(ap.slice(3), [0.01, 0.01], `${o} joins its cell at 0.01 px`);
+  }
+  assert.deepEqual([N['n.2'].x, N['n.2'].y], [16, 188]);
+  assert.deepEqual(N['n.2'].constraints, { horizontal: 'STRETCH', vertical: 'MAX' });
+  assert.deepEqual([N['n.2.0#stroke'].width, N['n.2.0#stroke'].height], [272, 37]);
+});

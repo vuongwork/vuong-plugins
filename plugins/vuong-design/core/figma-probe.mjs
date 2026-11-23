@@ -182,13 +182,16 @@ export function readFacts(result, measured = null) {
   const c = (result && result.cases) || {};
   const f = { ...DEFAULT_FACTS, shrinkFill: { ...DEFAULT_FACTS.shrinkFill }, measured };
 
-  // lh: 15 px text, line-height 17.4 (1 line) and 21.75 (3 lines).
-  //  keep  : lineHeight.value ~ 17.4 (+-0.05) and heights ~ 17.4 / 65.25 (+-0.05 / +-0.15)
-  //  floor : h3 ~ 63 (3 x floor(21.75) = 21) ; round (anything else): e.g. h3 ~ 66 (3 x 22)
+  // lh: 15 px text, line-height 17.4 (1 line) and 21.75 (3 lines). The decision uses the stored value (v), because the
+  //  text box height is ceil of the line-height total either way (ceil(17.4) = 18, ceil(3 x 21.75) = 66), which
+  //  figmaTextBox already models, so h alone cannot tell keep from round.
+  //  keep  : v1 ~ 17.4 and v3 ~ 21.75 (+-0.05 each; Figma stores 17.4 as a float32, 17.39999962)
+  //  floor : v3 ~ 21 (+-0.05), the stored value was rounded down
+  //  round : anything else (stored 17 / 22, per-line rounding)
   if (has(c.lh, 'v1', 'h1', 'v3', 'h3')) {
-    const { v1, h1, h3 } = c.lh;
-    if (near(v1, 17.4, 0.05) && near(h1, 17.4, 0.05) && near(h3, 65.25, 0.15)) f.lineHeightFrac = 'keep';
-    else if (near(h3, 63, 0.15)) f.lineHeightFrac = 'floor';
+    const { v1, v3 } = c.lh;
+    if (near(v1, 17.4, 0.05) && near(v3, 21.75, 0.05)) f.lineHeightFrac = 'keep';
+    else if (near(v3, 21, 0.05)) f.lineHeightFrac = 'floor';
     else f.lineHeightFrac = 'round';
   }
 

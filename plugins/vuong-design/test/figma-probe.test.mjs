@@ -12,7 +12,7 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const base = () => ({
   errors: [],
   cases: {
-    lh: { v1: 17.4, h1: 17.4, v3: 21.75, h3: 65.25 },
+    lh: { v1: 17.4, h1: 18, v3: 21.75, h3: 66 },
     tb: { w0: 80.3, w: 87, chars: 13, ls: 0.5, h: 18.15 },
     scale: { x: 16, w: 144 },
     zero: { ax: 160, lx: 160, rr: 160.01, arr: 160.01 },
@@ -42,6 +42,23 @@ test('readFacts: lineHeightFrac keep / round / floor', () => {
   assert.equal(readFacts(base()).lineHeightFrac, 'keep');
   assert.equal(readFacts(withCase('lh', { v1: 17, h1: 17, v3: 22, h3: 66 })).lineHeightFrac, 'round');
   assert.equal(readFacts(withCase('lh', { v1: 17, h1: 17, v3: 21, h3: 63 })).lineHeightFrac, 'floor');
+});
+
+test('readFacts: real Figma result (2026-11-23) gives keep for line height and the default facts', () => {
+  const real = {
+    cases: {
+      lh: { v1: 17.399999618530273, h1: 18, v3: 21.75, h3: 66 },
+      tb: { w0: 96, w: 102, chars: 13, ls: 0.5, h: 18 },
+      scale: { x: 16, w: 144 },
+      zero: { ax: 160, lx: 160, rr: 160.00999450683594, arr: 160.0159999988973 },
+      hug: { w0: 100, w: 200, x: 50, cw: 100 },
+      overlay: { w1: 300, h1: 30, w4: 300, h4: 30, ow: 300, oh: 30 },
+      shrink: { a240: 180, a360: 180, b240: 208, b360: 328, bt240: 208, bt360: 328 },
+      base: { b1: 1001.6176288276375, b2: 1002.009793793132 },
+    },
+    errors: [],
+  };
+  assert.deepEqual(readFacts(real, '2026-11-23'), { ...DEFAULT_FACTS, measured: '2026-11-23' });
 });
 
 test('readFacts: textBox ceil iff width equals figmaTextBox of the unrounded width', () => {

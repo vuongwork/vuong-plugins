@@ -145,3 +145,20 @@ What is left after (b) (1 root, 1 approval):
 - To check in real Figma (plan 3): R47 SCALE is relative to the parent frame, CSS % to the containing block's padding box (equal here: no border, parent = containing block; otherwise the fit fails and fixed constraints stand in, visibly); the `left: 52%` badge and `left: 58%` / `55%` markers hang from zero-width SCALE anchor frames (Figma's minimum size is 0.01).
 
 Mutations (`--mutate`, full corpus, after round 10, about 21 min): 221 caught, 0 missed, 104 skipped (no candidate; the corpus has no inline svg or image of any size, so svgLarge and imageLarge skip even with the M-f fallback to the largest one; they are covered by tests).
+
+## Figma facts
+
+`core/figma-probe.mjs` builds a probe (`probePayload()`, plain JS for the Figma MCP `use_figma` tool, 6.7 KB, one call) that runs on the page `_vd-probe`. `readFacts` turns the measured numbers into `core/figma-facts.json`, which `loadFacts()` reads (missing file: the defaults of `figma-model.mjs`). Measured 2026-11-23 on a Figma Pro file, no errors.
+
+| Case | Measured (px unless noted) | Fact |
+|---|---|---|
+| `lh` (15 px text) | stored line height 17.4 px and 21.75 px (kept, not rounded); box height 18 px (1 line), 66 px (3 lines) = ceil of 17.4 px and of 3 x 21.75 = 65.25 px | `lineHeightFrac: keep` |
+| `tb` (13 chars, letter-spacing 0.5 px) | width 96 px at 0 px, 102 px at 0.5 px; figmaTextBox gives ceil(96 + 6.5 - 0.5) = 102 px | `textBox: ceil` |
+| `scale` (200 to 320 px, padding 10 px, stroke 2 px) | child x 16 px, width 144 px (frame basis would give 144 px, padded area 150 px) | `scaleBasis: frame` |
+| `zero` (0.01 px anchor, 200 to 320 px) | anchor x 160 px; left child x 160 px; right child right edge 160.01 px vs anchor right edge 160.016 px | `zeroWidthAnchor: ok` |
+| `hug` (content 100 to 200 px) | parent width 100 px to 200 px; SCALE child x 50 px, width 100 px | `scaleInHug: ok` |
+| `overlay` (stroke 1 to 4 px) | cell 300 x 30 px before and after; overlay 300 x 30 px | `strokeOverlay: ok` |
+| `shrink` (row 240 to 360 px, avatar 32 px) | FILL block with maxWidth 180 px: 180 px and 180 px; grow block: 208 px and 328 px, its text 208 px and 328 px | `shrinkFill: { maxWidth: ok, growText: ok }` |
+| `base` (22 px and 12.5 px text) | derived baselines 1001.62 px and 1002.01 px, offset 0.39 px (<= 0.5 px) | `baseline: ok` |
+
+Every fact matches the current assumptions, so nothing in the model changes; the numbers are recorded so a later Figma change shows up by re-running the probe.

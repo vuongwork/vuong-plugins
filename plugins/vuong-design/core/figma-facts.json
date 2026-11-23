@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "measured": "2026-11-23",
+  "lineHeightFrac": "keep",
+  "textBox": "ceil",
+  "scaleBasis": "frame",
+  "zeroWidthAnchor": "ok",
+  "scaleInHug": "ok",
+  "strokeOverlay": "ok",
+  "shrinkFill": {
+    "maxWidth": "ok",
+    "growText": "ok"
+  },
+  "baseline": "ok"
+}

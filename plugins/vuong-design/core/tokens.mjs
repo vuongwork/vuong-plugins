@@ -34,6 +34,20 @@
 //  - map: { [useKey]: token path } for every use with a token: the role token when the use's role has one and the
 //    use's value is the role's value, else the primitive (a use never resolves to a token of another value).
 //    useKey = `${screen}|${node}|${cat}|${prop}` plus `|${run}` when the use has a run.
+//  - tokenMap(inv, tokens, entries = [], names = {}) -> { [screen]: { [node]: { [prop]: token path } } } (plan 3, Task 3):
+//    the map above grouped per screen and node, for binding Figma variables. Paths are dot paths of tokens.json
+//    (`role.text-muted`, `primitive.color.c03`, renames applied). Keys of `prop` are the inventory Use.prop names:
+//      color: bg, borderT, borderR, borderB, borderL, color, fill, stroke; space: paddingT, paddingR, paddingB, paddingL,
+//      gap, counterGap; size: width, height; radius: radiusTL, radiusTR, radiusBR, radiusBL; border: borderT, borderR,
+//      borderB, borderL (stroke width; the same key as the colour of that side's border: a width and a colour of one
+//      side collide, so border widths are keyed `border-width-T` ... `border-width-L`); type: `type` (Use.prop 'text');
+//      shadow: shadow; opacity: opacity; icon: width, height, fontSize (icon width / height are keyed `icon-width`,
+//      `icon-height`, `icon-fontSize` so they do not collide with frame size).
+//    A use with a run (text colour, type) whose node has several runs for that prop is keyed `<prop>|<run>`
+//    (`type|0`, `color|2`); with a single run it is keyed plain (`type`, `color`).
+//    Left out: uses without a token (unparsed, noise, space-between gap) and uses an 'ask' entry covers (the value
+//    stays the source value, the design system does not apply it). tokenMap rebuilds the tokens with buildTokens
+//    (same inv, entries, names) and throws when `tokens` differ from that, so the paths always exist in `tokens`.
 //  - names (vd-names.json, names-file.mjs): { old path: new path } applied after naming; aliases follow. Errors
 //    throw (one Error listing them all); warnings (RENAME_NAMED, NAME_UNKNOWN) are returned.
 //  - css: ':root {' primitives first, then roles ('--role-<name>: var(--<primitive>)'), in token order. Variable
@@ -70,10 +84,10 @@ export const useKey = (u) => `${u.screen}|${u.node}|${u.cat}|${u.prop}${u.run !=
 
 // ---------------- normalised values ----------------
 
-function entryIndex(entries) {
+function entryIndex(entries, statuses = ['auto', 'answered']) {
   const idx = new Map();
   for (const e of entries || []) {
-    if (e.status !== 'auto' && e.status !== 'answered') continue;
+    if (!statuses.includes(e.status)) continue;
     for (const n of e.nodes || []) {
       idx.set(JSON.stringify([n.screen, n.node, n.run ?? null, e.cat, e.prop, e.role, e.from]), e);
     }
@@ -177,6 +191,36 @@ export function roleBase(role) {
 
 const CAT_ORDER = ['color', 'space', 'size', 'radius', 'border', 'shadow', 'opacity', 'font.family', 'font.size', 'font.weight',
   'font.lineHeight', 'font.letterSpacing', 'typography'];
+
+// per-node token map (see the header); `tokens` must be the tokens built from the same inv, entries and names
+export function tokenMap(inv, tokens, entries = [], names = {}) {
+  const built = buildTokens(inv, entries, names);
+  if (JSON.stringify(built.tokens) !== JSON.stringify(tokens)) throw new Error('tokenMap: tokens do not come from this inventory, entries and names');
+  const ask = entryIndex(entries, ['ask']);
+  const asked = (u) => {
+    const look = (prop, run, from) => ask.has(JSON.stringify([u.screen, u.node, run ?? null, u.cat, prop, u.role, from]));
+    if (u.cat === 'type') return !!u.value && (look('fontSize', u.run, u.value.size) || look('lineHeight', undefined, u.value.lineHeight));
+    return look(u.prop, u.cat === 'color' ? u.run : undefined, u.value);
+  };
+  const usable = (inv.uses || []).filter((u) => built.map[useKey(u)] !== undefined && !asked(u));
+  const runs = new Map(); // node + key -> distinct runs
+  const baseKey = (u) => (u.cat === 'type' ? 'type' : u.cat === 'border' ? `border-width-${u.prop.slice(6)}`
+    : u.cat === 'icon' ? `icon-${u.prop}` : u.prop);
+  for (const u of usable) if (u.run !== undefined) {
+    const k = JSON.stringify([u.screen, u.node, baseKey(u)]);
+    (runs.get(k) || runs.set(k, new Set()).get(k)).add(u.run);
+  }
+  const out = {};
+  for (const u of usable) {
+    let key = baseKey(u);
+    if (u.run !== undefined && runs.get(JSON.stringify([u.screen, u.node, key])).size > 1) key += `|${u.run}`;
+    const s = (out[u.screen] ||= {}), n = (s[u.node] ||= {});
+    n[key] = built.map[useKey(u)];
+  }
+  // sorted at every level
+  const sort = (o) => Object.fromEntries(Object.keys(o).sort(cmpStr).map((k) => [k, typeof o[k] === 'object' ? sort(o[k]) : o[k]]));
+  return sort(out);
+}
 
 export function buildTokens(inv, entries = [], names = {}) {
   const idx = entryIndex(entries);

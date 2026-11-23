@@ -16,10 +16,11 @@
 //   with --mutate the mutations get the norm too: normSilent / normWrongValue) -> buildTokens(names) -> coverage.
 // Writes into --out (corpus mode: into <out>/<file stem>/, one design system per HTML file; report.json and
 // report.html cover all files, as layout.mjs): everything layout.mjs writes (ir.json, spec-<id>.json, report.json,
-// report.html), plus tokens.json (DTCG), tokens.css, normalisation.json ({ entries, counts, unparsed, stale, rules }),
+// report.html), plus tokens.json (DTCG), tokens.css, token-map.json (per screen and node: property -> token path, see
+// tokenMap in tokens.mjs), normalisation.json ({ entries, counts, unparsed, stale, rules }),
 // questions.json (normalize questions, then the §8.4 project confirmations), vd-rules.draft.json (rulesTemplate of the
 // open questions), coverage.json, spec-norm-<id>.json (the target spec of each screen, compact JSON) and
-// design-system.html. tokens.json, tokens.css, normalisation.json, questions.json, vd-rules.draft.json and
+// design-system.html. tokens.json, tokens.css, token-map.json, normalisation.json, questions.json, vd-rules.draft.json and
 // coverage.json are deterministic (no clock; the order of screens does not matter).
 // screens[i].darkMode (coverage, §8.4) = the page CSS has a prefers-color-scheme media query: the HTML file's text and
 // the local stylesheets it links (<link rel="stylesheet" href> relative to the file; remote ones are not read).
@@ -36,7 +37,7 @@ import { normalize } from './normalize.mjs';
 import { applyNorm } from './apply-norm.mjs';
 import { readRules, rulesTemplate } from './rules-file.mjs';
 import { readNames } from './names-file.mjs';
-import { buildTokens } from './tokens.mjs';
+import { buildTokens, tokenMap } from './tokens.mjs';
 import { coverage, loadChecklist, projectQuestions } from './coverage.mjs';
 import { renderDsReport, typeSamples } from './ds-report.mjs';
 import { specJson } from './pipeline.mjs';
@@ -136,6 +137,7 @@ export const DS_EXT = {
     for (const e of res.screens) writeFileSync(join(dir, `spec-norm-${safe(e.report.id)}.json`), specJson(e.target ? e.target.spec : e.modelled.spec));
     writeFileSync(join(dir, 'tokens.json'), json(built.tokens));
     writeFileSync(join(dir, 'tokens.css'), built.css);
+    writeFileSync(join(dir, 'token-map.json'), json(tokenMap(ds.inv, built.tokens, norm.entries, state.names)));
     writeFileSync(join(dir, 'normalisation.json'), json({ entries: norm.entries, counts: norm.counts, unparsed: norm.unparsed, stale: ds.stale, ...(built.warnings && built.warnings.length ? { warnings: built.warnings } : {}) }));
     writeFileSync(join(dir, 'questions.json'), json(questions));
     writeFileSync(join(dir, 'vd-rules.draft.json'), json(draft));

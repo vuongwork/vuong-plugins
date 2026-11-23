@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { main, designSystem, hasDarkMode, DS_EXT } from '../core/ds.mjs';
 import { main as layoutMain, parseCli } from '../core/layout.mjs';
 import { readRules } from '../core/rules-file.mjs';
+import { tokenMap } from '../core/tokens.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIX = join(HERE, 'fixtures');
@@ -67,7 +68,7 @@ test('hasDarkMode: a prefers-color-scheme: dark media query in the page CSS or a
 
 // ---------------- CLI on a two-screen fixture ----------------
 
-const DS_FILES = ['tokens.json', 'tokens.css', 'normalisation.json', 'questions.json', 'vd-rules.draft.json', 'coverage.json', 'design-system.html', 'spec-norm-s0.json', 'spec-norm-s1.json'];
+const DS_FILES = ['tokens.json', 'tokens.css', 'normalisation.json', 'questions.json', 'vd-rules.draft.json', 'coverage.json', 'token-map.json', 'design-system.html', 'spec-norm-s0.json', 'spec-norm-s1.json'];
 
 test('CLI without a rules file: every question asks, the target spec is the modelled spec, plan-1 numbers unchanged', { skip }, async () => {
   const cwd = tmp(), out = join(cwd, 'ds'), outL = join(cwd, 'layout');
@@ -144,6 +145,12 @@ test('deterministic: reversing the screens gives byte-identical tokens and norma
   assert.equal(norm(a), readFileSync(join(dir, 'normalisation.json'), 'utf8'));
   assert.equal(`${JSON.stringify(a.built.tokens, null, 1)}\n`, readFileSync(join(dir, 'tokens.json'), 'utf8'));
   assert.equal(a.built.css, readFileSync(join(dir, 'tokens.css'), 'utf8'));
+  // token-map.json: deterministic (reversed screens, same bytes), equal to tokenMap of the same design system
+  const tmJson = (ds) => `${JSON.stringify(tokenMap(ds.inv, ds.built.tokens, ds.norm.entries), null, 1)}
+`;
+  assert.equal(tmJson(a), tmJson(b));
+  assert.equal(tmJson(a), readFileSync(join(dir, 'token-map.json'), 'utf8'));
+  assert.deepEqual(Object.keys(readJson(dir, 'token-map.json')).length > 0, true);
   assert.ok(q.lines.some((l) => /^ds-mini\.html: \d+ auto, \d+ answered, \d+ asked; 0 unexplained norm root/.test(l)), q.lines.join('\n'));
   assert.ok(readdirSync(out).every((f) => ['ds-mini', 'capture-basic', 'report.json', 'report.html'].includes(f)), readdirSync(out).join());
   rmSync(cwd, { recursive: true, force: true });

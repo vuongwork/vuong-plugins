@@ -74,6 +74,7 @@ Outputs in `<out>` (or `<out>/<file stem>/`), in addition to everything `layout.
 | File | Content |
 |---|---|
 | `tokens.json` | W3C DTCG tokens, three tiers (primitive, role, component: empty until plan 3), values after normalisation |
+| `token-map.json` | per screen and node, the token path each property uses (`{ screen: { node: { prop: 'role.text-muted' } } }`): the role token when the use has one, else the primitive; uses an unanswered question leaves at the source value are left out; for binding Figma variables |
 | `tokens.css` | `:root` custom properties: primitives, then `--role-*` aliases |
 | `normalisation.json` | `entries` (node, prop, from, to, reason code, status auto / answered / ask, proposal, question), `counts` of kept decisions per code, `unparsed`, `stale` answers |
 | `questions.json` | the normalisation questions (project questions, group questions) and the §8.4 project confirmations, answered or not |
@@ -82,7 +83,7 @@ Outputs in `<out>` (or `<out>/<file stem>/`), in addition to everything `layout.
 | `spec-norm-<id>.json` | the target spec of each screen (the modelled spec with the applied entries; equal to `spec-<id>.json` when nothing applies) |
 | `design-system.html` | the visual proposal: verdict, How to read, questions with their JSON, colours, spacing, radius, type, shadows, changes (source vs norm crops), coverage |
 
-`tokens.json`, `tokens.css`, `normalisation.json`, `questions.json`, `vd-rules.draft.json` and `coverage.json` are deterministic (no clock; the order of screens does not matter).
+`tokens.json`, `tokens.css`, `token-map.json`, `normalisation.json`, `questions.json`, `vd-rules.draft.json` and `coverage.json` are deterministic (no clock; the order of screens does not matter).
 
 ## Acceptance
 

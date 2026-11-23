@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildTokens, parseShadow, roleBase } from '../core/tokens.mjs';
+import { buildTokens, tokenMap, parseShadow, roleBase } from '../core/tokens.mjs';
 import { readNames, checkPath } from '../core/names-file.mjs';
 
 // Hand-built inventory uses (the shape inventory.mjs produces).
@@ -255,4 +255,45 @@ test('m5: distinct values always get distinct primitive names (12 vs 12.004, flo
   assert.ok(names.includes('12_004'), JSON.stringify(names));
   const again = buildTokens({ uses: [u('0.5', 16), u('0.4', 22.03 - 10.01), u('0.3', 12.02), u('0.2', 12.004), u('0.1', 12)], vars: {} }, []);
   assert.deepEqual(Object.keys(again.tokens.primitive.space).sort(), names);
+});
+
+test('tokenMap: per screen and node, role path when the role has a token, else primitive; type keyed `type`; ask uses left out', () => {
+  const inv = fixture();
+  const { tokens, map } = buildTokens(inv, entries);
+  const tm = tokenMap(inv, tokens, entries);
+  assert.equal(tm.s1['0.0'].borderT, 'role.line');
+  assert.equal(tm.s1['0.1'].bg, 'role.line');
+  assert.equal(tm.s1['0.2.0'].bg, 'role.chip-bg');
+  assert.match(tm.s1['0.2.2'].bg, /^primitive\.color\.c\d+$/); // role has a token, but the use is off-majority
+  assert.match(tm.s1['0.0.0'].color, /^primitive\.color\.c\d+$/); // single run: no run suffix on colour
+  assert.equal(tm.s1['0.0.0'].type, 'primitive.typography.t16-500');
+  assert.equal(tm.s1['0.0.1'].type, 'primitive.typography.t14-400');
+  assert.equal(tm.s1['0.3'].paddingT, 'role.card-padding'); // 13 -> 12 auto: applied
+  assert.equal(tm.s1['0.4'], undefined); // 14 asked, not applied: left out
+  assert.equal(tm.s1['0.2'], undefined); // space-between gap: no token
+  assert.equal(tm.s1['0.6'].opacity, 'primitive.opacity.50');
+  // every entry resolves to a token that exists
+  const has = (p) => p.split('.').reduce((g, k) => g && g[k], tokens);
+  for (const n of Object.values(tm.s1)) for (const p of Object.values(n)) assert.ok(has(p) && has(p).$value !== undefined, p);
+  // agrees with buildTokens' own map for every use it keeps
+  for (const [k, v] of Object.entries(map)) if (!k.startsWith('s1|0.4|')) assert.ok(Object.values(tm.s1).some((n) => Object.values(n).includes(v)), k);
+});
+
+test('tokenMap: several runs of a node get a run index; renames are followed; byte-identical for reversed uses; tokens unchanged', () => {
+  seq = 0;
+  const inv = { uses: [
+    type(16, 500, 24, 'p.a|d', { node: '1', run: 0 }), type(14, 400, 20, 'p.a|d', { node: '1', run: 2 }),
+    use('color', 'color', '#111111', 'p.a|d', { node: '1', run: 0 }), use('color', 'color', '#222222', 'p.a|d', { node: '1', run: 2 }),
+    use('color', 'bg', '#333333', 'p.a|d', { node: '2' }),
+  ], vars: {} };
+  const names = { 'primitive.color.c03': 'primitive.color.ink' };
+  const before = JSON.stringify(buildTokens(inv, [], names).tokens);
+  const tm = tokenMap(inv, buildTokens(inv, [], names).tokens, [], names);
+  assert.deepEqual(Object.keys(tm['s1']['1']).sort(), ['color|0', 'color|2', 'type|0', 'type|2']);
+  assert.equal(tm.s1['1']['type|2'], 'role.a-text'); // role majority (tie: first path)
+  assert.equal(tm.s1['1']['type|0'], 'primitive.typography.t16-500');
+  assert.ok(Object.values(tm.s1).flatMap((n) => Object.values(n)).includes('primitive.color.ink'));
+  const rev = { uses: [...inv.uses].reverse(), vars: {} };
+  assert.equal(JSON.stringify(tokenMap(rev, buildTokens(rev, [], names).tokens, [], names)), JSON.stringify(tm));
+  assert.equal(JSON.stringify(buildTokens(inv, [], names).tokens), before);
 });

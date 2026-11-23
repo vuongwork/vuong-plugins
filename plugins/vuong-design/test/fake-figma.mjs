@@ -15,6 +15,13 @@
 // ['append', parentId, childId], ['constraints', id], ['layoutPositioning', id, value]), figma._loads (font key -> n).
 // fonts: ['Family|Style', ...]; variables: names; textStyles / effectStyles: names; throwIf(op, node) -> true makes
 // that call throw (op: 'resize'), to test error isolation.
+// Variables and styles (plan 3 Task 6): figma.variables.createVariableCollection / createVariable / getLocalVariablesAsync /
+// getLocalVariableCollectionsAsync, figma.createTextStyle / createEffectStyle. It throws where real Figma rejects:
+// createVariable with an unknown type, a non-collection or a duplicate name in the collection; setValueForMode with an
+// unknown mode, a colour channel outside 0..1, a non-number FLOAT, an alias to a missing variable or of another type;
+// scopes outside VariableScope or of the wrong type; a text style font that is not loaded, a non-positive size, a line
+// height / letter spacing without a valid unit; an effect colour with a channel outside 0..1 or without `a`, an unknown type.
+// figma._collections lists the created collections.
 // ignore: property names silently ignored by the setter on created frames / texts / svg frames (readback diff test).
 
 export const DEFAULT_FONTS = ['Inter|Regular', 'Inter|Medium', 'Inter|Semi Bold', 'Inter|Bold',
@@ -54,6 +61,84 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
   const styles = (names, p) => names.map((name, i) => ({ id: `S:${p}${i},`, name }));
   const TS = styles(textStyles, 't'), ES = styles(effectStyles, 'e');
   const alias = (v) => ({ type: 'VARIABLE_ALIAS', id: v.id });
+
+  // ---- variables and styles ----
+  const COLLS = [];
+  const COLOR_SCOPES = ['ALL_SCOPES', 'ALL_FILLS', 'FRAME_FILL', 'SHAPE_FILL', 'TEXT_FILL', 'STROKE_COLOR', 'EFFECT_COLOR'];
+  const FLOAT_SCOPES = ['ALL_SCOPES', 'TEXT_CONTENT', 'CORNER_RADIUS', 'WIDTH_HEIGHT', 'GAP', 'STROKE_FLOAT', 'EFFECT_FLOAT', 'OPACITY', 'FONT_WEIGHT',
+    'FONT_SIZE', 'LINE_HEIGHT', 'LETTER_SPACING', 'PARAGRAPH_SPACING', 'PARAGRAPH_INDENT'];
+  const chan = (c, ks, what) => { for (const k of ks) if (!(typeof c[k] === 'number' && c[k] >= 0 && c[k] <= 1)) throw new Error(what + ' channel ' + k + ' must be a number in 0..1, got ' + c[k]); };
+  const unitVal = (v, units, what) => {
+    if (!v || !units.includes(v.unit)) throw new Error(what + ': bad unit ' + (v && v.unit));
+    if (v.unit !== 'AUTO' && !Number.isFinite(v.value)) throw new Error(what + ': value must be a number');
+    return Object.freeze({ ...v });
+  };
+  class Variable {
+    constructor(name, coll, type, id) {
+      this.id = id; this.name = name; this.variableCollectionId = coll.id; this.resolvedType = type;
+      this.description = ''; this._scopes = ['ALL_SCOPES']; this.valuesByMode = {};
+    }
+    get scopes() { return [...this._scopes]; }
+    set scopes(v) {
+      if (!Array.isArray(v)) throw new Error('scopes must be an array');
+      const ok = this.resolvedType === 'COLOR' ? COLOR_SCOPES : FLOAT_SCOPES;
+      for (const s of v) if (!ok.includes(s)) throw new Error('Scope ' + s + ' is not valid for ' + this.resolvedType);
+      this._scopes = [...v];
+    }
+    setValueForMode(modeId, value) {
+      const c = COLLS.find((x) => x.id === this.variableCollectionId);
+      if (!c || !c.modes.some((m) => m.modeId === modeId)) throw new Error('setValueForMode: unknown mode ' + modeId);
+      if (value && value.type === 'VARIABLE_ALIAS') {
+        const t = VARS.find((x) => x.id === value.id);
+        if (!t) throw new Error('setValueForMode: alias to a missing variable ' + value.id);
+        if (t.resolvedType !== this.resolvedType) throw new Error('setValueForMode: alias of another type');
+        if (t === this) throw new Error('setValueForMode: alias to itself');
+      } else if (this.resolvedType === 'COLOR') {
+        if (!value || typeof value !== 'object') throw new Error('COLOR value must be an object');
+        const ks = Object.keys(value);
+        if (ks.some((k) => !['r', 'g', 'b', 'a'].includes(k)) || !['r', 'g', 'b'].every((k) => ks.includes(k))) throw new Error('Invalid COLOR value: keys ' + ks.join(','));
+        chan(value, ks, 'COLOR');
+      } else if (this.resolvedType === 'FLOAT') {
+        if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('FLOAT value must be a finite number');
+      }
+      this.valuesByMode = { ...this.valuesByMode, [modeId]: value && typeof value === 'object' ? { ...value } : value };
+    }
+  }
+  class TextStyle {
+    constructor() {
+      this.id = `S:t${TS.length + 1000},`; this.type = 'TEXT'; this.name = 'Style'; this.description = ''; this._fn = { family: 'Inter', style: 'Regular' };
+      this._fs = 12; this._lh = { unit: 'AUTO' }; this._ls = { unit: 'PERCENT', value: 0 }; this._tc = 'ORIGINAL'; this._td = 'NONE';
+    }
+    get fontName() { return this._fn; }
+    set fontName(f) { if (!f || !loaded.has(fk(f))) throw new Error('Font "' + (f && fk(f)) + '" is not loaded: call figma.loadFontAsync first'); this._fn = { ...f }; }
+    get fontSize() { return this._fs; }
+    set fontSize(v) { if (!(typeof v === 'number' && v > 0)) throw new Error('fontSize must be > 0'); this._fs = v; }
+    get lineHeight() { return this._lh; }
+    set lineHeight(v) { this._lh = unitVal(v, ['PIXELS', 'PERCENT', 'AUTO'], 'lineHeight'); }
+    get letterSpacing() { return this._ls; }
+    set letterSpacing(v) { this._ls = unitVal(v, ['PIXELS', 'PERCENT'], 'letterSpacing'); }
+    get textCase() { return this._tc; }
+    set textCase(v) { if (!['ORIGINAL', 'UPPER', 'LOWER', 'TITLE', 'SMALL_CAPS', 'SMALL_CAPS_FORCED'].includes(v)) throw new Error('bad textCase ' + v); this._tc = v; }
+    get textDecoration() { return this._td; }
+    set textDecoration(v) { if (!['NONE', 'UNDERLINE', 'STRIKETHROUGH'].includes(v)) throw new Error('bad textDecoration ' + v); this._td = v; }
+  }
+  class EffectStyle {
+    constructor() { this.id = `S:e${ES.length + 1000},`; this.type = 'EFFECT'; this.name = 'Style'; this.description = ''; this._fx = []; }
+    get effects() { return this._fx; }
+    set effects(v) {
+      if (!Array.isArray(v)) throw new Error('effects must be an array');
+      for (const e of v) {
+        if (!['DROP_SHADOW', 'INNER_SHADOW'].includes(e.type)) throw new Error('bad effect type ' + e.type);
+        if (!e.color || Object.keys(e.color).sort().join() !== 'a,b,g,r') throw new Error('effect colour needs r, g, b, a');
+        chan(e.color, ['r', 'g', 'b', 'a'], 'effect colour');
+        if (!e.offset || !Number.isFinite(e.offset.x) || !Number.isFinite(e.offset.y)) throw new Error('effect offset needs x, y');
+        if (!(e.radius >= 0)) throw new Error('effect radius must be >= 0');
+        if (e.spread !== undefined && !Number.isFinite(e.spread)) throw new Error('effect spread must be a number');
+        if (e.blendMode !== undefined && e.blendMode !== 'NORMAL') throw new Error('blendMode ' + e.blendMode);
+      }
+      this._fx = v.map((e) => ({ ...e, color: { ...e.color }, offset: { ...e.offset } }));
+    }
+  }
 
   class Node {
     constructor(type) {
@@ -254,10 +339,27 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
       if (!avail.has(fk(f))) throw new Error('font not available: ' + fk(f));
       loaded.add(fk(f)); loads[fk(f)] = (loads[fk(f)] || 0) + 1;
     },
+    createTextStyle() { const t = new TextStyle(); TS.push(t); return t; },
+    createEffectStyle() { const t = new EffectStyle(); ES.push(t); return t; },
+    _collections: COLLS,
     async getLocalTextStylesAsync() { return [...TS]; },
     async getLocalEffectStylesAsync() { return [...ES]; },
     variables: {
       async getLocalVariablesAsync() { return [...VARS]; },
+      async getLocalVariableCollectionsAsync() { return [...COLLS]; },
+      createVariableCollection(name) {
+        const id = 'VariableCollectionId:' + (COLLS.length + 1);
+        const c = { id, name, modes: [{ modeId: id + ':0', name: 'Mode 1' }], defaultModeId: id + ':0', variableIds: [],
+          renameMode(modeId, n) { const m = c.modes.find((x) => x.modeId === modeId); if (!m) throw new Error('renameMode: unknown mode'); m.name = n; } };
+        COLLS.push(c); return c;
+      },
+      createVariable(name, collection, type) {
+        if (!collection || typeof collection !== 'object' || !COLLS.includes(collection)) throw new Error('createVariable: collection must be a VariableCollection');
+        if (!['COLOR', 'FLOAT', 'STRING', 'BOOLEAN'].includes(type)) throw new Error('createVariable: bad type ' + type);
+        if (!name || typeof name !== 'string') throw new Error('createVariable: name required');
+        if (VARS.some((v) => v.variableCollectionId === collection.id && v.name === name)) throw new Error('Duplicate variable name ' + name);
+        const v = new Variable(name, collection, type, 'VariableID:' + (VARS.length + 1000)); VARS.push(v); collection.variableIds.push(v.id); return v;
+      },
       setBoundVariableForPaint(p, field, v) {
         if (field !== 'color' || !VARS.includes(v)) throw new Error('setBoundVariableForPaint: bad args');
         return { ...p, boundVariables: { color: alias(v) } };

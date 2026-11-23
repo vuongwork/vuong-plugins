@@ -1,0 +1,267 @@
+// Fake Figma Plugin API for the builder runtime tests (plan 3 Task 5). It implements only what core/figma-runtime.js
+// uses. Boxes are the assigned x / y / width / height relative to the parent (no auto layout computation), so geometry
+// is not asserted here: real Figma checks it (Task 8). It throws where real Figma rejects a call and the builder could
+// get it wrong:
+//  - layoutSizingHorizontal / Vertical 'FILL' when the parent is not auto layout (a new node sits on the page, so
+//    also before appendChild); 'HUG' on a node that is neither an auto-layout frame nor text;
+//  - layoutPositioning 'ABSOLUTE' when the parent is not auto layout;
+//  - fontName / setRangeFontName with a font not loaded, characters while a font of the node is not loaded;
+//  - a SOLID paint whose color has a key other than r, g, b (e.g. `a`) or a channel outside 0..1, opacity outside 0..1;
+//  - loadFontAsync of a font that listAvailableFontsAsync does not list; setTextStyleIdAsync / setEffectStyleIdAsync
+//    with an unknown id; any use of a removed node; figma.notify (throws inside use_figma).
+// Real-Figma behaviours mimicked: created nodes start on the current page; createFrame starts white and clipping;
+// resize() on an auto-layout frame sets its layoutSizing to FIXED; fills / strokes getters return frozen copies.
+// makeFakeFigma({ fonts, variables, textStyles, effectStyles, throwIf, ignore, idPrefix, idStart }) -> figma, plus figma._log (ops in call order:
+// ['append', parentId, childId], ['constraints', id], ['layoutPositioning', id, value]), figma._loads (font key -> n).
+// fonts: ['Family|Style', ...]; variables: names; textStyles / effectStyles: names; throwIf(op, node) -> true makes
+// that call throw (op: 'resize'), to test error isolation.
+// ignore: property names silently ignored by the setter on created frames / texts / svg frames (readback diff test).
+
+export const DEFAULT_FONTS = ['Inter|Regular', 'Inter|Medium', 'Inter|Semi Bold', 'Inter|Bold',
+  ...['Regular', 'Medium', 'SemiBold', 'Bold', 'ExtraBold', 'Italic'].map((s) => 'Be Vietnam Pro|' + s)];
+
+const NUM_FIELDS = new Set(['width', 'height', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'itemSpacing',
+  'counterAxisSpacing', 'topLeftRadius', 'topRightRadius', 'bottomLeftRadius', 'bottomRightRadius', 'strokeWeight',
+  'strokeTopWeight', 'strokeRightWeight', 'strokeBottomWeight', 'strokeLeftWeight', 'opacity', 'fontSize', 'minWidth', 'maxWidth']);
+const SIDES = ['strokeTopWeight', 'strokeRightWeight', 'strokeBottomWeight', 'strokeLeftWeight'];
+const CORNERS = ['topLeftRadius', 'topRightRadius', 'bottomRightRadius', 'bottomLeftRadius'];
+const fk = (f) => f.family + '|' + f.style;
+
+function checkPaints(ps) {
+  if (!Array.isArray(ps)) throw new Error('paints must be an array');
+  for (const p of ps) {
+    if (p.type === 'SOLID') {
+      const ks = Object.keys(p.color || {});
+      if (ks.some((k) => !['r', 'g', 'b'].includes(k)) || ks.length !== 3) throw new Error('Invalid SOLID color: keys ' + ks.join(','));
+      for (const k of ks) if (!(p.color[k] >= 0 && p.color[k] <= 1)) throw new Error('Color channel out of range: ' + k + '=' + p.color[k]);
+    } else if (/^GRADIENT_/.test(p.type)) {
+      if (!Array.isArray(p.gradientTransform) || !Array.isArray(p.gradientStops)) throw new Error('bad gradient');
+      for (const s of p.gradientStops) for (const k of ['r', 'g', 'b', 'a']) if (!(s.color[k] >= 0 && s.color[k] <= 1)) throw new Error('bad stop');
+    } else if (p.type === 'IMAGE') { if (!p.imageHash) throw new Error('image without hash'); } else throw new Error('paint type ' + p.type);
+    if (p.opacity !== undefined && !(p.opacity >= 0 && p.opacity <= 1)) throw new Error('paint opacity out of range');
+  }
+  return Object.freeze(ps.map((p) => Object.freeze({ ...p })));
+}
+
+export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyles = [], effectStyles = [], throwIf = () => false, ignore = [], idPrefix = '1', idStart = 0 } = {}) {
+  let seq = idStart;
+  const nid = () => idPrefix + ':' + ++seq;
+  const MIXED = Symbol('mixed');
+  const log = [], loads = {}, loaded = new Set();
+  const avail = new Set(fonts);
+  const VARS = variables.map((name, i) => ({ id: 'VariableID:' + i, name }));
+  const styles = (names, p) => names.map((name, i) => ({ id: `S:${p}${i},`, name }));
+  const TS = styles(textStyles, 't'), ES = styles(effectStyles, 'e');
+  const alias = (v) => ({ type: 'VARIABLE_ALIAS', id: v.id });
+
+  class Node {
+    constructor(type) {
+      this.id = nid(); this.type = type; this.name = type; this.parent = null; this._kids = null; this._pd = {};
+      this.x = 0; this.y = 0; this.width = 100; this.height = 100; this.opacity = 1; this._removed = false;
+      this.boundVariables = {}; this._fills = []; this._strokes = []; this.constraints = { horizontal: 'MIN', vertical: 'MIN' };
+      this.layoutPositioning = 'AUTO';
+    }
+    _ok() { if (this._removed) throw new Error('The node with id ' + this.id + ' does not exist'); }
+    get removed() { return this._removed; }
+    get children() { this._ok(); return this._kids ? [...this._kids] : undefined; }
+    get fills() { return this._fills; }
+    set fills(v) { this._ok(); this._fills = checkPaints(v); }
+    get strokes() { return this._strokes; }
+    set strokes(v) { this._ok(); this._strokes = checkPaints(v); }
+    get constraints() { return this._c; }
+    set constraints(v) { this._ok(); this._c = { ...v }; if (this._born) log.push(['constraints', this.id]); }
+    get layoutPositioning() { return this._lp; }
+    set layoutPositioning(v) {
+      this._ok();
+      if (v === 'ABSOLUTE' && !isAL(this.parent)) throw new Error('layoutPositioning ABSOLUTE needs an auto-layout parent');
+      this._lp = v; if (this._born) log.push(['layoutPositioning', this.id, v]);
+    }
+    get layoutSizingHorizontal() { return this._lsh || 'FIXED'; }
+    set layoutSizingHorizontal(v) { this._sizing('_lsh', v); }
+    get layoutSizingVertical() { return this._lsv || 'FIXED'; }
+    set layoutSizingVertical(v) { this._sizing('_lsv', v); }
+    _sizing(k, v) {
+      this._ok();
+      if (v === 'FILL' && !(isAL(this.parent) && this._lp !== 'ABSOLUTE')) throw new Error('FILL can only be set on children of auto-layout frames');
+      if (v === 'HUG' && !(isAL(this) || this.type === 'TEXT')) throw new Error('HUG can only be set on auto-layout frames and text');
+      if (!['FILL', 'HUG', 'FIXED'].includes(v)) throw new Error('bad sizing ' + v);
+      this[k] = v;
+    }
+    get minWidth() { return this._minW === undefined ? null : this._minW; }
+    set minWidth(v) { this._ok(); this._minW = v; }
+    get maxWidth() { return this._maxW === undefined ? null : this._maxW; }
+    set maxWidth(v) { this._ok(); this._maxW = v; }
+    get absoluteBoundingBox() {
+      let x = 0, y = 0;
+      for (let n = this; n && n.type !== 'PAGE'; n = n.parent) { x += n.x; y += n.y; }
+      return { x, y, width: this.width, height: this.height };
+    }
+    set relativeTransform(m) { this._ok(); this._rt = m; this.x = m[0][2]; this.y = m[1][2]; }
+    get relativeTransform() { return this._rt || [[1, 0, this.x], [0, 1, this.y]]; }
+    resize(w, h) {
+      this._ok();
+      if (throwIf('resize', this)) throw new Error('fake failure on resize');
+      if (!(w >= 0.01 && h >= 0.01)) throw new Error('resize: size must be >= 0.01');
+      this.width = w; this.height = h;
+      if (isAL(this)) { this._lsh = 'FIXED'; this._lsv = 'FIXED'; }
+    }
+    remove() { this._ok(); if (this.parent) this.parent._kids.splice(this.parent._kids.indexOf(this), 1); this.parent = null; this._removed = true; }
+    setSharedPluginData(ns, k, v) { this._ok(); this._pd[ns + '/' + k] = String(v); }
+    getSharedPluginData(ns, k) { this._ok(); return this._pd[ns + '/' + k] || ''; }
+    setBoundVariable(field, v) {
+      this._ok();
+      if (!NUM_FIELDS.has(field)) throw new Error('setBoundVariable: field ' + field + ' is not bindable');
+      if (!v || !VARS.includes(v)) throw new Error('setBoundVariable: unknown variable');
+      this.boundVariables = { ...this.boundVariables, [field]: alias(v) };
+    }
+    findAll(fn) {
+      const out = [];
+      const w = (n) => { for (const c of n._kids || []) { if (fn(c)) out.push(c); w(c); } };
+      w(this); return out;
+    }
+  }
+  const isAL = (n) => !!n && n.type === 'FRAME' && n.layoutMode !== 'NONE';
+
+  class Parent extends Node {
+    constructor(type) { super(type); this._kids = []; }
+    appendChild(c) {
+      this._ok(); c._ok();
+      if (c.parent) c.parent._kids.splice(c.parent._kids.indexOf(c), 1);
+      this._kids.push(c); c.parent = this; log.push(['append', this.id, c.id]);
+    }
+  }
+
+  class Frame extends Parent {
+    constructor() {
+      super('FRAME');
+      this.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }]; this.clipsContent = true; this.layoutMode = 'NONE';
+      this.paddingTop = this.paddingRight = this.paddingBottom = this.paddingLeft = 0; this.itemSpacing = 0; this.counterAxisSpacing = 0;
+      this.primaryAxisAlignItems = 'MIN'; this.counterAxisAlignItems = 'MIN'; this.layoutWrap = 'NO_WRAP'; this.strokesIncludedInLayout = true;
+      this.strokeAlign = 'INSIDE'; this.dashPattern = []; this.effects = [];
+      for (const k of CORNERS) this[k] = 0;
+      for (const k of SIDES) this[k] = 1;
+      this._born = true;
+    }
+    get cornerRadius() { const v = CORNERS.map((k) => this[k]); return v.every((x) => x === v[0]) ? v[0] : MIXED; }
+    set cornerRadius(v) { for (const k of CORNERS) this[k] = v; }
+    get strokeWeight() { const v = SIDES.map((k) => this[k]); return v.every((x) => x === v[0]) ? v[0] : MIXED; }
+    set strokeWeight(v) { for (const k of SIDES) this[k] = v; }
+    set effects(v) {
+      for (const e of v) for (const k of ['r', 'g', 'b', 'a']) if (!(e.color[k] >= 0 && e.color[k] <= 1)) throw new Error('bad effect colour');
+      this._fx = v;
+    }
+    get effects() { return this._fx; }
+    async setEffectStyleIdAsync(id) { this._ok(); if (!ES.find((s) => s.id === id)) throw new Error('unknown effect style'); this.effectStyleId = id; }
+  }
+
+  class Text extends Node {
+    constructor() {
+      super('TEXT');
+      this._chars = ''; this._st = []; this._base = { fontName: { family: 'Inter', style: 'Regular' }, fontSize: 12, fills: checkPaints([{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }]), textStyleId: '' };
+      this.textAutoResize = 'WIDTH_AND_HEIGHT'; this.textAlignHorizontal = 'LEFT'; this.textAlignVertical = 'TOP';
+      this.lineHeight = { unit: 'AUTO' }; this.letterSpacing = { unit: 'PERCENT', value: 0 }; this.textDecoration = 'NONE'; this.textCase = 'ORIGINAL';
+      this._ranges = []; this._born = true;
+    }
+    _get(k) {
+      if (!this._st.length) return this._base[k];
+      const v = this._st.map((s) => JSON.stringify(s[k]));
+      return v.every((x) => x === v[0]) ? this._st[0][k] : MIXED;
+    }
+    _set(k, v, s = 0, e = this._st.length) {
+      this._ok();
+      if (s < 0 || e > this._st.length || s >= e) { if (this._st.length || s !== 0) throw new Error(`range ${s}..${e} outside 0..${this._st.length}`); }
+      if (!this._st.length) { this._base = { ...this._base, [k]: v }; return; }
+      for (let i = s; i < e; i++) this._st[i] = { ...this._st[i], [k]: v };
+    }
+    _font(f) { if (!loaded.has(fk(f))) throw new Error('Font "' + fk(f) + '" is not loaded: call figma.loadFontAsync first'); }
+    get characters() { return this._chars; }
+    set characters(v) {
+      this._ok();
+      for (const s of this._st.length ? this._st : [this._base]) this._font(s.fontName);
+      const tpl = this._st[0] || this._base;
+      this._chars = String(v); this._st = [...this._chars].length ? Array.from({ length: this._chars.length }, () => ({ ...tpl })) : [];
+      if (!this._st.length) this._base = { ...tpl };
+    }
+    get fontName() { return this._get('fontName'); }
+    set fontName(f) { this._font(f); this._set('fontName', { ...f }); }
+    get fontSize() { return this._get('fontSize'); }
+    set fontSize(v) { this._set('fontSize', v); }
+    get fills() { return this._get('fills'); }
+    set fills(v) { this._set('fills', checkPaints(v)); }
+    get textStyleId() { return this._get('textStyleId'); }
+    async setTextStyleIdAsync(id) { if (!TS.find((s) => s.id === id)) throw new Error('unknown text style'); this._set('textStyleId', id); }
+    async setRangeTextStyleIdAsync(s, e, id) { if (!TS.find((x) => x.id === id)) throw new Error('unknown text style'); this._set('textStyleId', id, s, e); }
+    setRangeFontName(s, e, f) { this._font(f); this._set('fontName', { ...f }, s, e); }
+    setRangeFontSize(s, e, v) { this._set('fontSize', v, s, e); }
+    setRangeFills(s, e, v) { this._set('fills', checkPaints(v), s, e); }
+    setRangeLineHeight(s, e, v) { this._rng('lineHeight', s, e, v); }
+    setRangeLetterSpacing(s, e, v) { this._rng('letterSpacing', s, e, v); }
+    setRangeTextDecoration(s, e, v) { this._rng('textDecoration', s, e, v); }
+    setRangeTextCase(s, e, v) { this._rng('textCase', s, e, v); }
+    _rng(k, s, e, v) { this._ok(); if (s < 0 || e > this._chars.length || s >= e) throw new Error('bad range'); this._ranges.push([k, s, e, v]); }
+    getStyledTextSegments(fields) {
+      const out = [];
+      for (let i = 0; i < this._st.length; i++) {
+        const key = JSON.stringify(fields.map((f) => this._st[i][f]));
+        const last = out[out.length - 1];
+        if (last && last._k === key) { last.end = i + 1; last.characters += this._chars[i]; continue; }
+        const seg = { _k: key, start: i, end: i + 1, characters: this._chars[i] };
+        for (const f of fields) seg[f] = this._st[i][f];
+        out.push(seg);
+      }
+      return out.map(({ _k, ...s }) => s);
+    }
+  }
+
+  class Vector extends Node { constructor() { super('VECTOR'); this._born = true; } }
+
+  class Page extends Parent { constructor(name) { super('PAGE'); this.name = name; } }
+  const root = { children: [new Page('Page 1')] };
+  let current = root.children[0];
+  // ignore: property names whose setter is silently a no-op (an API that drops a setting), to test the readback diff
+  const born = (n) => {
+    for (const k of ignore) { const v = n[k]; Object.defineProperty(n, k, { get: () => v, set: () => {}, configurable: true }); }
+    current.appendChild(n); return n;
+  };
+
+  const figma = {
+    mixed: MIXED,
+    root,
+    get currentPage() { return current; },
+    async setCurrentPageAsync(p) { if (!root.children.includes(p)) throw new Error('not a page'); current = p; figma._pageSets++; },
+    _pageSets: 0,
+    createPage() { const p = new Page('Page ' + (root.children.length + 1)); root.children.push(p); return p; },
+    createFrame: () => born(new Frame()),
+    createText: () => born(new Text()),
+    createNodeFromSvg(svg) {
+      if (!/^<svg[\s>]/.test(svg) || /<invalid/.test(svg)) throw new Error('Failed to parse SVG');
+      const f = born(new Frame());
+      const num = (k) => { const m = new RegExp(`<svg[^>]*\\s${k}="([\\d.]+)"`).exec(svg); return m ? +m[1] : 24; };
+      f.width = num('width'); f.height = num('height');
+      const v = new Vector(); f.appendChild(v);
+      const col = (k) => { const m = new RegExp(`<g[^>]*\\s${k}="(#[0-9a-f]{6})"`).exec(svg); if (!m) return []; const x = parseInt(m[1].slice(1), 16); return [{ type: 'SOLID', color: { r: (x >> 16 & 255) / 255, g: (x >> 8 & 255) / 255, b: (x & 255) / 255 } }]; };
+      v.fills = col('fill'); v.strokes = col('stroke');
+      return f;
+    },
+    createImage: (bytes) => ({ hash: 'img' + bytes.length }),
+    base64Decode: (s) => Uint8Array.from(Buffer.from(s, 'base64')),
+    async listAvailableFontsAsync() { return [...avail].map((k) => { const [family, style] = k.split('|'); return { fontName: { family, style } }; }); },
+    async loadFontAsync(f) {
+      if (!avail.has(fk(f))) throw new Error('font not available: ' + fk(f));
+      loaded.add(fk(f)); loads[fk(f)] = (loads[fk(f)] || 0) + 1;
+    },
+    async getLocalTextStylesAsync() { return [...TS]; },
+    async getLocalEffectStylesAsync() { return [...ES]; },
+    variables: {
+      async getLocalVariablesAsync() { return [...VARS]; },
+      setBoundVariableForPaint(p, field, v) {
+        if (field !== 'color' || !VARS.includes(v)) throw new Error('setBoundVariableForPaint: bad args');
+        return { ...p, boundVariables: { color: alias(v) } };
+      },
+    },
+    notify() { throw new Error('figma.notify is not available in use_figma'); },
+    _log: log,
+    _loads: loads,
+  };
+  return figma;
+}

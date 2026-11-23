@@ -192,4 +192,49 @@ Planora (18 screens, ds run with `vd-rules.json`, 2026-11-23; fixture `test/fixt
 | Token-map entries bound / not bound | 2785 / 1. A variable binds only when its value equals the spec value. The exception is pill corners (R70: radius at least half the smaller side, e.g. 999px or 50%): they bind to `radius.full` (9999 px), which Figma clamps to the same rendered radius. The 1 unbound entry is a `conflict` (two border sides with the same colour but different tokens; Figma has one stroke paint) |
 | Nodes with values the format cannot carry (`raw`) | 0 |
 
-The spike's format was about 8 KB per screen. The batch count will change once the real builder (Task 5, at most 10 KB) replaces the stand-in.
+The spike's format was about 8 KB per screen. The batch count will change once the real builder (Task 5, at most 14 KB) replaces the stand-in.
+
+## Figma runtime
+
+`core/figma-runtime.js` (plan 3 Task 5) is the builder that runs inside Figma: a batch's `code` is this file with its single `__DATA__` replaced by the batch data (`planBatches`). It runs as the code of `use_figma` (top-level await, top-level `return`, no fetch, no console, no `figma.notify`). It is tested on `test/fake-figma.mjs`, a fake Plugin API that throws on the misuses real Figma rejects (FILL outside auto layout, HUG on a node that cannot hug, text before its font is loaded, a paint colour with `a` or a channel above 1). The fake does not compute auto layout, so geometry is checked on real Figma (Task 8).
+
+Per batch: variables, text styles and effect styles are looked up once by name (`getLocalVariablesAsync`, `getLocalTextStylesAsync`, `getLocalEffectStylesAsync`). The page `D.page` (default `Screens`) is found or created, and `setCurrentPageAsync` is called once.
+
+Per node, in this order: create (frames, svg frames and overlays start with `fills = []`, `clipsContent = false`), paint (fills with bound paints, gradients, data-URI images, radius, strokes, shadows, effect style) or text (font, characters, props, text style, fill, then ranges), opacity, `appendChild`, auto layout then `strokesIncludedInLayout = false`, `resize`, sizing (FILL only in an auto-layout parent and not on absolute nodes; HUG only on auto-layout frames and text), min / max width, width / height bindings (FIXED axes), children, and last the stroke overlay. After the whole tree: `layoutPositioning = 'ABSOLUTE'`, position or `relativeTransform`, constraints. A node that throws is removed and listed in `errors`; its children are listed as `parent failed`; the rest of the screen is still built.
+
+- Fonts: the style weight comes from `listAvailableFontsAsync` style names (`Semi Bold` and `SemiBold` alike). An exact face is used when listed; otherwise the nearest weight of the family (same italic first), otherwise Inter. Every substitution is in `fontMissing`. Each face is loaded once.
+- Stroke overlay (`bd.o`, `paint.strokeOverlay`): the cell has no stroke; a last child frame named `stroke`, vd id `<o>#stroke`, carries the stroke (and its bindings) and the cell's radii, absolute, `STRETCH` / `STRETCH`, sized to the cell after the tree is built (figma-facts `strokeOverlay: ok`).
+- Plugin data (namespace `vd`): `id` on every built node (the spec id; `<o>#stroke` on overlays; svg vectors inside an icon have none), and `screen`, `file`, `sig` on the screen frame. `screen` / `file` are written when the frame is created, `sig` after the readback, so a frame without `sig` is an interrupted build.
+- Signature `vd/sig`: FNV-1a 32-bit (hex, 8 characters) over the UTF-16 units of one JSON array per node in pre-order, children included (svg vectors too): vd id, type, x, y (0 for the screen frame: moving it is not an edit), width, height (all rounded to 0.01), fills and strokes (solid as `#rrggbb[aa]`, other paints by type), font (`family style`, `M` when mixed), cornerRadius (the four corners when mixed), characters, fontSize, opacity, layoutMode, paddings, itemSpacing.
+- Rerun: frames with the same `vd/screen` and `vd/file` are looked up. If one has a `sig` that differs from its recomputed signature, it is kept untouched and the screen returns `edited: true` (unless `D.force` lists the screen). Otherwise they are removed and the screen is rebuilt at the old frame's x / y. A new screen goes at y 0, x = the right edge of the rightmost top-level node on the page + 80 (0 on an empty page).
+- Readback: boxes from `absoluteBoundingBox`, relative to the screen frame, at width A; then the frame is resized to width B (its vertical HUG is restored after `resize`), read again, and resized back to A. The result goes back through the AI, so it is compact: values equal to the encoding are not repeated.
+
+The runtime must stay at or below 14 KB (14 336 B, tested); it is 14.1 KB.
+
+BatchResult:
+```
+{ batch, page: name, pageId, screens: [{
+    screen, root: frame id, sig, edited?: true,             // edited: kept frame, nothing else is returned
+    nodes: [entry],                                         // one per id of ord(T), see below
+    fontMissing: [{ o, family, style, used }], errors: [{ o, msg }],
+    unbound?: [{ o, prop: bind code ('rn<i>.c' / 'rn<i>.ts' for runs), name, reason: 'missing-in-file' | 'bind-failed' }],
+    unsupported?: { [o]: { ...raw of the encoding, im?: an image source that could not be loaded } } }] }
+```
+- **Order** `ord(T)`: pre-order of the screen's encoded tree `T` (node, then its `k` in order); a node with `bd.o` is followed, after its whole subtree, by `<o>#stroke` (its overlay).
+- **entry** = `0` when the node is not in the result (failed, skipped or not read: see `errors`), else `[fid, A, dB?, d?]`:
+  - `fid`: a number N = the node id is `P:N` with `P` the prefix of `root` (`root.split(':')[0]`); a string = the full id when the prefix differs.
+  - `A = [x, y, w, h]` at width A. `dB` = B − A per value (rounded 0.01); `0` or absent = B equals A (it is written as `0` only when `d` follows).
+  - `d`: only the fields whose actual value, read from the node after building, differs from the encoded intent. Absent = all equal. An absent field of `d` = the actual value equals the encoded intent.
+- **Intent and `d` fields** (actual values are read from the node; the overlay `<o>#stroke` takes its intent from the cell `o`):
+  - `text`: characters; intent `tx` (glyph icon: `ic.g`). Text nodes only.
+  - `runs`: intent = the encoded runs expanded per character and merged: `[length, fontSize, font, fill, textStyle, variable]` with node values (fs default 12, font `D.F[f]`, fill `D.C[c]` or `#000000`, text style `D.S[ts]`, fill variable `D.V[v.c]`, '' when none), each `rn` entry overriding fs / f / c / ts, and its fill variable = `D.V[rn.v.c]` when the run sets `c` or `v.c`, else the node's. Fonts compare by family + weight + italic (style name parsed as at load). Actual = `getStyledTextSegments(fontSize, fontName, fills, textStyleId)`; on a difference `d.runs` = the actual list with font as `'Family Style'` (covers font, size, fill, text style and fill variables of text).
+  - `fills`: non-text. Intent `[D.C[bg]?, 'GRADIENT_LINEAR' | 'GRADIENT_RADIAL' per gr, 'IMAGE' if im]` (overlay `[]`); actual solid paints as `#rrggbb[aa]` (alpha = paint opacity), others by type.
+  - `strokes`: non-text. Intent `{ c: [D.C[bd.c]], w: [t, r, b, l] }` when `bd` without `o` (overlay: the cell's `bd`), else `null`; actual `{ c, w: per-side weights }` or `null`.
+  - `radius`: non-text. Intent `rd` as four corners (absent = `[0, 0, 0, 0]`; overlay = the cell's); actual the four corner radii.
+  - `es`: non-text. Intent `D.S[es]` or '' (overlay ''); actual effect style name or ''.
+  - `op`: intent `op` or 1 (overlay 1); actual opacity.
+  - `vars`: intent = `e.v` mapped to Figma fields (`bg` fills, `sc` strokes, `pt pr pb pl g cg` paddings / itemSpacing / counterAxisSpacing, `w h` width / height, `r0..r3` corners, `b0..b3` per-side stroke weights, `op` opacity, `fs` fontSize, `vf` / `vs` icon vector fill / stroke) with `D.V` names; text `c` is left to `runs`; with `bd.o` the `sc` / `b*` codes belong to the overlay (the overlay also takes `r*`). Actual = `boundVariables` entries with an id, `fills` / `strokes` = the variable of the first bound solid paint (non-text), `vf` / `vs` = the first bound vector paint inside an svg icon. On a difference `d.vars` = the whole actual map.
+  - `icon`: `0` when an svg icon has no child at all.
+  - Not compared: line height, letter spacing, decoration, case, alignment, autoresize, sizing, layout (geometry is checked through the boxes).
+
+Numbers are rounded to 0.01.

@@ -192,7 +192,7 @@ Planora (18 screens, ds run with `vd-rules.json`, 2026-11-23; fixture `test/fixt
 | Token-map entries bound / not bound | 2785 / 1. A variable binds only when its value equals the spec value. The exception is pill corners (R70: radius at least half the smaller side, e.g. 999px or 50%): they bind to `radius.full` (9999 px), which Figma clamps to the same rendered radius. The 1 unbound entry is a `conflict` (two border sides with the same colour but different tokens; Figma has one stroke paint) |
 | Nodes with values the format cannot carry (`raw`) | 0 |
 
-The spike's format was about 8 KB per screen. The batch count will change once the real builder (Task 5, at most 14 KB) replaces the stand-in.
+The spike's format was about 8 KB per screen. The batch count will change once the real builder (Task 5, at most 15 KB) replaces the stand-in.
 
 ## Figma runtime
 
@@ -206,15 +206,17 @@ Per node, in this order: create (frames, svg frames and overlays start with `fil
 - Stroke overlay (`bd.o`, `paint.strokeOverlay`): the cell has no stroke; a last child frame named `stroke`, vd id `<o>#stroke`, carries the stroke (and its bindings) and the cell's radii, absolute, `STRETCH` / `STRETCH`, sized to the cell after the tree is built (figma-facts `strokeOverlay: ok`).
 - Plugin data (namespace `vd`): `id` on every built node (the spec id; `<o>#stroke` on overlays; svg vectors inside an icon have none), and `screen`, `file`, `sig` on the screen frame. `screen` / `file` are written when the frame is created, `sig` after the readback, so a frame without `sig` is an interrupted build.
 - Signature `vd/sig`: FNV-1a 32-bit (hex, 8 characters) over the UTF-16 units of one JSON array per node in pre-order, children included (svg vectors too): vd id, type, x, y (0 for the screen frame: moving it is not an edit), width, height (all rounded to 0.01), fills and strokes (solid as `#rrggbb[aa]`, other paints by type), font (`family style`, `M` when mixed), cornerRadius (the four corners when mixed), characters, fontSize, opacity, layoutMode, paddings, itemSpacing.
-- Rerun: frames with the same `vd/screen` and `vd/file` are looked up. If one has a `sig` that differs from its recomputed signature, it is kept untouched and the screen returns `edited: true` (unless `D.force` lists the screen). Otherwise they are removed and the screen is rebuilt at the old frame's x / y. A new screen goes at y 0, x = the right edge of the rightmost top-level node on the page + 80 (0 on an empty page).
+- Rerun: frames with the same `vd/screen` and `vd/file` are looked up, in page order. Only the first one is the screen's frame; any further copies are listed in `extra` (ids) and never touched. If the first one has a `sig` that differs from its recomputed signature, it is kept untouched and the screen returns `edited: true` (unless `D.force` lists the screen). Otherwise the new frame is built at its x / y, and the old frame is removed only after the new one is complete (signature stored). A new screen goes at y 0, x = the right edge of the rightmost top-level node on the page + 80 (0 on an empty page).
+- Screen-level failure (anything that throws outside a node's own build, e.g. the readback resize): the half-built new frame is removed, the old frame stays, and the screen returns `{ screen, fontMissing, errors: [..., { o: root id, msg }] }`; the next screens of the batch are still built. A failed node lists itself, its descendants (`parent failed`) and every overlay `<o>#stroke` among them in `errors`.
 - Readback: boxes from `absoluteBoundingBox`, relative to the screen frame, at width A; then the frame is resized to width B (its vertical HUG is restored after `resize`), read again, and resized back to A. The result goes back through the AI, so it is compact: values equal to the encoding are not repeated.
 
-The runtime must stay at or below 14 KB (14 336 B, tested); it is 14.1 KB.
+The runtime must stay at or below 15 KB (15 360 B, tested).
 
 BatchResult:
 ```
 { batch, page: name, pageId, screens: [{
     screen, root: frame id, sig, edited?: true,             // edited: kept frame, nothing else is returned
+    extra?: [frame id],                                     // further copies of the screen's frame, left as they are
     nodes: [entry],                                         // one per id of ord(T), see below
     fontMissing: [{ o, family, style, used }], errors: [{ o, msg }],
     unbound?: [{ o, prop: bind code ('rn<i>.c' / 'rn<i>.ts' for runs), name, reason: 'missing-in-file' | 'bind-failed' }],
@@ -235,6 +237,7 @@ BatchResult:
   - `op`: intent `op` or 1 (overlay 1); actual opacity.
   - `vars`: intent = `e.v` mapped to Figma fields (`bg` fills, `sc` strokes, `pt pr pb pl g cg` paddings / itemSpacing / counterAxisSpacing, `w h` width / height, `r0..r3` corners, `b0..b3` per-side stroke weights, `op` opacity, `fs` fontSize, `vf` / `vs` icon vector fill / stroke) with `D.V` names; text `c` is left to `runs`; with `bd.o` the `sc` / `b*` codes belong to the overlay (the overlay also takes `r*`). Actual = `boundVariables` entries with an id, `fills` / `strokes` = the variable of the first bound solid paint (non-text), `vf` / `vs` = the first bound vector paint inside an svg icon. On a difference `d.vars` = the whole actual map.
   - `icon`: `0` when an svg icon has no child at all.
-  - Not compared: line height, letter spacing, decoration, case, alignment, autoresize, sizing, layout (geometry is checked through the boxes).
+  - Not compared: line height, letter spacing, decoration, case, alignment, autoresize, sizing, layout (geometry is checked through the boxes). Known limit of the check's layer 3 (paint / text style): a decoration, case or alignment that Figma drops is not reported.
+  - `boundVariables` values that are arrays (text fields of a TEXT node, e.g. `fontSize`, are a `VariableAlias[]`) are read from their first alias; `fills` / `strokes` are taken from the paints, not from `boundVariables`.
 
 Numbers are rounded to 0.01.

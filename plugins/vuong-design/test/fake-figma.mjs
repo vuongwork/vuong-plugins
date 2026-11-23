@@ -23,6 +23,7 @@ export const DEFAULT_FONTS = ['Inter|Regular', 'Inter|Medium', 'Inter|Semi Bold'
 const NUM_FIELDS = new Set(['width', 'height', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'itemSpacing',
   'counterAxisSpacing', 'topLeftRadius', 'topRightRadius', 'bottomLeftRadius', 'bottomRightRadius', 'strokeWeight',
   'strokeTopWeight', 'strokeRightWeight', 'strokeBottomWeight', 'strokeLeftWeight', 'opacity', 'fontSize', 'minWidth', 'maxWidth']);
+const TEXT_FIELDS = new Set(['fontSize', 'fontFamily', 'fontStyle', 'fontWeight', 'lineHeight', 'letterSpacing', 'paragraphSpacing', 'paragraphIndent']);
 const SIDES = ['strokeTopWeight', 'strokeRightWeight', 'strokeBottomWeight', 'strokeLeftWeight'];
 const CORNERS = ['topLeftRadius', 'topRightRadius', 'bottomRightRadius', 'bottomLeftRadius'];
 const fk = (f) => f.family + '|' + f.style;
@@ -65,9 +66,11 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
     get removed() { return this._removed; }
     get children() { this._ok(); return this._kids ? [...this._kids] : undefined; }
     get fills() { return this._fills; }
-    set fills(v) { this._ok(); this._fills = checkPaints(v); }
+    set fills(v) { this._ok(); this._fills = checkPaints(v); this._pb('fills', v); }
     get strokes() { return this._strokes; }
-    set strokes(v) { this._ok(); this._strokes = checkPaints(v); }
+    set strokes(v) { this._ok(); this._strokes = checkPaints(v); this._pb('strokes', v); }
+    // real Figma mirrors bound paints in boundVariables.fills / strokes as a VariableAlias[]
+    _pb(k, ps) { const a = ps.filter((p) => p.boundVariables && p.boundVariables.color).map((p) => p.boundVariables.color); const b = { ...this.boundVariables }; if (a.length) b[k] = a; else delete b[k]; this.boundVariables = b; }
     get constraints() { return this._c; }
     set constraints(v) { this._ok(); this._c = { ...v }; if (this._born) log.push(['constraints', this.id]); }
     get layoutPositioning() { return this._lp; }
@@ -112,7 +115,8 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
       this._ok();
       if (!NUM_FIELDS.has(field)) throw new Error('setBoundVariable: field ' + field + ' is not bindable');
       if (!v || !VARS.includes(v)) throw new Error('setBoundVariable: unknown variable');
-      this.boundVariables = { ...this.boundVariables, [field]: alias(v) };
+      // real Figma: a text field (VariableBindableTextField) of a TEXT node is a VariableAlias[] (one per range)
+      this.boundVariables = { ...this.boundVariables, [field]: this.type === 'TEXT' && TEXT_FIELDS.has(field) ? [alias(v)] : alias(v) };
     }
     findAll(fn) {
       const out = [];

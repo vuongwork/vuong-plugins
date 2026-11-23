@@ -71,7 +71,7 @@ if(e.bd&&!e.bd.o)stroke(n,e,o);
 if(e.sh)n.effects=e.sh.map(([c,x,y,b,s,i])=>({type:i?'INNER_SHADOW':'DROP_SHADOW',color:ra(D.C[c]),offset:{x,y},radius:b,spread:s,visible:true,blendMode:'NORMAL'}));
 if(e.es!=U)await sty(o,'es',e.es,id=>n.setEffectStyleIdAsync(id))},
 fail=(o,x)=>{S.er.push({o,msg:String(x&&x.message||x).slice(0,200)});S.bad.add(o)},
-skip=e=>(e.k||[]).forEach(k=>{S.er.push({o:k.o,msg:'parent failed'});skip(k)}),
+pf_=o=>S.er.push({o,msg:'parent failed'}),skip=e=>{(e.k||[]).forEach(k=>{pf_(k.o);skip(k)});if(e.bd&&e.bd.o)pf_(e.o+'#stroke')},
 frame=()=>{const n=F.createFrame();n.fills=[];n.clipsContent=false;return n},
 pd=(n,k,v)=>n.setSharedPluginData('vd',k,v),gd=(n,k)=>n.getSharedPluginData('vd',k),
 mk=async(e,par,sc)=>{const o=e.o,v=e.v||{},gl=!!(e.ic&&e.ic.g!=U),T=e.t=='T'||gl,l=e.l,s=e.s||'XX',ia=isAL(par)&&!e.a,rs=()=>n.resize(Math.max(e.w,.01),Math.max(e.h,.01));
@@ -147,7 +147,7 @@ ck('es',ov?'':D.S[e.es]||'',SN.get(n.effectStyleId)||'');
 for(const k of['fills','strokes'])if(pv(n[k]))vg[k]=pv(n[k])}
 ck('op',ov||e.op==U?1:e.op,r2(n.opacity));
 for(const k in v)if(ov?/^(sc|b\d|r\d)$/.test(k):!(o2&&/^(sc|b\d)$/.test(k))&&!(T&&k=='c'))vw[VF[k]]=D.V[v[k]];
-for(const k in bv)if(bv[k]&&bv[k].id)vg[k]=VN.get(bv[k].id)||bv[k].id;
+for(const k in bv){const a=bv[k]&&(bv[k].length?bv[k][0]:bv[k]);if(a&&a.id&&k!='fills'&&k!='strokes')vg[k]=VN.get(a.id)||a.id}
 if(e.ic&&e.ic.i!=U&&!ov){const x=n.findAll(()=>1);if(!x[0])d.icon=0;for(const[k,c]of[['vf','fills'],['vs','strokes']]){const p=x.map(y=>pv(y[c])).find(z=>z);if(p)vg[k]=p}}
 if(so(vw)!=so(vg))d.vars=vg;
 return Object.keys(d)[0]&&d},
@@ -156,13 +156,12 @@ PG=D.page||'Screens',pg=F.root.children.find(p=>p.name==PG)||(()=>{const p=F.cre
 await F.setCurrentPageAsync(pg);
 for(let i=0;i<12;i+=2)VF[PD[i]]=PD[i+1];
 CO.forEach((f,i)=>{VF['r'+i]=f;VF['b'+i]=SI[i]});
-const screen=async sc=>{S={reg:[],late:[],i:{},fm:[],er:[],bad:new Set};
-const res={screen:sc.screen},old=pg.children.filter(c=>gd(c,'screen')==sc.screen&&gd(c,'file')==sc.file),
-kept=old.filter(c=>gd(c,'sig')&&gd(c,'sig')!=sig(c));// no sig = interrupted build
-if(kept[0]&&(D.force||[]).indexOf(sc.screen)<0)return{...res,root:kept[0].id,edited:true,sig:gd(kept[0],'sig')};
-const x=old[0]?old[0].x:pg.children.reduce((m,c)=>Math.max(m,c.x+c.width+80),0),y=old[0]?old[0].y:0;
-old.forEach(c=>c.remove());
-const root=await mk(sc.T,null,sc);
+// the first frame of the screen is replaced (after the new one is built) unless edited; other copies: extra, kept
+const screen=async sc=>{
+const res={screen:sc.screen},M0=pg.children.filter(c=>gd(c,'screen')==sc.screen&&gd(c,'file')==sc.file),t=M0[0];
+if(M0[1])res.extra=M0.slice(1).map(c=>c.id);
+if(t&&gd(t,'sig')&&gd(t,'sig')!=sig(t)&&(D.force||[]).indexOf(sc.screen)<0)return{...res,root:t.id,edited:true,sig:gd(t,'sig')};// no sig = interrupted build
+const x=t?t.x:pg.children.reduce((m,c)=>Math.max(m,c.x+c.width+80),0),y=t?t.y:0,root=S.root=await mk(sc.T,null,sc);
 if(root){root.name=sc.screen;
 for(const l of S.late)try{place(l)}catch(z){fail(gd(l[0],'id'),z)}
 root.x=x;root.y=y;
@@ -178,9 +177,12 @@ for(const o in S.i){const I=S.i[o];if(I.u)ui.push(...I.u.map(u=>({o,...u})));if(
 res.root=root.id;res.nodes=ord(sc.T).map(o=>M[o]||0);
 if(ui[0])res.unbound=ui;
 if(Object.keys(us)[0])res.unsupported=us;
-pd(root,'sig',res.sig=sig(root))}
+pd(root,'sig',res.sig=sig(root));
+if(t)t.remove()}
 res.fontMissing=S.fm;res.errors=S.er;
 return res},
 out={batch:D.batch,page:pg.name,pageId:pg.id,screens:[]};
-for(const sc of D.screens)out.screens.push(await screen(sc));
+for(const sc of D.screens){S={reg:[],late:[],i:{},fm:[],er:[],bad:new Set};
+try{out.screens.push(await screen(sc))}catch(z){try{S.root&&S.root.remove()}catch(y){}// keep the old frame, drop the half-built one
+out.screens.push({screen:sc.screen,fontMissing:S.fm,errors:[...S.er,{o:sc.T.o,msg:String(z&&z.message||z).slice(0,200)}]})}}
 return out;

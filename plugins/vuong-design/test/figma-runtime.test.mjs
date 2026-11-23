@@ -12,7 +12,7 @@ const dataOf = (b) => { const [pre, post] = RUNTIME.split('__DATA__'); return JS
 const codeOf = (D) => RUNTIME.replace('__DATA__', () => JSON.stringify(D));
 
 const SVG = { 'i-plus': '<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></symbol>' };
-const V = ['color/bg', 'color/row', 'color/ink', 'color/line', 'space/16', 'space/8', 'border/1', 'size/24', 'color/gone'];
+const V = ['color/bg', 'color/row', 'color/ink', 'color/line', 'space/16', 'space/8', 'border/1', 'size/24', 'color/gone', 'size/20'];
 const STYLES = ['type/t14-600', 'type/t12-400', 'shadow/s01'];
 const MAP = { s0: {
   n: { bg: 'primitive.color.bg' },
@@ -87,11 +87,11 @@ const page = (fig, name = 'Screens') => fig.root.children.find((p) => p.name ===
 const byVd = (root) => { const m = {}; const w = (n) => { const id = n.getSharedPluginData('vd', 'id'); if (id) m[id] = n; (n.children || []).forEach(w); }; w(root); return m; };
 const allIds = (e, out = []) => { out.push(e.o); (e.k || []).forEach((k) => allIds(k, out)); return out; };
 
-test('runtime source: __DATA__ once, at most 14 KB, no console / notify', () => {
+test('runtime source: __DATA__ once, at most 15 KB, no console / notify', () => {
   assert.equal(RUNTIME.split('__DATA__').length, 2);
   assert.ok(RUNTIME.includes('const D = __DATA__;'));
   const bytes = Buffer.byteLength(RUNTIME, 'utf8');
-  assert.ok(bytes <= 14336, `runtime is ${bytes} bytes`);
+  assert.ok(bytes <= 15360, `runtime is ${bytes} bytes`);
   assert.ok(!/console\.|figma\.notify/.test(RUNTIME));
 });
 
@@ -289,7 +289,8 @@ test('a frame without a signature (interrupted run) is replaced, not kept', asyn
 test('an error in one node is reported; the node and its children are missing, the other nodes are built', async () => {
   const fig = fakeFor({ throwIf: (op, n) => op === 'resize' && n.getSharedPluginData('vd', 'id') === 'n.0' });
   const [s] = (await runOne(fig)).screens;
-  assert.deepEqual(s.errors.map((e) => e.o), ['n.0', 'n.0.0', 'n.0.1', 'n.0.g0']);
+  assert.deepEqual(s.errors.map((e) => e.o), ['n.0', 'n.0.0', 'n.0.1', 'n.0.g0', 'n.0#stroke'], 'the overlay of the failed node is listed too');
+  assert.equal(s.errors[4].msg, 'parent failed');
   assert.match(s.errors[0].msg, /fake failure/);
   assert.equal(s.errors[1].msg, 'parent failed');
   for (const o of ['n.0', 'n.0.0', 'n.0.1', 'n.0.g0', 'n.0#stroke']) assert.equal(s.N[o], undefined, o);
@@ -386,6 +387,61 @@ test('compact nodes: one entry per node in the fixed order, numeric fids, B as a
   assert.equal(s2.nodes[6].length, 4, 'n.1: [fid, A, 0, d]');
   assert.equal(s2.nodes[6][2], 0);
   assert.equal(s2.nodes[6][3].op, 1);
+});
+
+test('a bound glyph fontSize (a VariableAlias[] on TEXT in real Figma) and bound fills read back without a false d', async () => {
+  const sp = spec();
+  sp.kids.push({ id: 'n.5', t: 'V', w: 20, h: 20, sz: ['FIXED', 'FIXED'], icon: { glyph: 'add' },
+    font: { ff: 'Inter', fs: '20px', fw: '400', fst: 'normal', lh: 20, ls: '0px', c: 'rgb(0, 0, 0)', ta: 'start', td: 'none', tt: 'none' } });
+  const enc = encodeScreen(sp, { screen: 's0', file: 'f.html', W: [304, 424], map: { s0: { ...MAP.s0, 'n.5': { 'icon-fontSize': 'primitive.size.20' } } }, svgDefs: SVG, tables: newTables(V) });
+  assert.ok(enc.T.k[3].v && enc.T.k[3].v.fs !== undefined, 'the encoding binds the glyph font size');
+  const fig = fakeFor();
+  const [s] = (await runOne(fig, [enc])).screens;
+  const N = byVd(page(fig).children[0]);
+  assert.ok(Array.isArray(N['n.5'].boundVariables.fontSize), 'the fake stores text-field bindings as arrays');
+  assert.ok(Array.isArray(N['n.0'].boundVariables.fills), 'and bound paints in boundVariables.fills as arrays');
+  assert.equal(s.N['n.5'].d, undefined, JSON.stringify(s.N['n.5'].d));
+  assert.equal(s.N['n.0'].d, undefined);
+});
+
+test('a failure at screen level (root resize at width B) is isolated: the screen reports it, the next screen is built', async () => {
+  const fig = fakeFor({ throwIf: (op, n) => op === 'resize' && n.getSharedPluginData('vd', 'screen') === 's0' && n.width === 304 && n.parent && n.parent.type === 'PAGE' && n.children.length > 0 && n.getSharedPluginData('vd', 'id') === 'n' && fig._armed });
+  fig._armed = false;
+  const tables = newTables(V);
+  const encs = [encFor('s0', spec(), tables), encFor('s1', spec(), tables)];
+  await runOne(fig, encs);
+  const s0old = page(fig).children.find((c) => c.getSharedPluginData('vd', 'screen') === 's0');
+  fig._armed = true;
+  const res = await runOne(fig, encs);
+  const [a, b] = res.screens;
+  assert.equal(a.root, undefined);
+  assert.equal(a.nodes, undefined);
+  assert.deepEqual(a.errors.map((e) => e.o), ['n']);
+  assert.match(a.errors[0].msg, /fake failure/);
+  assert.ok(b.nodes && b.errors.length === 0, 's1 is still built');
+  const s0 = page(fig).children.filter((c) => c.getSharedPluginData('vd', 'screen') === 's0');
+  assert.deepEqual(s0, [s0old], 'the old s0 frame is kept, the half-built one removed');
+});
+
+test('a failed root keeps the old frame; extra copies of a screen are reported and never deleted', async () => {
+  const fig = fakeFor({ throwIf: (op, n) => fig._armed && op === 'resize' && n.getSharedPluginData('vd', 'id') === 'n' });
+  fig._armed = false;
+  await runOne(fig);
+  const old = page(fig).children[0];
+  fig._armed = true;
+  const [s] = (await runOne(fig)).screens;
+  assert.deepEqual(s.errors.map((e) => e.o)[0], 'n');
+  assert.deepEqual(page(fig).children, [old], 'the screen does not disappear');
+  // a duplicated copy (same vd/screen + vd/file)
+  fig._armed = false;
+  const dup = fig.createFrame();
+  dup.setSharedPluginData('vd', 'screen', 's0'); dup.setSharedPluginData('vd', 'file', 'f.html'); dup.x = 2000;
+  const [s2] = (await runOne(fig)).screens;
+  assert.deepEqual(s2.extra, [dup.id]);
+  assert.ok(!dup.removed, 'the copy is kept');
+  assert.ok(old.removed, 'the first frame is replaced');
+  assert.equal(page(fig).children.length, 2);
+  assert.deepEqual([page(fig).children[1].x, page(fig).children[1].y], [old.x, old.y]);
 });
 
 // ---- smoke: one real Planora batch on the fake ----

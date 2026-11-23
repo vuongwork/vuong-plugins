@@ -44,7 +44,7 @@
 //      shadow: shadow; opacity: opacity; icon: width, height, fontSize (icon width / height are keyed `icon-width`,
 //      `icon-height`, `icon-fontSize` so they do not collide with frame size).
 //    A use with a run (text colour, type) whose node has several runs for that prop is keyed `<prop>|<run>`
-//    (`type|0`, `color|2`); with a single run it is keyed plain (`type`, `color`).
+//    (`type|0`, `color|2`), counted over ALL the node's uses (also dropped ones); with a single run it is keyed plain (`type`, `color`).
 //    Left out: uses without a token (unparsed, noise, space-between gap) and uses an 'ask' entry covers (the value
 //    stays the source value, the design system does not apply it). tokenMap rebuilds the tokens with buildTokens
 //    (same inv, entries, names) and throws when `tokens` differ from that, so the paths always exist in `tokens`.
@@ -206,7 +206,7 @@ export function tokenMap(inv, tokens, entries = [], names = {}) {
   const runs = new Map(); // node + key -> distinct runs
   const baseKey = (u) => (u.cat === 'type' ? 'type' : u.cat === 'border' ? `border-width-${u.prop.slice(6)}`
     : u.cat === 'icon' ? `icon-${u.prop}` : u.prop);
-  for (const u of usable) if (u.run !== undefined) {
+  for (const u of inv.uses || []) if (u.run !== undefined) { // all uses, not only the usable ones: the key shape must not depend on filtering
     const k = JSON.stringify([u.screen, u.node, baseKey(u)]);
     (runs.get(k) || runs.set(k, new Set()).get(k)).add(u.run);
   }

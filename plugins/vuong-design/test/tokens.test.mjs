@@ -297,3 +297,11 @@ test('tokenMap: several runs of a node get a run index; renames are followed; by
   assert.equal(JSON.stringify(tokenMap(rev, buildTokens(rev, [], names).tokens, [], names)), JSON.stringify(tm));
   assert.equal(JSON.stringify(buildTokens(inv, [], names).tokens), before);
 });
+
+test('tokenMap: the run key shape does not depend on filtering (a run covered by an ask entry leaves `type|<other run>`, never plain `type`)', () => {
+  seq = 0;
+  const inv = { uses: [type(16, 500, 24, 'p.a|d', { node: '1', run: 0 }), type(14, 400, 20, 'p.b|d', { node: '1', run: 2 })], vars: {} };
+  const ask = [{ id: 'q', cat: 'type', role: 'type|text|p.b|d', prop: 'lineHeight', nodes: [{ screen: 's1', node: '1' }], from: 20, to: 21, code: 'LINE_HEIGHT_INT', status: 'ask', proposal: 21, question: 'q' }];
+  const tm = tokenMap(inv, buildTokens(inv, ask).tokens, ask);
+  assert.deepEqual(Object.keys(tm.s1['1']), ['type|0']);
+});

@@ -2182,3 +2182,19 @@ test('figma-real proxy: undefined run props and an unread icon are not compared;
   delete fig.proxy.A.dom['n.0.1'].iconUnread;
   assert.ok(verifyScreen(fig).data.some((d) => d.kind === 'icon' && d.id === 'n.0.1'));
 });
+
+// T8 checker: Figma clamps a corner radius to half the smaller side, as CSS does, so on a 'figma-real' proxy corners
+// compare by their effective radius min(r, min(w, h) / 2): a 999px pill read back as 9999 px (radius.full) is equal
+test('figma-real proxy: corner radii compare by their effective (clamped) value; other proxies compare them as before', () => {
+  const make = (real, src, got) => {
+    const inp = fixture();
+    inp.screen.tree.kids[1].paint = { radius: src.map((r) => `${r}px`) }; // n.1 is 100 x 30
+    for (const k of Object.keys(inp.proxy.A.dom)) inp.proxy.A.dom[k].radius = ['0px', '0px', '0px', '0px'];
+    inp.proxy.A.dom['n.1'].radius = got.map((r) => `${r}px`);
+    if (real) for (const M of ['A', 'B']) Object.assign(inp.proxy[M], { mark: 'figma-real', unread: [] });
+    return verifyScreen(inp).data.filter((d) => d.kind === 'radius').map((d) => [d.side, d.expected, d.actual]);
+  };
+  assert.deepEqual(make(true, [999, 999, 99, 15], [9999, 9999, 9999, 9999]), []);
+  assert.deepEqual(make(true, [16, 20, 14, 8], [15, 15, 15, 6]), [['bottom-right', '14px', '15px'], ['bottom-left', '8px', '6px']]);
+  assert.deepEqual(make(false, [999, 999, 99, 15], [9999, 9999, 9999, 15]).map((d) => d[0]), ['top-left', 'top-right', 'bottom-right']);
+});

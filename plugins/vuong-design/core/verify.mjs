@@ -81,7 +81,9 @@
 //   figmaProxy: model 'figma', mark 'figma-real') plays the proxy of what is built: the modelled proxy, or the norm proxy
 //   in place of mark 'norm'. Its `unread` list (checks the readback cannot observe) is recorded as skipped
 //   'figma-<name>', which never fails a screen (figmaSkip); on that proxy only, a run prop the DOM leaves undefined
-//   on every run is not compared, nor the identity of an icon whose DOM says iconUnread.
+//   on every run is not compared, nor the identity of an icon whose DOM says iconUnread; px corner radii compare by
+//   their effective value min(r, min(w, h) / 2) on each side's own box (Figma and CSS clamp alike: a 999px pill read
+//   back as radius.full 9999 px is equal).
 //   measureCrops opts.widths limits the crops to those widths (the Figma screenshot is at width A).
 //   fontSubstitution explains nothing (R10: capture measures the source in the Figma font), nor does shrinkModelled
 //   (infer's info that a shrink item is FILL + max, plan 3 Task 2; its shrink flag still explains). On a screen flagged
@@ -330,6 +332,11 @@ const normRadius = (v) => {
   const p = String(v == null || v === '' ? '0px' : v).trim().split(/\s+/).map((x) => (/px$/.test(x) ? `${r2(parseFloat(x))}px` : x));
   return p.length === 2 && p[0] === p[1] ? p[0] : p.join(' ');
 };
+// T8: Figma clamps a corner radius to half the smaller side, as CSS does; on a Figma readback ('figma-real') two px
+// corners are equal when their effective radii min(r, min(w, h) / 2) are (a 999px pill read back as 9999 px), each on
+// its own box (source rA, Figma box)
+const clampPx = (v, b) => { const m = /^(-?[\d.]+)px$/.exec(v); return m && Array.isArray(b) ? r2(Math.min(+m[1], Math.min(b[2], b[3]) / 2)) : null; };
+const sameClamped = (e, eb, a, ab) => { const x = clampPx(e, eb), y = clampPx(a, ab); return x !== null && x === y; };
 const sha = (s) => createHash('sha1').update(String(s ?? '')).digest('hex').slice(0, 12);
 const short = (s) => { const t = String(s ?? ''); return t.length > 80 ? `${t.slice(0, 60)}… (${t.length} chars, sha1 ${sha(t)})` : t; };
 const unent = (s) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
@@ -1256,7 +1263,7 @@ export function verifyScreen(input, opts = {}) {
         CORNERS.forEach((c, i) => {
           const rv = tgt(id, 'radius', `radius${['TL', 'TR', 'BR', 'BL'][i]}`, s[i]);
           const expected = normRadius(typeof rv === 'number' ? `${rv}px` : rv), actual = normRadius(d.radius[i]);
-          if (expected !== actual) data.push({ id, kind: 'radius', side: c, expected, actual });
+          if (expected !== actual && !(figReal && sameClamped(expected, n.rA, actual, P3.A.boxes && P3.A.boxes[id]))) data.push({ id, kind: 'radius', side: c, expected, actual });
         });
       }
     }

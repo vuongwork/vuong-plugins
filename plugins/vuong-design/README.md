@@ -281,6 +281,8 @@ node core/figma.mjs check  --out <dir> [--mutate] [--allowlist <json>] [--html <
     The Figma section lists every node whose source has a box-shadow or background-image (`figma.effectsNotRead`: count and nodes) as "effect not read back on Figma: compare the crop / screenshot by eye". Hidden layers (`visible`) are not read back either.
 
     Outline is `none`: Figma has none, so a source outline is a finding.
+
+    Corner radii in px compare by their effective value min(r, min(w, h) / 2), each on its own box (Figma clamps as CSS does), so a 999px or 99px pill read back as `radius.full` (9999 px) is equal. Only on the Figma readback: plans 1-2 compare radii as before.
   - A node missing from the readback (entry `0`), or a screen not built, failed or `skippedEdited`: no Figma box, the nodes are unchecked and the screen fails.
   - report.json and report.html get a Figma section per screen: build state, proxy vs Figma (the largest |box delta| between the local norm, or modelled, proxy and Figma at A and B, with the worst nodes), unread checks, `fontMissing`, `unbound`, build errors, `unsupported`.
   - `--mutate`: the four readback mutations of `mutate.mjs`, each verified again on the same screenshot: `figMove` (box +3 px), `figText` (one character), `figFill` (fill colour), `figDrop` (node removed). A missed one fails the run.

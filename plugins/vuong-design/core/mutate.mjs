@@ -10,8 +10,10 @@
 //                  in the spec, or a swapIcon target without another icon, is 'no candidate'
 //   opts.proxy  = extra buildProxyHtml options (e.g. { webFonts: false })
 //   opts.verify = verifyScreenWithImages options (tolerances; a loose verifier must come out allCaught false)
-//   opts.norm   = { spec, applied } (R66: applyNorm of the modelled spec); used only by normSilent / normWrongValue, whose
-//                 baseline is the run with it; the result then carries normBaseline { pass, failures, norm }
+//   opts.norm   = { spec, applied, entries? } (R66: applyNorm of the modelled spec; m8: the entries verify checks the
+//                 records against); used only by the norm kinds, whose baseline is the run with it; the result then
+//                 carries normBaseline { pass, failures, norm }
+//   opts.screenIndex = the screen's index in its file (normWrongValue rotates its record category by it; default 0)
 // Pipeline per run (pipeline.mjs runScreen, as Task 6/8): mutated inferred spec -> layout proxy (unmodelled, mark 'none') and
 // applyFigmaModel -> modelled proxy (mark 'figma'), both rendered at A and B with { origin: screen.origin[i] }, then
 // verifyScreenWithImages. The mutation is applied to the inferred spec BEFORE both proxies.
@@ -47,10 +49,19 @@
 //  - normSilent: the target spec changes a padding no record covers: the first auto-layout frame (no wrap) with a
 //    padding array and >= 1 flow item whose main-axis packing is start (or that HUGs on its main axis), preferring
 //    one without a padding record; its near main-axis padding grows by 4px.
-//  - normWrongValue: one applied record lies about its value while the target spec keeps the real one: the first
-//    record by category space, size, icon, type, border, radius, colour; a number gets to + 4, a colour each channel
-//    moved by 96 (towards the middle).
-//  The baseline for both is the unmutated run with opts.norm.
+//  - normWrongValue: one applied record lies about its value while the target spec keeps the real one (its entry,
+//    when opts.norm.entries is given, lies the same way, so the measurement has to catch it, m8 aside): m6, the
+//    categories the records have, in the order space, size, icon, type, border, radius, colour, rotate by screen
+//    index (category k = screenIndex mod their number; the first record of it); a number gets to + 4, a colour each
+//    channel moved by 96 (towards the middle).
+//  - normCropHide (m6): a real paint fault on a node that carries a paint / type / icon record (cat colour, radius,
+//    icon, type; ICON_FRAME / SRC_SQUASH), which that record does not cover: a text with visible text (preferred) gets
+//    its text reversed (or its first character replaced), an icon takes another icon's identity. The fault goes into
+//    the inferred spec (so the layout, modelled and norm layout proxies draw it) and into the target spec (the norm
+//    proxy draws it; no spec difference for the static audit to see). No such record: skipped 'no candidate'.
+//  - normLayoutDrift (m6): the norm layout proxy alone draws one frame's children 4 px further along its main axis
+//    (its near padding + 4 in the replayed spec, no record says so; normSilent's candidate). R78 must catch it.
+//  The baseline for all four is the unmutated run with opts.norm.
 // No candidate -> { kind, target: null, caught: null, by: [], skipped: 'no candidate' }; runMutations never throws for
 // that.
 //
@@ -64,8 +75,9 @@ import { normColor } from './verify.mjs';
 import { runScreen } from './pipeline.mjs';
 
 export const KINDS = ['moveShape', 'moveText', 'swapIcon', 'deleteLeaf', 'hideLeaf', 'thinStrokeSmall', 'thinStroke4000', 'drift', 'gap',
-  'radiusLarge', 'fontLarge', 'svgLarge', 'imageLarge', 'normSilent', 'normWrongValue'];
-const NORM_KINDS = new Set(['normSilent', 'normWrongValue']);
+  'radiusLarge', 'fontLarge', 'svgLarge', 'imageLarge', 'normSilent', 'normWrongValue', 'normCropHide', 'normLayoutDrift'];
+const NORM_KINDS = new Set(['normSilent', 'normWrongValue', 'normCropHide', 'normLayoutDrift']);
+const PAINT_REC = (a) => ['color', 'radius', 'icon', 'type'].includes(a.cat) || a.code === 'ICON_FRAME' || a.code === 'SRC_SQUASH';
 const NORM_PAD = 4, NORM_WRONG = 4, NORM_COLOR = 96;
 const REC_ORDER = ['space', 'size', 'icon', 'type', 'border', 'radius', 'color'];
 const MOVE = 3, DRIFT = 0.4, GAP = 3, SMALL = 4000;
@@ -275,8 +287,22 @@ function mutate(kind, spec, pick, base) {
 
 // ---------------- R66: norm mutations (on the target spec / the applied records) ----------------
 
-function chooseNorm(kind, norm) {
-  if (kind === 'normSilent') {
+function chooseNorm(kind, norm, screenIndex = 0) {
+  if (kind === 'normCropHide') {
+    const icons = walk(norm.spec).filter((e) => e.n.t === 'V' && iconKey(e.n.icon) && !e.n.icon.glyph);
+    let best = null;
+    for (const a of norm.applied.filter(PAINT_REC)) {
+      const e = find(norm.spec, String(a.node));
+      if (!e) continue;
+      if (e.n.t === 'T' && textOf(e.n).trim() !== '') return { n: { id: e.n.id }, rec: a, how: 'text' };
+      if (!best && e.n.t === 'V' && iconKey(e.n.icon) && e.n.icon.glyph == null) {
+        const other = icons.find((o) => iconKey(o.n.icon) !== iconKey(e.n.icon));
+        if (other) best = { n: { id: e.n.id }, rec: a, how: 'icon', other: other.n };
+      }
+    }
+    return best;
+  }
+  if (kind === 'normSilent' || kind === 'normLayoutDrift') {
     const padded = new Set(norm.applied.filter((a) => /^padding/.test(a.prop)).map((a) => String(a.node)));
     const cands = walk(norm.spec).filter(({ n }) => {
       if (!n.lay || !n.lay.d || n.lay.wrap || !Array.isArray(n.lay.p) || !flowKids(n).length) return false;
@@ -288,18 +314,50 @@ function chooseNorm(kind, norm) {
   }
   const rank = (a) => { const i = REC_ORDER.indexOf(a.cat); return i < 0 ? REC_ORDER.length : i; };
   const ok = norm.applied.filter((a) => (a.cat === 'color' ? typeof a.to === 'string' : typeof a.to === 'number'));
-  const r = [...ok].sort((a, b) => rank(a) - rank(b))[0];
-  return r ? { n: { id: String(r.node) }, rec: r } : null;
+  const cats = [...new Set(ok.map(rank))].sort((a, b) => a - b);
+  if (!cats.length) return null;
+  const cat = cats[((screenIndex % cats.length) + cats.length) % cats.length];
+  const r = ok.find((a) => rank(a) === cat);
+  return { n: { id: String(r.node) }, rec: r };
+}
+
+// the near main-axis padding of frame id grows by NORM_PAD (in place)
+const padNear = (spec, id) => {
+  const e = find(spec, id);
+  if (!e || !e.n.lay || !Array.isArray(e.n.lay.p)) return;
+  const p = [...e.n.lay.p];
+  p[e.n.lay.d === 'H' ? 3 : 0] += NORM_PAD;
+  e.n.lay = { ...e.n.lay, p };
+};
+// m6 normCropHide: the paint fault on node id (in place)
+function hidePaint(spec, pick) {
+  const e = find(spec, pick.n.id);
+  if (!e) return;
+  const n = e.n;
+  if (pick.how === 'text') {
+    const i = (n.runs || []).findIndex((r) => !r.br && String(r.t || '').trim() !== '');
+    const t = String(n.runs[i].t), rev = [...t].reverse().join('');
+    const j = t.search(/\S/);
+    n.runs = n.runs.map((r, k) => (k === i ? { ...r, t: rev !== t ? rev : t.slice(0, j) + (t[j] === 'X' ? 'Y' : 'X') + t.slice(j + 1) } : r));
+    return;
+  }
+  const icon = { ...n.icon }; delete icon.ref; delete icon.glyph; delete icon.svg;
+  for (const k of ['ref', 'svg']) if (pick.other.icon[k] != null) icon[k] = pick.other.icon[k];
+  n.icon = icon;
 }
 
 function mutateNorm(kind, norm, pick) {
   if (kind === 'normSilent') {
-    const spec = clone(norm.spec), { n } = find(spec, pick.n.id);
-    const p = [...n.lay.p];
-    p[n.lay.d === 'H' ? 3 : 0] += NORM_PAD;
-    n.lay = { ...n.lay, p };
-    return { spec, applied: norm.applied };
+    const spec = clone(norm.spec);
+    padNear(spec, pick.n.id);
+    return { ...norm, spec };
   }
+  if (kind === 'normCropHide') {
+    const spec = clone(norm.spec);
+    hidePaint(spec, pick);
+    return { ...norm, spec };
+  }
+  if (kind === 'normLayoutDrift') return norm;
   const i = norm.applied.indexOf(pick.rec), r = { ...pick.rec };
   if (r.cat === 'color') {
     const m = /^#?([0-9a-f]{6})/i.exec(r.to);
@@ -307,7 +365,9 @@ function mutateNorm(kind, norm, pick) {
     r.to = '#' + ch.map((c) => (c > 127 ? c - NORM_COLOR : c + NORM_COLOR).toString(16).padStart(2, '0')).join('');
   } else r.to += NORM_WRONG;
   const applied = [...norm.applied]; applied[i] = r;
-  return { spec: norm.spec, applied };
+  // the entry (m8) lies the same way, so only the measurement can catch the lie
+  const entries = Array.isArray(norm.entries) ? norm.entries.map((x) => (String(x.id) === String(r.entry) ? { ...x, to: r.to } : x)) : norm.entries;
+  return { ...norm, applied, ...(entries ? { entries } : {}) };
 }
 
 // ---------------- pipeline and comparison ----------------
@@ -352,7 +412,7 @@ export async function runMutations(browser, screen, inferred, fontMap, opts = {}
   const idx = (n) => { src.set(n.id, n); (n.kids || []).forEach(idx); };
   idx(screen.tree);
   const flags = inferred.flags || [];
-  const { norm, ...plain } = opts;
+  const { norm, screenIndex, ...plain } = opts;
   const hasNorm = !!norm && Array.isArray(norm.applied) && norm.applied.length > 0;
   const base = await pipeline(browser, screen, inferred.spec, flags, fontMap, plain);
   const before = new Set(failures(base.report).map((f) => f.key));
@@ -361,11 +421,14 @@ export async function runMutations(browser, screen, inferred, fontMap, opts = {}
   for (const kind of kinds) {
     if (NORM_KINDS.has(kind)) {
       if (!hasNorm) { results.push({ kind, target: null, caught: null, by: [], skipped: 'no norm' }); continue; }
-      const pick = chooseNorm(kind, norm);
+      const pick = chooseNorm(kind, norm, opts.screenIndex ?? 0);
       if (!pick) { results.push({ kind, target: null, caught: null, by: [], skipped: 'no candidate' }); continue; }
       normBase ??= await pipeline(browser, screen, inferred.spec, flags, fontMap, { ...plain, norm });
       const nBefore = new Set(failures(normBase.report).map((f) => f.key));
-      const run = await pipeline(browser, screen, inferred.spec, flags, fontMap, { ...plain, norm: mutateNorm(kind, norm, pick) });
+      let spec = inferred.spec;
+      if (kind === 'normCropHide') { spec = clone(inferred.spec); hidePaint(spec, pick); }
+      const extra = kind === 'normLayoutDrift' ? { normLayoutTweak: (ls) => padNear(ls, pick.n.id) } : {};
+      const run = await pipeline(browser, screen, spec, flags, fontMap, { ...plain, ...extra, norm: mutateNorm(kind, norm, pick) });
       const hit = touched(norm.spec, pick.n.id, normBase, run);
       const fresh = failures(run.report).filter((f) => !nBefore.has(f.key));
       const caughtBy = fresh.filter((f) => hit.has(f.id));

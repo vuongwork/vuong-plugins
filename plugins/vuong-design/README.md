@@ -63,7 +63,11 @@ Runs the layout pipeline, then per HTML file (all its screens together, since ro
 - Rules file: `--rules`, else `vd-rules.json` in the current directory when it exists, else none (every question stays `ask`, nothing but `auto` entries is applied). Names file: `--names`, else `vd-names.json` in the current directory when it exists. Both are only read; open answers are drafted into `<out>/vd-rules.draft.json`.
 - Corpus mode writes one design system per HTML file, in `<out>/<file name without .html>/`; `report.json` and `report.html` cover all files.
 - Exit code as `layout.mjs`: 0 when every screen passes the gate (an unexplained root of layer `norm`, i.e. a change of the target spec no entry explains, fails its screen and cannot be allowlisted) and no mutation is missed; 1 otherwise; 2 on a usage or setup error (bad rules / names file, an answer that is not one of its options). Open questions never fail the run; the last line gives their number.
-- With a target spec, the Figma-model layer judges the spec that will be built (R75): the norm proxy against the same records on the unmodelled spec. A plan-1 approval with no counterpart there is listed in `norm.approvalsResolved`.
+- With a target spec, the Figma-model layer judges the spec that will be built (R75): the norm proxy against the same records on the unmodelled spec. A plan-1 approval with no counterpart there is listed in `norm.approvalsResolved`, but only when the node or its record scope carries a box or type record (R78).
+- The norm layout proxy (the records replayed on the unmodelled spec) must be marked `normLayout` and is checked like the norm proxy (R78): every deviation from the layout proxy that the records do not predict is an open norm root.
+- A crop failure is explained by the norm only when the records caused it (R77): the same crop against the plain layout proxy passes, and the node's own paint / type / icon record changes something (not in `norm.unused`) and its change shows in the norm layout proxy against the layout proxy. For an icon's own ICON_FRAME / SRC_SQUASH record, the plain layout proxy cannot pass (that is why the record exists): the norm layout proxy must draw the icon at the record's size instead.
+- Every applied record must name an `auto` / `answered` entry with the same prop, from and to (m8); otherwise it explains nothing and is a `norm-spec` data finding.
+- A colour behind a scoped CSS variable (it resolves to the use's colour lower down, not at `:root`) counts as named and is never merged without an answer (R79); `coverage.json` (`vars`) and the Coverage section give the number of CSS variable uses capture could not attribute. A width or height that stretches with its parent (absolute left + right, top + bottom or scale constraint) is not a size token candidate (R80).
 
 Outputs in `<out>` (or `<out>/<file stem>/`), in addition to everything `layout.mjs` writes:
 
@@ -123,16 +127,16 @@ Current numbers (2026-11-22, after round 10, R60 and R72 (s11 crops): R56-R60 an
 
 Plan-1 list (layout.mjs, still the state of run (a) below): 1 root, 8 approvals, 3 crops + 1 linked (planora s3 `.say` avatar at B; avatar crops of s3 and s4 under R61; text round-up drift on entry s0, s1 and calendar-v2 s1; planora s4 chip row width round-up).
 
-Design system run (`ds.mjs`, 2026-11-22, after R73-R76, empty allowlist):
+Design system run (`ds.mjs`, 2026-11-23, after R73-R80, m5, m6, m8, empty allowlist):
 
 | Run | Pass | Unexplained roots | Needs approval | Crop fails (+ linked) | Data | Norm: unexplained roots / norm-spec findings | Time |
 |---|---|---|---|---|---|---|---|
-| (a) no rules file | 20/25 | 1 | 8 (max 4.25 px) | 3 (+1) | 0 | 0 / 0 | 184 s |
-| (b) `test/fixtures/rules-accept.json` (`project.lineHeightInt: yes`, `project.srcSquash: accept-all`) | 23/25 | 1 | 1 (2.28 px) | 0 (+0) | 0 | 0 / 0 | 223 s |
+| (a) no rules file | 20/25 | 1 | 8 (max 4.25 px) | 3 (+1) | 0 | 0 / 0 | 165 s |
+| (b) `test/fixtures/rules-accept.json` (`project.lineHeightInt: yes`, `project.srcSquash: accept-all`) | 23/25 | 1 | 1 (2.28 px) | 0 (+0) | 0 | 0 / 0 | 207 s |
 
-(a) equals the plan-1 numbers above: without answers only the 13 `auto` entries of Planora apply (ROLE_MAJORITY: 9 gaps and paddings, 4 radius corners), all verified on the norm proxy. Entries without a rules file, per file (auto / ask): planora 13 / 448 (GRID4 389, LINE_HEIGHT_INT 20, COLOR_NEAR 17, ICON_FRAME 10, TYPE_SCALE 10, SRC_SQUASH 2), entry mockup 0 / 86 (GRID4 64, LINE_HEIGHT_INT 9, ICON_FRAME 6, COLOR_NEAR 4, TYPE_SCALE 3), calendar 0 / 3, calendar-v2 0 / 111, calendar-v3 0 / 89. Open questions: planora 83, entry mockup 29, calendar 4, calendar-v2 29, calendar-v3 26 (171 in all).
-Mutations on (b) (`--mutate --mutate-sample 2`: planora s0 and s9, every screen of the other files; the full corpus takes about 40 min with the norm renders): 86 caught, 0 missed, 49 skipped (no candidate); normSilent and normWrongValue caught on all 7 screens with applied records (2 screens have none: skipped). 917 s.
-(b): the 7 text round-up approvals (entry s0, s1, calendar-v2 s1) are resolved by LINE_HEIGHT_INT (R75); the s3 and s4 avatar crops are explained by their own SRC_SQUASH record (R74). Open questions: 164.
+(a) equals the plan-1 numbers above: without answers only the 13 `auto` entries of Planora apply (ROLE_MAJORITY: 9 gaps and paddings, 4 radius corners), all verified on the norm proxy. Entries without a rules file, per file (auto / ask): planora 13 / 445 (GRID4 386, LINE_HEIGHT_INT 20, COLOR_NEAR 17, ICON_FRAME 10, TYPE_SCALE 10, SRC_SQUASH 2), entry mockup 0 / 86 (GRID4 64, LINE_HEIGHT_INT 9, ICON_FRAME 6, COLOR_NEAR 4, TYPE_SCALE 3), calendar 0 / 3, calendar-v2 0 / 111, calendar-v3 0 / 89. Open questions: 168 in all (R80 removed 3 Planora GRID4 questions on stretching widths).
+Mutations on (b) (`--mutate --mutate-sample 2`: planora s0 and s9, every screen of the other files; the full corpus takes about 40 min with the norm renders): 100 caught, 0 missed, 53 skipped (no candidate); normSilent, normWrongValue (categories rotated by screen index, m6), normCropHide and normLayoutDrift each caught on all 7 screens with applied records (2 screens have none: skipped). 848 s.
+(b): the 7 text round-up approvals (entry s0, s1, calendar-v2 s1) are resolved by LINE_HEIGHT_INT (R75); the s3 and s4 avatar crops are explained by their own SRC_SQUASH record (R74), now under R77: the norm layout proxy draws each avatar at the record's 34 px. Open questions: 161.
 
 What is left after (b) (1 root, 1 approval):
 - planora s3 `n.0.13.0` at B: the `.say` row centres its content at B (`justify-content: center`, both items at their natural width), but the spec keeps the bubble FILL, so in Figma the bubble fills the row and the avatar starts at the left edge, 23.25 px left of the source. Restoring the avatar's 34 px (SRC_SQUASH) fixes its size and its crop, not the centring: that needs the bubble to hug its text at B and shrink at A, which one Figma sizing mode cannot do (no flex-shrink; the nearest is HUG with a max width). Pending the user's approval, or a plan-3 decision.

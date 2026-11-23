@@ -7,7 +7,7 @@ const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const skip = process.env.VD_PLAYWRIGHT_FROM
   ? (process.platform === 'win32' ? false : 'needs a locally installed Georgia (Windows)')
   : 'set VD_PLAYWRIGHT_FROM to a dir with node_modules/playwright-core';
-const KINDS = ['moveShape', 'moveText', 'swapIcon', 'deleteLeaf', 'hideLeaf', 'thinStrokeSmall', 'thinStroke4000', 'drift', 'gap', 'radiusLarge', 'fontLarge', 'svgLarge', 'imageLarge', 'normSilent', 'normWrongValue'];
+const KINDS = ['moveShape', 'moveText', 'swapIcon', 'deleteLeaf', 'hideLeaf', 'thinStrokeSmall', 'thinStroke4000', 'drift', 'gap', 'radiusLarge', 'fontLarge', 'svgLarge', 'imageLarge', 'normSilent', 'normWrongValue', 'normCropHide', 'normLayoutDrift'];
 
 // offline stand-in for the Figma families (as in the verify pipeline test): Georgia is installed on Windows
 const available = ['Inter', 'Georgia'];
@@ -184,4 +184,44 @@ test('R66: without a norm (or with no applied record) the norm mutations are ski
   assert.deepEqual(r.results.slice(0, 2).map((x) => [x.kind, x.caught, x.skipped]), [['normSilent', null, 'no norm'], ['normWrongValue', null, 'no norm']]);
   assert.equal(r.results[2].caught, true);
   assert.equal(r.allCaught, true);
+});
+
+// ---- m6: hidden faults under norm records (capture-basic plus a colour record on the text n.3) ----
+async function basicNormPaint() {
+  const { applyFigmaModel } = await import('../core/figma-model.mjs');
+  const { applyNorm } = await import('../core/apply-norm.mjs');
+  const { parseColor, toHex } = await import('../core/color.mjs');
+  const { screen, inferred } = await prepared('capture-basic.html');
+  const modelled = applyFigmaModel(inferred.spec, fm, { rendered: screen.fontsRendered });
+  const find = (s, id) => (s.id === id ? s : (s.kids || []).map((k) => find(k, id)).find(Boolean));
+  const from = toHex(parseColor(find(modelled.spec, 'n.3').font.c));
+  const entries = [
+    { id: 'p1', cat: 'space', role: 'r1', prop: 'paddingL', nodes: [{ screen: screen.id, node: 'n.1' }], from: 8, to: 12, code: 'GRID4', status: 'answered' },
+    { id: 'c1', cat: 'color', role: 'r3', prop: 'color', nodes: [{ screen: screen.id, node: 'n.3', run: 0 }], from, to: from === '#c03030' ? '#3030c0' : '#c03030', code: 'COLOR_NEAR', status: 'answered' },
+  ];
+  return { screen, inferred, norm: { ...applyNorm(modelled.spec, entries, screen.id), entries } };
+}
+
+test('m6: normCropHide (a text change under a colour record) and normLayoutDrift (4 px in the norm layout proxy) are caught', { skip }, async () => {
+  const { runMutations } = await import('../core/mutate.mjs');
+  const { screen, inferred, norm } = await basicNormPaint();
+  const r = await runMutations(browser, screen, inferred, fm, { proxy: { webFonts: false }, kinds: ['normCropHide', 'normLayoutDrift'], norm });
+  assert.deepEqual(r.normBaseline.norm.unexplained, [], JSON.stringify(r.normBaseline));
+  const [h, d] = r.results;
+  assert.equal(h.target, 'n.3', JSON.stringify(h));
+  assert.equal(h.caught, true, JSON.stringify(h));
+  assert.equal(d.caught, true, JSON.stringify(d));
+  assert.ok(d.by.includes('root') || d.by.includes('approval'), JSON.stringify(d));
+  assert.equal(r.allCaught, true);
+});
+
+test('m6: normWrongValue rotates over the record categories by screen index; normCropHide is skipped without a paint record', { skip }, async () => {
+  const { runMutations } = await import('../core/mutate.mjs');
+  const { screen, inferred, norm } = await basicNormPaint();
+  const r = await runMutations(browser, screen, inferred, fm, { proxy: { webFonts: false }, kinds: ['normWrongValue'], norm, screenIndex: 1 });
+  assert.equal(r.results[0].record.entry, 'c1', JSON.stringify(r.results[0]));
+  assert.equal(r.results[0].caught, true, JSON.stringify(r.results[0]));
+  const b = await basicNorm();
+  const s = await runMutations(browser, b.screen, b.inferred, fm, { proxy: { webFonts: false }, kinds: ['normCropHide'], norm: b.norm });
+  assert.deepEqual([s.results[0].caught, s.results[0].skipped], [null, 'no candidate']);
 });

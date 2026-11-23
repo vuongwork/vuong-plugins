@@ -166,7 +166,9 @@ if(root){root.name=sc.screen;
 const L=S.late.reverse();for(const f of[ab,place])for(const l of L)try{f(l)}catch(z){fail(gd(l[0],'id'),z)}
 root.x=x;root.y=y;
 const box=()=>{const R=root.absoluteBoundingBox,m={};
-for(const[o,n]of S.reg)if(!S.bad.has(o))try{const b=n.absoluteBoundingBox;m[o]=[b.x-R.x,b.y-R.y,b.width,b.height].map(r2)}catch(z){fail(o,z)}
+// a transformed node: its box before the transform (place() inverted), as the proxy measures it
+for(const[o,n,e,ov]of S.reg)if(!S.bad.has(o))try{const b=n.absoluteBoundingBox,t=!ov&&e.tf,T=t&&n.absoluteTransform;
+m[o]=(t?[T[0][2]-R.x-t[6]-t[4]+t[0]*t[6]+t[2]*t[7],T[1][2]-R.y-t[7]-t[5]+t[1]*t[6]+t[3]*t[7],n.width,n.height]:[b.x-R.x,b.y-R.y,b.width,b.height]).map(r2)}catch(z){fail(o,z)}
 return m},
 size=w=>{const v=root.layoutSizingVertical;root.resize(w,root.height);if(v=='HUG')root.layoutSizingVertical=v},A=box();
 size(sc.W[1]);const B=box();size(sc.W[0]);

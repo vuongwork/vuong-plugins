@@ -186,13 +186,22 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
     set minWidth(v) { this._ok(); this._minW = v; }
     get maxWidth() { return this._maxW === undefined ? null : this._maxW; }
     set maxWidth(v) { this._ok(); this._maxW = v; }
-    get absoluteBoundingBox() {
+    // the parents' offsets plus the node's own relativeTransform (rotated ancestors are not modelled)
+    get absoluteTransform() {
       let x = 0, y = 0;
-      for (let n = this; n && n.type !== 'PAGE'; n = n.parent) { x += n.x; y += n.y; }
-      return { x, y, width: this.width, height: this.height };
+      for (let n = this.parent; n && n.type !== 'PAGE'; n = n.parent) { x += n.x; y += n.y; }
+      const m = this.relativeTransform;
+      return [[m[0][0], m[0][1], x + m[0][2]], [m[1][0], m[1][1], y + m[1][2]]];
+    }
+    // as real Figma: the bounding box of the transformed node (a rotated node's box is larger than width x height)
+    get absoluteBoundingBox() {
+      const T = this.absoluteTransform;
+      const c = [[0, 0], [this.width, 0], [0, this.height], [this.width, this.height]].map(([u, v]) => [T[0][0] * u + T[0][1] * v + T[0][2], T[1][0] * u + T[1][1] * v + T[1][2]]);
+      const xs = c.map((p) => p[0]), ys = c.map((p) => p[1]), x = Math.min(...xs), y = Math.min(...ys);
+      return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
     }
     set relativeTransform(m) { this._ok(); this._rt = m; this.x = m[0][2]; this.y = m[1][2]; }
-    get relativeTransform() { return this._rt || [[1, 0, this.x], [0, 1, this.y]]; }
+    get relativeTransform() { const m = this._rt; return m ? [[m[0][0], m[0][1], this.x], [m[1][0], m[1][1], this.y]] : [[1, 0, this.x], [0, 1, this.y]]; }
     resize(w, h) {
       this._ok();
       if (throwIf('resize', this)) throw new Error('fake failure on resize');

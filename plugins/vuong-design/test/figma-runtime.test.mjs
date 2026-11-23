@@ -518,3 +518,21 @@ test('placing: every late node is ABSOLUTE before any position / constraint, the
   assert.deepEqual(N['n.2'].constraints, { horizontal: 'STRETCH', vertical: 'MAX' });
   assert.deepEqual([N['n.2.0#stroke'].width, N['n.2.0#stroke'].height], [272, 37]);
 });
+
+// T8 item B: the proxy measures boxes with transforms off (proxy.mjs NO_TRANSFORM, as capture's rA / rB), so a
+// rotated node reads back as its un-rotated box (x, y before the transform, width / height), not its rotated
+// absoluteBoundingBox (the fake rotates the bounding box like real Figma)
+test('readback: a rotated node reports its un-rotated box, as the proxy measures it', async () => {
+  const sp = spec();
+  sp.kids.push({ id: 'n.7', t: 'F', w: 20, h: 10, sz: ['FIXED', 'FIXED'], abs: { x: 50, y: 20, c: 'L', cy: 'T' },
+    paint: { bg: 'rgb(1, 2, 3)', transform: { value: 'matrix(0.707107, 0.707107, -0.707107, 0.707107, 3, 4)', origin: '10px 5px' } },
+    kids: [] });
+  const fig = fakeFor();
+  const [s] = (await runOne(fig, [encFor('s0', sp)])).screens;
+  assert.deepEqual(s.errors, []);
+  const N = byVd(page(fig).children[0]);
+  const bb = N['n.7'].absoluteBoundingBox;
+  assert.ok(Math.abs(bb.width - 21.21) < 0.01, `the fake rotates the bounding box (${bb.width})`);
+  assert.deepEqual(s.N['n.7'].A, [50, 20, 20, 10]);
+  assert.equal(s.N['n.7'].B, s.N['n.7'].A);
+});

@@ -10,9 +10,13 @@
 //   `tables` is shared by every screen of a run and grows as screens are encoded (first-use order of a pre-order
 //   walk, own keys in the order of mapRefs below). V is given (Task 6 varNames) and never grows.
 //   tokens (tokens.json, optional): resolves role aliases (text / effect style names) and checks that a token's value
-//   equals the spec value before binding (colour: same hex + alpha; px: <= 0.01; radius compared after Figma's clamp
-//   to half the smaller side, so a 999px pill binds to radius.full 9999; opacity <= 0.005). Without it role typography
-//   and shadow paths cannot be resolved (reason 'no-style') and values are not checked.
+//   equals the spec value before binding (plan Global Constraint: colour same hex + alpha; px <= 0.01, radius too: a
+//   999px or 50% pill does not bind to radius.full 9999, it keeps its value, 'value-mismatch'; opacity <= 0.005).
+//   Without it role typography and shadow paths cannot be resolved (reason 'no-style') and values are not checked.
+// Names (shared with figma-vars.mjs, Task 6): Figma variable = token path without the `primitive.` tier, '.' -> '/'
+//   (primitive.color.c01 -> color/c01; role tokens keep their tier: role.text-muted -> role/text-muted); text style =
+//   `type/<name>` of primitive.typography.<name>; effect style = `shadow/<name>` of primitive.shadow.<name> (a role
+//   path is resolved through its alias first).
 // planBatches(encs, { limit = PAYLOAD_LIMIT, runtime, page? }) -> [{ n, screens, bytes, code }]
 //   Screens in order, greedily, while UTF-8 bytes of `code` <= limit. code = runtime with its single `__DATA__`
 //   replaced by the JSON of the batch data D = { batch: n, page?, C, F, I, V, S, M, screens: [{ screen, file, W, T }] }.
@@ -356,10 +360,7 @@ export function encodeScreen(spec, ctx = {}) {
     if ('c' in sv) { const a = sv.c != null ? hexOf(sv.c) : null; return a !== null && a === tokenHex(v); }
     const tv = v && typeof v === 'object' && typeof v.value === 'number' ? v.value : typeof v === 'number' ? v : null;
     if (tv === null) return true; // typography, shadow: tokenMap already matched them
-    if ('radius' in sv) {
-      const half = Math.min(n.w, n.h) / 2;
-      return sv.radius != null && Math.abs(Math.min(sv.radius, half) - Math.min(tv, half)) <= 0.01;
-    }
+    if ('radius' in sv) return sv.radius != null && Math.abs(sv.radius - tv) <= 0.01; // strict: a 999px pill is not radius.full 9999
     if ('num' in sv) return sv.num != null && Math.abs(sv.num - tv) <= 0.005;
     if ('px' in sv) return sv.px != null && Math.abs(sv.px - tv) <= 0.01;
     return true;

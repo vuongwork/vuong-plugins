@@ -233,7 +233,9 @@ test('variables bind by the token map: plain and run keys, missing variables and
   const [s] = decodeForTest(D);
   const row = s.tree.kids[0];
   // bg #26335c80 = c01 (alpha 0.5); padding T 10 px != space.16? no: paddingT is 10 and maps to space.10 -> no variable
-  assert.deepEqual(row.vars, { bg: 'color/c01', b0: 'border/1', sc: 'role/ink', op: 'opacity/80', pl: 'space/16', r0: 'role/card-radius' });
+  // the 999px pill radius does not equal radius.full (9999): not bound, the hard value stays (plan Global Constraint)
+  assert.deepEqual(row.vars, { bg: 'color/c01', b0: 'border/1', sc: 'role/ink', op: 'opacity/80', pl: 'space/16' });
+  assert.deepEqual(row.paint.radius, [999, 999, 0, 0]);
   assert.equal(row.effectStyle, 'shadow/s01');
   const txt = row.kids[0];
   // run 0 ('Mua ') and run 3 ('món', same style and colour as run 0) take run 0's bindings; run 2 is the line break
@@ -245,9 +247,9 @@ test('variables bind by the token map: plain and run keys, missing variables and
   assert.equal(plain.textStyle, 'type/t14-600');
   assert.equal(plain.vars, undefined);
   // c09 has no variable; c03 has none either; padding 10 has none; width of a FILL text cannot bind
-  assert.deepEqual(enc.unbound, { 'no-variable': 3, 'not-fixed': 1 });
+  assert.deepEqual(enc.unbound, { 'no-variable': 3, 'value-mismatch': 1, 'not-fixed': 1 });
   assert.deepEqual(enc.unboundList.map((u) => `${u.o} ${u.key} ${u.reason}`).sort(), [
-    'n.0 paddingT no-variable', 'n.0.0 color|1 no-variable', 'n.1 color no-variable', 'n.1 width not-fixed']);
+    'n.0 paddingT no-variable', 'n.0 radiusTL value-mismatch', 'n.0.0 color|1 no-variable', 'n.1 color no-variable', 'n.1 width not-fixed']);
   // mismatch: the token value differs from the spec value -> not bound
   const map2 = { s0: { 'n.0': { paddingL: 'primitive.space.10' } } };
   const enc2 = encodeScreen(small(), ctxFor({ map: map2, tables: tablesFor(['space/10']), tokens }));

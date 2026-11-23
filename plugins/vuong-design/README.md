@@ -186,10 +186,10 @@ Planora (18 screens, ds run with `vd-rules.json`, 2026-11-23; fixture `test/fixt
 
 | Measure | Value |
 |---|---|
-| Encoded data per screen, alone with its own tables | 8.96 KB on average (min 4.73 KB s13, max 17.13 KB s7) |
+| Encoded data per screen, alone with its own tables | 8.65 KB on average (min 4.39 KB s13, max 15.54 KB s7) |
 | `spec-norm` JSON per screen, for comparison | 13.47 KB on average |
-| Batches with an 8 KB stand-in builder | 4: s0-s3 44.95 KB, s4-s7 47.87 KB, s8-s11 43.46 KB, s12-s17 45.10 KB |
-| Token-map entries bound / not bound | 2785 / 1 (`conflict`: two border sides with the same colour but different tokens; Figma has one stroke paint) |
+| Batches with an 8 KB stand-in builder | 4: s0-s3 44.14 KB, s4-s7 45.38 KB, s8-s11 42.46 KB, s12-s17 44.12 KB |
+| Token-map entries bound / not bound | 2217 / 569: 568 `value-mismatch` (pill corners, 999px or 50%, mapped to `radius.full` 9999; a variable is bound only when its value equals the spec value, so they keep their px value) and 1 `conflict` (two border sides with the same colour but different tokens; Figma has one stroke paint) |
 | Nodes with values the format cannot carry (`raw`) | 0 |
 
 The spike's format was about 8 KB per screen. The batch count will change once the real builder (Task 5, at most 10 KB) replaces the stand-in.

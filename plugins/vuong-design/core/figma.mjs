@@ -4,6 +4,7 @@
 //
 //   node core/figma.mjs plan   --ds <ds.mjs output folder> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo]
 //   node core/figma.mjs ingest --out <dir> --result <file> [--batch vars-NN | batch-NN | N]
+//   node core/figma.mjs shots --out <dir>; ingest-shots --out <dir> --result <file>; shots-clean --out <dir>
 //   node core/figma.mjs check  --out <dir> [--mutate] [--allowlist <json>] [--html <file>] [--root <sel>] [--widen <sel>]
 //        [--name <sel>] [--widen-by <px>] [--viewport <px>] [--no-webfonts] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>]
 //
@@ -33,6 +34,11 @@
 //   readback (pending, failed, skippedEdited) has no Figma boxes: every node unchecked. Adds per screen the Figma
 //   section (proxy vs Figma, unread checks, fontMissing, unbound, errors) to report.json / report.html. --mutate: the
 //   four readback mutations of mutate.mjs (FIG_KINDS); a missed one fails the run.
+// shots (T8): get_screenshot caps at a node's native size (1x). shots writes shots.js: on page _vd-shots (created when
+//   missing, old children removed) a clone of every built screen frame (state.json roots), rescale(2), in a row;
+//   returns { page, clones: { screen: id }, sizes: { screen: [w, h] }, missing, errors }. The Screens page is not
+//   changed. ingest-shots records it in state.shots and prints the get_screenshot calls (maxDimension = the clone's
+//   larger side = 2 x the frame's) -> shot-<screen>.png; shots-clean writes shots-clean.js (removes the clones and the page).
 // Exit codes: 0 every screen passes the gate (and no mutation missed), 1 otherwise, 2 usage / setup / malformed input.
 import { parseArgs } from 'node:util';
 import { createHash } from 'node:crypto';
@@ -47,6 +53,7 @@ import { ordOf, decode, figmaProxy, shotAtDsf, proxyVsFigma, effectNodes } from 
 const RUNTIME = readFileSync(new URL('./figma-runtime.js', import.meta.url), 'utf8');
 export const USAGE = `usage: node core/figma.mjs plan --ds <ds output dir> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo]
        node core/figma.mjs ingest --out <dir> --result <file> [--batch vars-NN|batch-NN|N]
+       node core/figma.mjs shots --out <dir> | ingest-shots --out <dir> --result <file> | shots-clean --out <dir>
        node core/figma.mjs check --out <dir> [--mutate] [--allowlist <json>] [--html <file>] [--root <sel>] [--widen <sel>]
             [--name <sel>] [--widen-by <px>] [--viewport <px>] [--no-webfonts] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>]`;
 
@@ -174,6 +181,7 @@ async function plan(argv, log) {
   if (changed.length) log(`changed since they were sent: ${changed.join(', ')} (pending again)`);
   log(`estimate: ${tot.useFigma} use_figma calls (${nv} vars + ${tot.useFigma - nv} screen batches), ${tot.screenshot} get_screenshot calls, ${st.run.kb} KB to send`);
   log(`this run (--max-calls ${maxCalls}): send ${send.length ? send.join(', ') : 'nothing'} (${used} calls)${stopBefore ? `; stops before ${stopBefore}` : ''}`);
+  if (tot.screenshot) log('screenshots: after the screen batches run figma.mjs shots --out <dir> (2x clones on page _vd-shots, then ingest-shots and shots-clean: 2 more use_figma calls; README "Figma CLI" step 3)');
   for (const w of warnings) log(`warning: ${w}`);
   if (tot.useFigma + tot.screenshot > maxCalls) log(`warning: the plan needs ${tot.useFigma + tot.screenshot} calls, over --max-calls ${maxCalls}: after this run, ingest the results and run plan again to continue`);
   return 0;
@@ -287,6 +295,103 @@ async function ingest(argv, log) {
     log(`${key}: ${b.status}; built ${by('done').join(', ') || 'none'}${by('skippedEdited').length ? `; edited by hand, kept (skippedEdited): ${by('skippedEdited').join(', ')}` : ''}${failed ? `; failed: ${by('failed').join(', ')}` : ''}`);
   }
   writeFileSync(statePath(o.out), json(st));
+  return 0;
+}
+
+// ---------------- shots (2x screenshots, T8) ----------------
+// get_screenshot caps at a node's native size, so a screen frame shoots at 1x. shots.js clones every built frame onto
+// the page _vd-shots (the clone is created next to its original, then moved: the Screens page ends as it was), rescales
+// the clone 2x and lines the clones up in a row; the AI shoots each clone, then shots-clean.js removes them.
+export const SHOTS_PAGE = '_vd-shots';
+export function shotsPayload(screens, { page = SHOTS_PAGE, scale = 2, gap = 80 } = {}) {
+  const D = { page, scale, gap, screens };
+  return `// vuong-design 2x screenshots (figma.mjs shots): rescaled clones of the screen frames on their own page
+const D = ${JSON.stringify(D)};
+const F = figma;
+let pg = F.root.children.find((p) => p.name === D.page);
+if (!pg) { pg = F.createPage(); pg.name = D.page; }
+if (pg.loadAsync) await pg.loadAsync();
+for (const c of [...pg.children]) c.remove();
+const out = { page: pg.id, clones: {}, sizes: {}, missing: [], errors: [] };
+let x = 0;
+for (const s of D.screens) {
+  try {
+    const n = await F.getNodeByIdAsync(s.root);
+    if (!n || n.removed) { out.missing.push(s.screen); continue; }
+    const c = n.clone();
+    pg.appendChild(c);
+    c.rescale(D.scale);
+    c.x = x; c.y = 0; x += c.width + D.gap;
+    out.clones[s.screen] = c.id;
+    out.sizes[s.screen] = [Math.round(c.width * 100) / 100, Math.round(c.height * 100) / 100];
+  } catch (e) { out.errors.push({ screen: s.screen, msg: String((e && e.message) || e).slice(0, 200) }); }
+}
+return out;
+`;
+}
+export function shotsCleanPayload({ page = SHOTS_PAGE } = {}) {
+  return `// vuong-design: remove the screenshot clones (figma.mjs shots-clean)
+const D = ${JSON.stringify({ page })};
+const F = figma, pg = F.root.children.find((p) => p.name === D.page);
+if (!pg) return { page: null, removed: 0, pageRemoved: false };
+if (pg.loadAsync) await pg.loadAsync();
+const id = pg.id, n = pg.children.length;
+for (const c of [...pg.children]) c.remove();
+let pageRemoved = false;
+if (F.currentPage !== pg && F.root.children.length > 1) { pg.remove(); pageRemoved = true; }
+return { page: id, removed: n, pageRemoved };
+`;
+}
+
+async function shots(argv, log) {
+  const o = args(argv, { out: { type: 'string' } });
+  if (!o.out) throw new UsageError('--out <dir> is required');
+  const st = loadState(o.out), F = figDir(o.out);
+  const list = Object.entries(st.screens).filter(([, s]) => s.status === 'done' && s.root).map(([screen, s]) => ({ screen, root: s.root }));
+  if (!list.length) throw new UsageError('no built screen in state.json (send and ingest the screen batches first)');
+  writeFileSync(join(F, 'shots.js'), shotsPayload(list));
+  log(`shots: ${join(F, 'shots.js')} clones ${list.length} screen frames (${list.map((s) => s.screen).join(', ')}) at 2x onto page ${SHOTS_PAGE}`);
+  log('next: send it with use_figma, save the result, run figma.mjs ingest-shots --out <dir> --result <file>');
+  return 0;
+}
+
+async function ingestShots(argv, log) {
+  const o = args(argv, { out: { type: 'string' }, result: { type: 'string' } });
+  if (!o.out) throw new UsageError('--out <dir> is required');
+  if (!o.result) throw new UsageError('--result <file> is required');
+  const st = loadState(o.out), F = figDir(o.out);
+  const res = readJson(resolve(o.result), 'shots result');
+  const bad = [];
+  if (!isObj(res)) bad.push('not an object');
+  else {
+    if (typeof res.page !== 'string') bad.push('page is not a string');
+    if (!isObj(res.clones)) bad.push('clones is not an object');
+    else for (const [s, id] of Object.entries(res.clones)) {
+      if (!st.screens[s]) bad.push(`clones.${s}: no such screen`);
+      if (typeof id !== 'string') bad.push(`clones.${s}: not a node id`);
+    }
+    if (res.sizes !== undefined && !(isObj(res.sizes) && Object.values(res.sizes).every((v) => isArr(v) && v.length === 2 && v.every((x) => typeof x === 'number')))) bad.push('sizes is not { screen: [w, h] }');
+  }
+  if (bad.length) throw new UsageError(`${o.result} is not a valid shots result:\n  ${bad.join('\n  ')}`);
+  copyFileSync(resolve(o.result), join(F, 'result-shots.json'));
+  st.shots = { page: res.page, clones: res.clones, ...(res.sizes ? { sizes: res.sizes } : {}), ...(res.missing && res.missing.length ? { missing: res.missing } : {}) };
+  writeFileSync(statePath(o.out), json(st));
+  for (const [s, id] of Object.entries(res.clones)) {
+    const z = res.sizes && res.sizes[s];
+    log(`  ${s}: get_screenshot nodeId ${id}${z ? ` maxDimension ${Math.ceil(Math.max(...z))}` : ' maxDimension = the clone\'s larger side'} -> ${join(F, `shot-${safe(s)}.png`)}`);
+  }
+  if (res.missing && res.missing.length) log(`missing frames (not cloned): ${res.missing.join(', ')}`);
+  log('then: run figma.mjs shots-clean --out <dir> and send shots-clean.js with use_figma');
+  return 0;
+}
+
+async function shotsClean(argv, log) {
+  const o = args(argv, { out: { type: 'string' } });
+  if (!o.out) throw new UsageError('--out <dir> is required');
+  loadState(o.out);
+  const p = join(figDir(o.out), 'shots-clean.js');
+  writeFileSync(p, shotsCleanPayload());
+  log(`shots-clean: ${p} removes the clones on page ${SHOTS_PAGE} (and the page)`);
   return 0;
 }
 
@@ -462,8 +567,11 @@ export async function main(argv, deps = {}) {
     if (cmd === 'plan') return await plan(rest, log);
     if (cmd === 'ingest') return await ingest(rest, log);
     if (cmd === 'check') return await check(rest, log, deps);
+    if (cmd === 'shots') return await shots(rest, log);
+    if (cmd === 'ingest-shots') return await ingestShots(rest, log);
+    if (cmd === 'shots-clean') return await shotsClean(rest, log);
     if (cmd === '--help' || cmd === '-h' || cmd === 'help') { log(USAGE); return 0; }
-    throw new UsageError(cmd ? `unknown command ${cmd}` : 'a command is required (plan, ingest, check)');
+    throw new UsageError(cmd ? `unknown command ${cmd}` : 'a command is required (plan, ingest, shots, ingest-shots, shots-clean, check)');
   } catch (e) {
     if (e instanceof UsageError) { log(`error: ${e.message}\n${USAGE}`); return 2; }
     throw e;

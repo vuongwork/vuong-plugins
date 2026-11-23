@@ -259,6 +259,7 @@ Numbers are rounded to 0.01.
 ```
 node core/figma.mjs plan   --ds <ds output> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo]
 node core/figma.mjs ingest --out <dir> --result <file> [--batch vars-NN | batch-NN | N]
+node core/figma.mjs shots --out <dir>    # then ingest-shots --out <dir> --result <file>, shots-clean --out <dir>
 node core/figma.mjs check  --out <dir> [--mutate] [--allowlist <json>] [--html <file> --root <sel> ...capture options] [--tol-* <px>]
 ```
 
@@ -292,7 +293,13 @@ Exit codes: 0 every screen passes the gate (and no mutation was missed), 1 other
 AI workflow (one Figma file the user named; never two writers on the same file):
 1. Run `ds.mjs`, then `figma.mjs plan --ds <ds out> --out <dir>`. Tell the user the estimate before the first write.
 2. For each batch of this run, in order (`vars-*` first): send the file's content as the code of `use_figma`, save the returned JSON as a file, run `figma.mjs ingest --out <dir> --result <file>`. For a `failed` batch: read its errors, fix, run `plan` again (done batches are kept), resend.
-3. For each built screen: `get_screenshot` of its frame (`root` in `state.json`) with `maxDimension` = 2 × the larger side of the frame (2x). Download it with curl as `<dir>/figma/shot-<screen>.png`.
+3. Screenshots at 2x. `get_screenshot` never goes above a node's native size, so a shot of the screen frame itself is 1x. Instead:
+   1. `figma.mjs shots --out <dir>` writes `shots.js`. Send it with `use_figma`. On the page `_vd-shots` (created when missing, its old children removed) it clones every built screen frame (`root` in `state.json`), calls `rescale(2)` on the clone and places the clones in a row. It returns `{ page, clones: { screen: id }, sizes: { screen: [w, h] }, missing, errors }`. The Screens page ends as it was (a clone is created next to its frame and moved at once).
+   2. Save the result and run `figma.mjs ingest-shots --out <dir> --result <file>`. It records the clones in `state.shots` and prints one `get_screenshot` per screen: the clone's id, `maxDimension` = the clone's larger side (2 × the frame's).
+   3. Save each image as `<dir>/figma/shot-<screen>.png` (curl).
+   4. `figma.mjs shots-clean --out <dir>` writes `shots-clean.js`. Send it: it removes the clones and the page.
+
+   check derives the scale from the PNG width / W_A (a 608 px shot of a 304 px frame is scale 2, used as it is). This costs 2 more `use_figma` calls per run than the estimate prints.
 4. Run `figma.mjs check --out <dir> [--mutate]` and open `<dir>/figma/report.html`.
 5. Over `--max-calls`: after ingesting, run `plan` again; it continues with the batches not yet done.
 
@@ -304,7 +311,9 @@ Files in `<out>/figma/`:
 | `batch-NN.js`, `batch-NN.data.json` | plan | one screen batch: runtime + data, and the data D alone (check decodes the readback with it) |
 | `state.json` | plan, ingest | progress (shape below) |
 | `result-<key>.json` | ingest | the BatchResult as returned |
-| `shot-<screen>.png` | the AI | `get_screenshot` of the screen frame at 2x |
+| `shots.js`, `shots-clean.js` | shots, shots-clean | `use_figma` code: the 2x clones on `_vd-shots`, and their removal |
+| `result-shots.json` | ingest-shots | the shots result as returned |
+| `shot-<screen>.png` | the AI | `get_screenshot` of the screen's 2x clone |
 | `report.json`, `report.html` | check | as layout.mjs, plus `figma` per screen |
 
 `state.json`:
@@ -314,5 +323,6 @@ Files in `<out>/figma/`:
                       status: 'pending' | 'done' | 'failed', result?, errors?, fontMissing? } },
   screens: { [id]: { batch, status: 'pending' | 'done' | 'failed' | 'skippedEdited', result?, root?, sig?,
                      edited?, skippedEdited?, extra?, errors?, fontMissing?, unbound?: { [reason]: n } } },
+  shots?: { page, clones: { [screen]: clone id }, sizes?: { [screen]: [w, h] }, missing? },
   run: { maxCalls, calls: { useFigma, screenshot, total }, kb, send: [key], sendCalls, stopBefore } }
 ```

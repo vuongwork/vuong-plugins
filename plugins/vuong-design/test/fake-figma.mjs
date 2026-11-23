@@ -25,6 +25,8 @@
 // height / letter spacing without a valid unit; an effect colour with a channel outside 0..1 or without `a`, an unknown type.
 // figma._collections lists the created collections.
 // ignore: property names silently ignored by the setter on created frames / texts / svg frames (readback diff test).
+// Screenshots (T8, figma.mjs shots): figma.getNodeByIdAsync, node.clone() (inserted after the node in its parent),
+// node.rescale(s), page.remove() (throws on the current page or the last page).
 
 export const DEFAULT_FONTS = ['Inter|Regular', 'Inter|Medium', 'Inter|Semi Bold', 'Inter|Bold',
   ...['Regular', 'Medium', 'SemiBold', 'Bold', 'ExtraBold', 'Italic'].map((s) => 'Be Vietnam Pro|' + s)];
@@ -221,6 +223,27 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
       // real Figma: a text field (VariableBindableTextField) of a TEXT node is a VariableAlias[] (one per range)
       this.boundVariables = { ...this.boundVariables, [field]: this.type === 'TEXT' && TEXT_FIELDS.has(field) ? [alias(v)] : alias(v) };
     }
+    // clone(): a deep copy (new ids, plugin data copied) inserted right after the node in the same parent, as in
+    // real Figma; rescale(s): the node and its whole subtree scaled by s (sizes, and the children's positions)
+    clone() {
+      this._ok();
+      const c = this._copy(), p = this.parent;
+      if (p) { p._kids.splice(p._kids.indexOf(this) + 1, 0, c); c.parent = p; log.push(['append', p.id, c.id, c.width, c.height]); }
+      return c;
+    }
+    _copy() {
+      const c = Object.create(Object.getPrototypeOf(this));
+      for (const k of Object.keys(this)) c[k] = this[k];
+      c.id = nid(); c._pd = { ...this._pd }; c.parent = null;
+      if (this._kids) c._kids = this._kids.map((k) => { const x = k._copy(); x.parent = c; return x; });
+      return c;
+    }
+    rescale(f) {
+      this._ok();
+      if (!(f >= 0.01)) throw new Error('rescale: scale must be >= 0.01');
+      const w = (n, top) => { n.width *= f; n.height *= f; if (!top) { n._x *= f; n._y *= f; } for (const k of n._kids || []) w(k, false); };
+      w(this, true);
+    }
     findAll(fn) {
       const out = [];
       const w = (n) => { for (const c of n._kids || []) { if (fn(c)) out.push(c); w(c); } };
@@ -322,7 +345,16 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
 
   class Vector extends Node { constructor() { super('VECTOR'); this._born = true; } }
 
-  class Page extends Parent { constructor(name) { super('PAGE'); this.name = name; } }
+  class Page extends Parent {
+    constructor(name) { super('PAGE'); this.name = name; }
+    // real Figma: the current page cannot be removed, nor the last page of a file
+    remove() {
+      this._ok();
+      if (current === this) throw new Error('cannot remove the current page');
+      if (root.children.length < 2) throw new Error('a file needs at least one page');
+      root.children.splice(root.children.indexOf(this), 1); this._removed = true;
+    }
+  }
   const root = { children: [new Page('Page 1')] };
   let current = root.children[0];
   // ignore: property names whose setter is silently a no-op (an API that drops a setting), to test the readback diff
@@ -349,6 +381,11 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
       const col = (k) => { const m = new RegExp(`<g[^>]*\\s${k}="(#[0-9a-f]{6})"`).exec(svg); if (!m) return []; const x = parseInt(m[1].slice(1), 16); return [{ type: 'SOLID', color: { r: (x >> 16 & 255) / 255, g: (x >> 8 & 255) / 255, b: (x & 255) / 255 } }]; };
       v.fills = col('fill'); v.strokes = col('stroke');
       return f;
+    },
+    async getNodeByIdAsync(id) {
+      const w = (n) => { if (n.id === id) return n; for (const k of n._kids || []) { const x = w(k); if (x) return x; } return null; };
+      for (const p of root.children) { const x = w(p); if (x) return x; }
+      return null;
     },
     createImage: (bytes) => ({ hash: 'img' + bytes.length }),
     base64Decode: (s) => Uint8Array.from(Buffer.from(s, 'base64')),

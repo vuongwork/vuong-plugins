@@ -233,6 +233,7 @@ test('check: a readback matching the page passes in the norm role (screenshot re
   }
   assert.deepEqual(rep.screens.map((s) => s.figma.shot.rescaled), [true, false]);
   assert.equal(rep.screens[0].figma.shot.scale, 4);
+  assert.equal(rep.screens[1].figma.shot.scale, 2, 'a 2x shot is used as it is; its crops ran (cropChecked above)');
   assert.deepEqual(rep.mutationsMissed, []);
   assert.equal(code, 0, q.lines.join('\n'));
   const html = readFileSync(join(F, 'report.html'), 'utf8');
@@ -298,5 +299,53 @@ test('plan warns when a vars batch failed and screen batches are still scheduled
   const q2 = quiet();
   await main(['plan', '--ds', h.ds, '--out', h.out], { log: q2.log });
   assert.ok(!q2.lines.some((l) => /failed when last sent/.test(l)), q2.lines.join('\n'));
+  rmSync(h.d, { recursive: true, force: true });
+});
+
+// T8: get_screenshot caps at a node's native size, so a 300 px frame shoots at 1x. shots.js clones each built frame
+// onto the page _vd-shots and rescales the clone 2x; the AI shoots the clones, then shots-clean.js removes them
+test('shots: clones of the built frames at 2x on _vd-shots, the Screens page untouched; ingest-shots records them; shots-clean removes them', async () => {
+  const h = handDs();
+  await main(['plan', '--ds', h.ds, '--out', h.out], { log: () => {} });
+  const fig = makeFakeFigma({ fonts: DEFAULT_FONTS });
+  const res = await sendAll(h.F, fig);
+  assert.equal(await main(['ingest', '--out', h.out, '--result', save(h.d, 'r1.json', res['batch-01'])], { log: () => {} }), 0);
+  const screensPage = fig.root.children.find((p) => p.name === 'Screens');
+  const snap = () => JSON.stringify(screensPage.children.map((c) => [c.id, c.x, c.y, c.width, c.height, c.getSharedPluginData('vuongdesign', 'sig'), c.children.length]));
+  const before = snap();
+  const q = quiet();
+  assert.equal(await main(['shots', '--out', h.out], { log: q.log }), 0);
+  const code = readFileSync(join(h.F, 'shots.js'), 'utf8');
+  let r;
+  for (let i = 0; i < 2; i++) r = await runCode(code, fig); // a rerun replaces the old clones
+  assert.equal(snap(), before, 'the Screens page is not changed');
+  const shots = fig.root.children.find((p) => p.name === '_vd-shots');
+  assert.equal(r.page, shots.id);
+  assert.equal(shots.children.length, 2);
+  const st0 = readJson(h.F, 'state.json');
+  for (const [i, s] of ['s0', 's1'].entries()) {
+    const c = shots.children[i];
+    assert.equal(r.clones[s], c.id);
+    assert.notEqual(c.id, st0.screens[s].root);
+    assert.deepEqual([c.width, c.height], [600, 400], `${s}: rescaled 2x`);
+    assert.deepEqual(r.sizes[s], [600, 400]);
+    assert.equal(c.children[0].width, 568, 'children scale too');
+  }
+  assert.deepEqual(shots.children.map((c) => [c.x, c.y]), [[0, 0], [680, 0]], 'in a row');
+  // ingest-shots: the clone ids go into state.json, with the get_screenshot size per screen
+  const q2 = quiet();
+  assert.equal(await main(['ingest-shots', '--out', h.out, '--result', save(h.d, 'shots.json', r)], { log: q2.log }), 0);
+  const st = readJson(h.F, 'state.json');
+  assert.deepEqual(st.shots.clones, r.clones);
+  assert.equal(st.shots.page, r.page);
+  assert.ok(q2.lines.some((l) => l.includes(r.clones.s0) && /maxDimension 600/.test(l) && /shot-s0\.png/.test(l)), q2.lines.join('\n'));
+  assert.equal(await main(['ingest-shots', '--out', h.out, '--result', save(h.d, 'bad.json', { page: 'x', clones: { s9: '1:2' } })], { log: () => {} }), 2);
+  assert.deepEqual(readJson(h.F, 'state.json'), st, 'a bad result leaves the state as it was');
+  // shots-clean: the clones and the page go
+  assert.equal(await main(['shots-clean', '--out', h.out], { log: () => {} }), 0);
+  const c = await runCode(readFileSync(join(h.F, 'shots-clean.js'), 'utf8'), fig);
+  assert.deepEqual([c.removed, c.pageRemoved], [2, true]);
+  assert.equal(fig.root.children.find((p) => p.name === '_vd-shots'), undefined);
+  assert.equal(snap(), before);
   rmSync(h.d, { recursive: true, force: true });
 });

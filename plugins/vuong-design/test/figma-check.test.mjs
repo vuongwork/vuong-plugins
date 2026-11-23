@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ordOf, decode, actualNodes, figmaDom, figmaProxy, rgbOf, splitFont, styleWeight, pngSize, proxyVsFigma, effectNodes } from '../core/figma-check.mjs';
+import { ordOf, decode, actualNodes, figmaDom, figmaProxy, rgbOf, splitFont, styleWeight, pngSize, proxyVsFigma, effectNodes, shotAtDsf } from '../core/figma-check.mjs';
 import { renderFigma } from '../core/report-html.mjs';
 import { chooseFig, mutateFig, FIG_KINDS } from '../core/mutate.mjs';
 import { gate } from '../core/pipeline.mjs';
@@ -201,4 +201,12 @@ test('effects the readback cannot see are listed per node for the report (I2)', 
   assert.match(html, /2 nodes have effects not read back on Figma — compare the crop \/ screenshot by eye/);
   assert.match(html, /<code>n\.0<\/code> box-shadow rgb\(0, 0, 0\)/);
   assert.doesNotMatch(renderFigma({ figma: { ...f, effectsNotRead: { count: 0, nodes: [] } } }), /not read back on Figma/);
+});
+
+// T8: a 2x shot of a 304 px screen (shots.js clone, 608 px wide) is used as it is: scale 2, no rescale (no browser needed)
+test('shotAtDsf: a 608 px screenshot of a 304 px root has scale 2 and is not rescaled', async () => {
+  const png = Buffer.alloc(24); png.writeUInt32BE(0x89504e47, 0); png.write('IHDR', 12, 'ascii'); png.writeUInt32BE(608, 16); png.writeUInt32BE(1320, 20);
+  const r = await shotAtDsf(null, png, 304);
+  assert.deepEqual([r.scale, r.rescaled], [2, false]);
+  assert.ok(r.png.equals(png));
 });

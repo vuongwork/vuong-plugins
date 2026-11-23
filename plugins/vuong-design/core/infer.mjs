@@ -21,13 +21,17 @@
 // inferScreen(screen, { facts }): facts = the Figma facts measured on real Figma (figma-probe.mjs, default loadFacts()).
 // The layout facts are applied here, where the boxes at A and B are, so both proxies render the spec that goes to
 // Figma (applyFigmaModel keeps only lineHeightFrac and strokeOverlay). Each branch flags the node:
-//  - shrinkFill (plan 3 Task 2): an item flagged `shrink` (capture's flex.n = its unshrunk main size) that infer made
-//    FILL on its container's main axis: maxWidth and growText 'ok' -> FILL + max = flex.n (horizontal main axis only:
-//    spec min/max are widths), i.e. it fills when space is short and stops at its natural size, like flex-shrink;
-//    growText alone 'ok' -> FILL without a max; maxWidth alone or neither -> unchanged. Flag `shrinkModelled`
-//    (info only: verify lets it explain nothing). The `shrink` flag stays: Figma shares a short row equally among FILL
-//    items, CSS shrinks in proportion to the basis, so the size at the squeezed width still differs (main-axis size).
-//    No new spec field: flex.n is read from the source node when the item is sized.
+//  - shrinkFill (plan 3 Task 2): among the items of one container that are flagged `shrink` (capture's flex.n = the
+//    unshrunk main size) and that infer made FILL on its main axis, only the most squeezed one (largest flex.n - size at
+//    A) is modelled: maxWidth and growText 'ok' -> FILL + max = flex.n (horizontal main axis only: spec min/max are
+//    widths), i.e. it fills when space is short and stops at its natural size, like flex-shrink; growText alone 'ok' ->
+//    FILL without a max; maxWidth alone or neither -> unchanged. The other squeezed items become FIXED at their size at
+//    A (width A is the design width: with one FILL item left it gets exactly the rest of the row there; Figma would
+//    share a short row equally among several FILL items where CSS shrinks in proportion). Flag `shrinkModelled` on
+//    the modelled item only (info only: verify lets it explain nothing). Every `shrink` flag stays: it explains the
+//    FIXED siblings' size at B (and any residual of the modelled item). No new spec field: flex.n is read from the
+//    source node when the item is sized. A space-between container is left as it was: there a FILL item removes the
+//    distribution and a FIXED sibling at its A size moves the far end item, so either way the layout changes meaning.
 //  - scaleBasis 'padding': SCALE (and the SCALE anchor wrapper) only when the parent has no border; otherwise the best
 //    fixed constraint, flag `scaleBasis`.
 //  - zeroWidthAnchor 'moves': no zero-size anchor wrapper; the node keeps the best fixed constraint, flag `noAnchor`.
@@ -523,22 +527,28 @@ export function inferScreen(screen, opts = {}) {
         if (cnt === 'FILL') inf.fillAx[C] = true;
         childSpecs.push(cs);
       }
+      // facts.shrinkFill (header): of the squeezed FILL items, the most squeezed one stays FILL (+ max at its unshrunk
+      // size); the others become FIXED at their size at A, so the one FILL item gets exactly the rest of the row at A.
+      // Not in a space-between container (header)
+      let shrinkMax = null;
+      if (sf.growText === 'ok' && !lay.sb) {
+        const sq = fills.map(([f, cs]) => [f, cs, shrunk(f)]).filter(([, , sh]) => sh && sh.ax === P);
+        if (sq.length) {
+          const [f, cs, sh] = sq.reduce((a, b) => (b[2].n - b[2].size > a[2].n - a[2].size ? b : a));
+          for (const [, o] of sq) if (o !== cs) o.sz[P] = 'FIXED';
+          for (let i = fills.length - 1; i >= 0; i--) if (fills[i][1].sz[P] !== 'FILL') fills.splice(i, 1);
+          const withMax = sf.maxWidth === 'ok' && P === 0;
+          if (withMax) shrinkMax = [cs, r2(sh.n)];
+          flag(f.id, 'shrinkModelled', `${withMax ? `FILL + maxWidth ${r2(sh.n)}px` : 'FILL'}${sq.length > 1 ? `; ${sq.length - 1} squeezed sibling(s) FIXED at A` : ''}`);
+        }
+      }
       // min/max are widths (Figma minWidth/maxWidth), so only set on a horizontal primary axis
       if (fills.length === 1 && P === 0) {
         // a single FILL child that grows less than the free space → FILL capped by maxWidth
         const [f, cs] = fills[0];
         if ((L.B[Z] - L.A[Z]) - (f.B[Z] - f.A[Z]) > GROW) cs.max = r2(f.B[Z]);
       }
-      // facts.shrinkFill: a squeezed FILL item -> FILL + max at its unshrunk size (header)
-      if (sf.growText === 'ok') {
-        for (const [f, cs] of fills) {
-          const sh = shrunk(f);
-          if (!sh || sh.ax !== P) continue;
-          const withMax = sf.maxWidth === 'ok' && P === 0;
-          if (withMax) cs.max = r2(sh.n);
-          flag(f.id, 'shrinkModelled', withMax ? `FILL + maxWidth ${r2(sh.n)}px` : 'FILL');
-        }
-      }
+      if (shrinkMax) shrinkMax[0].max = shrinkMax[1];
       if (fills.length > 1) {
         const spread = (M) => Math.max(...fills.map(([f]) => f[M][Z])) - Math.min(...fills.map(([f]) => f[M][Z]));
         const eqA = spread('A') <= 1, eqB = spread('B') <= 1;

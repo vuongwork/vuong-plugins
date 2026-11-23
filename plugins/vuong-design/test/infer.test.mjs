@@ -490,19 +490,21 @@ test('facts: measured defaults change nothing but shrinkFill; shrinkFill no/no g
   assert.equal(out(inferScreen(sayRow(), { facts: facts({ shrinkFill: { maxWidth: 'ok', growText: 'no' } }) })), BEFORE.say, 'maxWidth alone: nothing special');
 });
 
-test('facts shrinkFill ok/ok: a shrink item is FILL capped at its unshrunk size; shrink kept, shrinkModelled added', () => {
+test('facts shrinkFill ok/ok: only the most squeezed item is FILL + max; its squeezed siblings are FIXED at A', () => {
   const { spec, flags } = inferScreen(sayRow(), { facts: facts() });
   const by = byIdOf(spec);
-  assert.deepEqual([by.get('n.0').sz[0], by.get('n.0').max], ['FILL', 34]);
+  // bubble squeezed 65.5 px, avatar 8 px: the bubble fills the rest of the row at A and stops at 302.5
   assert.deepEqual([by.get('n.1').sz[0], by.get('n.1').max], ['FILL', 302.5]);
+  assert.deepEqual([by.get('n.0').sz[0], by.get('n.0').w, by.get('n.0').max], ['FIXED', 26, undefined]);
   const of = (kind) => flags.filter((f) => f.kind === kind).map((f) => f.id).sort();
-  assert.deepEqual(of('shrink'), ['n.0', 'n.1'], 'shrink still explains the A residual (Figma shares equally, CSS proportionally)');
-  assert.deepEqual(of('shrinkModelled'), ['n.0', 'n.1']);
-  // growText alone: FILL without a max
+  assert.deepEqual(of('shrink'), ['n.0', 'n.1'], 'shrink still explains the FIXED avatar at B');
+  assert.deepEqual(of('shrinkModelled'), ['n.1']);
+  assert.deepEqual(of('weightedFill'), [], 'one FILL item left: no weighted split');
+  // growText alone: the same choice, no max from shrinkFill (the single-FILL rule still caps a lone FILL child at its B size)
   const g = inferScreen(sayRow(), { facts: facts({ shrinkFill: { maxWidth: 'no', growText: 'ok' } }) });
   const gb = byIdOf(g.spec);
-  assert.deepEqual([gb.get('n.0').sz[0], gb.get('n.0').max, gb.get('n.1').max], ['FILL', undefined, undefined]);
-  assert.equal(g.flags.filter((f) => f.kind === 'shrinkModelled').length, 2);
+  assert.deepEqual([gb.get('n.1').sz[0], gb.get('n.0').sz[0]], ['FILL', 'FIXED']);
+  assert.deepEqual(g.flags.filter((f) => f.kind === 'shrinkModelled').map((f) => f.id), ['n.1']);
 });
 
 test("facts scaleBasis 'padding': SCALE only when the parent has no border; a bordered parent gets the fixed constraint", () => {
@@ -532,4 +534,20 @@ test("facts scaleInHug 'breaks': no SCALE for the child of a hugging parent", ()
   assert.deepEqual(r.flags.map((f) => [f.id, f.kind]), [['n.0.1', 'scaleInHug']]);
   // not hugging on that axis: SCALE stays
   assert.equal(byIdOf(inferScreen(pctScreen(), { facts: facts({ scaleInHug: 'breaks' }) }).spec).get('n.0.1').abs.c, 'SCALE');
+});
+
+test('facts shrinkFill: a space-between container keeps its earlier sizing (no FILL + max, no shrinkModelled)', () => {
+  // planora s11 shape: two squeezed items at A (gap 8), at their natural sizes pushed apart at B
+  const sbRow = () => screenOf(N('n', [0, 0, 244, 40], [0, 0, 364, 40], {
+    flexBox: { jc: 'space-between', fd: 'row', ov: false },
+    kids: [
+      N('n.0', [0, 0, 164.81, 40], [0, 0, 216.56, 40], { flex: { g: 0, s: 1, b: 'auto', ax: 'x', n: 216.56 } }),
+      N('n.1', [172.81, 0, 71.19, 40], [270.47, 0, 93.53, 40], { flex: { g: 0, s: 1, b: 'auto', ax: 'x', n: 93.53 } }),
+    ],
+  }));
+  const r = inferScreen(sbRow(), { facts: facts() });
+  assert.equal(r.spec.lay.sb, 1);
+  assert.equal(out(r), out(inferScreen(sbRow(), { facts: facts(NO_SHRINK) })));
+  assert.equal(r.flags.filter((f) => f.kind === 'shrinkModelled').length, 0);
+  assert.equal(r.flags.filter((f) => f.kind === 'shrink').length, 2);
 });

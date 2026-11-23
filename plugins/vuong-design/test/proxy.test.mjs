@@ -94,19 +94,19 @@ test('FILL with minWidth/maxWidth: 150/98/40 at 300, 184/184/40 at 420', { skip 
   }
 });
 
-// plan 3 Task 2 (shrinkFill, probe case (a) ok): FILL + maxWidth fills when space is short, stops at the max, and the
-// leftover goes to the other FILL item, then to the packing: planora s3 .say row, items capped at their natural size
-test('FILL + maxWidth siblings: 34/229 at 272; capped 34/302.5 and centred at 368', { skip }, async () => {
+// plan 3 Task 2 (shrinkFill, probe case (a) ok): FILL + maxWidth fills the rest of the row when space is short and
+// stops at the max; the leftover goes to the packing. Planora s3 .say row: avatar FIXED at its A size, bubble capped
+test('FILL + maxWidth beside a FIXED sibling: 26/237 at 272; capped 302.5 and centred at 368', { skip }, async () => {
   const spec = { id: 'n', t: 'F', w: 272, h: 34, sz: ['FIXED', 'FIXED'], lay: { d: 'H', p: [0, 0, 0, 0], g: 9, pa: 'C', ca: 'S' }, kids: [
-    { id: 'n.0', t: 'F', w: 26, h: 34, sz: ['FILL', 'FIXED'], max: 34 },
+    { id: 'n.0', t: 'F', w: 26, h: 34, sz: ['FIXED', 'FIXED'] },
     { id: 'n.1', t: 'F', w: 237, h: 34, sz: ['FILL', 'FIXED'], max: 302.5 },
   ] };
   const at = async (W) => (await renderProxy(browser, buildProxyHtml(spec, {}, fm, OFFLINE), W)).boxes;
   const A = await at(272), B = await at(368);
-  assertBox(A['n.0'], [0, 0, 34, 34], 'avatar at 272');
-  assertBox(A['n.1'], [43, 0, 229, 34], 'bubble at 272');
-  assertBox(B['n.0'], [11.25, 0, 34, 34], 'avatar at 368');
-  assertBox(B['n.1'], [54.25, 0, 302.5, 34], 'bubble at 368');
+  assertBox(A['n.0'], [0, 0, 26, 34], 'avatar at 272');
+  assertBox(A['n.1'], [35, 0, 237, 34], 'bubble at 272');
+  assertBox(B['n.0'], [15.25, 0, 26, 34], 'avatar at 368');
+  assertBox(B['n.1'], [50.25, 0, 302.5, 34], 'bubble at 368');
 });
 
 test('absolute children follow constraints; LR grows by exactly +120', { skip }, async () => {

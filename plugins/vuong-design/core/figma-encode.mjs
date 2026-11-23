@@ -71,7 +71,9 @@
 //       strings that do not parse, bgImage (url(), conic, repeating, a layer that does not parse), radius (% on a
 //       non-square box or elliptical corners: rd holds the nearest px), border (mixed colours or styles, double /
 //       groove / ridge / inset / outset: bd holds the nearest), shadow, filter, clipPath, outline, transform (not a 2-D
-//       matrix), fs / lh / ls (not px), td / tt (other values), icon (ref missing from svgDefs).
+//       matrix), fs / lh / ls (not px), td / tt (other values), icon (ref missing from svgDefs), unsupported (capture's
+//       paint.unsupported list [{ prop, value }] (R46: text-shadow, svg inner transforms, masks, markers ...), on every
+//       node type, text included), src (null: an image node with no source, canvas / iframe / video; with fit / pos).
 //   k   children in paint order (spec order).
 // Not encoded (consumed before Figma): paint.pos / z (paint order, used by infer), paint.textDecoration (the text
 // nodes carry font.td), paint on text other than opacity / transform (the proxy does not draw it), font.ws (text wraps
@@ -468,6 +470,8 @@ export function encodeScreen(spec, ctx = {}) {
       if (p.clip) e.cl = 1;
       for (const k of ['filter', 'clipPath', 'outline']) if (p[k] != null && p[k] !== 'none') rawOut[k] = p[k];
     }
+    // R46: paint capture did not translate (text-shadow, svg inner transforms, masks, markers ...), every node type
+    if (Array.isArray(p.unsupported) && p.unsupported.length) rawOut.unsupported = p.unsupported;
     if (p.opacity != null && p.opacity !== 1) e.op = r4(p.opacity);
     if (p.transform) {
       const tv = p.transform.value || p.transform;
@@ -522,6 +526,7 @@ export function encodeScreen(spec, ctx = {}) {
       }
     } else if (n.t === 'I') {
       if (n.src) { e.im = { m: String(n.src) }; if (n.fit) e.im.f = n.fit; if (n.pos) e.im.p = n.pos; }
+      else { rawOut.src = n.src ?? null; if (n.fit) rawOut.fit = n.fit; if (n.pos) rawOut.pos = n.pos; } // canvas / iframe / video without a source
     }
 
     bind(n, e);

@@ -272,6 +272,28 @@ test('radius binds to radius.full only for a pill corner (R70); other radii need
   assert.deepEqual(bindR('8.5px', 'primitive.radius.8'), [undefined, '{"value-mismatch":1}']);
 });
 
+test('nothing is dropped silently: paint.unsupported and an image without a source go to raw', () => {
+  const un = [{ prop: 'text-shadow', value: 'rgb(0, 0, 0) 1px 1px 2px' }];
+  const svgUn = [{ prop: 'transform', value: 'rotate(45)' }];
+  const spec = { id: 'n', t: 'F', w: 100, h: 100, sz: ['FIXED', 'FIXED'], paint: { unsupported: [{ prop: 'mask-image', value: 'url(m.svg)' }] },
+    kids: [
+      { id: 'n.0', t: 'T', w: 50, h: 20, sz: ['HUG', 'HUG'], font: { ff: 'Inter', fs: '14px', fw: '400', c: 'rgb(0, 0, 0)' }, runs: [{ t: 'Hi' }], paint: { unsupported: un } },
+      { id: 'n.1', t: 'V', w: 24, h: 24, sz: ['FIXED', 'FIXED'], icon: { svg: '<svg viewBox="0 0 24 24"><path d="M0 0"/></svg>' }, paint: { unsupported: svgUn } },
+      { id: 'n.2', t: 'I', w: 80, h: 40, sz: ['FIXED', 'FIXED'], src: null, fit: 'cover', pos: '50% 50%' },
+      { id: 'n.3', t: 'I', w: 80, h: 40, sz: ['FIXED', 'FIXED'], src: 'data:image/png;base64,AAAA', fit: 'contain' },
+    ] };
+  const enc = encodeScreen(spec, ctxFor());
+  const [s] = decodeForTest(dataOf(planBatches([enc], { runtime: RUNTIME })[0]));
+  assert.deepEqual(s.tree.raw, { unsupported: [{ prop: 'mask-image', value: 'url(m.svg)' }] });
+  assert.deepEqual(s.tree.kids[0].raw, { unsupported: un }, 'text nodes too');
+  assert.deepEqual(s.tree.kids[1].raw, { unsupported: svgUn });
+  assert.equal(s.tree.kids[2].img, undefined);
+  assert.deepEqual(s.tree.kids[2].raw, { src: null, fit: 'cover', pos: '50% 50%' });
+  assert.deepEqual(s.tree.kids[3].img, { src: 'data:image/png;base64,AAAA', fit: 'contain', pos: undefined });
+  assert.equal(s.tree.kids[3].raw, undefined);
+  assert.equal(enc.raw, 4);
+});
+
 test('figmaVarName drops the primitive tier and writes / for .', () => {
   assert.equal(figmaVarName('primitive.color.c01'), 'color/c01');
   assert.equal(figmaVarName('role.text-muted'), 'role/text-muted');

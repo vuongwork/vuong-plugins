@@ -210,3 +210,25 @@ test('shotAtDsf: a 608 px screenshot of a 304 px root has scale 2 and is not res
   assert.deepEqual([r.scale, r.rescaled], [2, false]);
   assert.ok(r.png.equals(png));
 });
+
+test('expandNodes: compact nodes (z: 1) back to the plain form; decode accepts both', async () => {
+  const { expandNodes } = await import('../core/figma-check.mjs');
+  const compact = () => ({ ...screenRes(), nodes: [
+    [1, [0, 0, 304, 400], [0, 0, 120, 0]],
+    [0, [0, 0, 304, 60], 1],
+    [0, [16, 10, 120, 18]],
+    ['9:4', [150, 18, 24, 24], [120, 0, 0, 0]],
+    [5, [0, 0, 304, 60], 1],
+    [0, [250, 300, 40, 40], [120, 0, 0, 0], { radius: [0, 20, 20, 20] }],
+  ] });
+  const r = expandNodes({ z: 1, screens: [compact()] }, Dof());
+  assert.equal(r.z, undefined);
+  assert.deepEqual(r.screens[0].nodes, screenRes().nodes);
+  assert.deepEqual(decode({ z: 1, screens: [compact()] }, Dof()).screens[0].N, dec().N);
+  // a missing node: its children are relative to the nearest ancestor that has an entry
+  const D = Dof();
+  const s = { ...screenRes(), nodes: [[1, [5, 7, 304, 400]], 0, [0, [16, 10, 120, 18]], 0, 0, 0] };
+  assert.deepEqual(expandNodes({ z: 1, screens: [s] }, D).screens[0].nodes[2], [2, [21, 17, 120, 18]]);
+  const plain = { screens: [screenRes()] };
+  assert.deepEqual(expandNodes(plain, Dof()), { screens: [screenRes()] }, 'no z: unchanged');
+});

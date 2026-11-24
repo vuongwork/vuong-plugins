@@ -355,7 +355,13 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
       root.children.splice(root.children.indexOf(this), 1); this._removed = true;
     }
   }
-  const root = { children: [new Page('Page 1')] };
+  // the document node: shared plugin data only (use_figma has no private plugin data)
+  const rootPd = {}, nsOk = (ns) => { if (!/^[A-Za-z0-9]{3,}$/.test(ns)) throw new Error('in setSharedPluginData: The namespace must be at least 3 alphanumeric characters'); };
+  const root = {
+    children: [new Page('Page 1')],
+    setSharedPluginData(ns, k, v) { nsOk(ns); rootPd[ns + '/' + k] = String(v); },
+    getSharedPluginData(ns, k) { nsOk(ns); return rootPd[ns + '/' + k] || ''; },
+  };
   let current = root.children[0];
   // ignore: property names whose setter is silently a no-op (an API that drops a setting), to test the readback diff
   const born = (n) => {

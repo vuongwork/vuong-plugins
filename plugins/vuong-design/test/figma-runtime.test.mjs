@@ -74,10 +74,10 @@ const page = (fig, name = 'Screens') => fig.root.children.find((p) => p.name ===
 const byVd = (root) => { const m = {}; const w = (n) => { const id = n.getSharedPluginData('vuongdesign', 'id'); if (id) m[id] = n; (n.children || []).forEach(w); }; w(root); return m; };
 const allIds = (e, out = []) => { out.push(e.o); (e.k || []).forEach((k) => allIds(k, out)); return out; };
 
-test('runtime source: __DATA__ once, at most 16 KB, no console / notify', () => {
+test('runtime source: __DATA__ once, at most 16 KB as installed (LF, no comment lines), no console / notify', () => {
   assert.equal(RUNTIME.split('__DATA__').length, 2);
   assert.ok(RUNTIME.includes('const D = __DATA__;'));
-  const bytes = Buffer.byteLength(RUNTIME, 'utf8');
+  const bytes = Buffer.byteLength(RUNTIME.replace(/\r\n/g, '\n').replace(/^[ \t]*\/\/.*\n/gm, ''), 'utf8');
   assert.ok(bytes <= 16384, `runtime is ${bytes} bytes`);
   assert.ok(!/console\.|figma\.notify/.test(RUNTIME));
 });
@@ -601,4 +601,17 @@ test('single-colour inheriting icon still binds the icon fill on every child', a
   const icon = byVd(page(fig).children[0])['n.6'];
   assert.equal(icon.children.length, 2);
   for (const k of icon.children) assert.ok(k.fills[0].boundVariables && k.fills[0].boundVariables.color, 'bound');
+});
+
+test('compact bindings: v.r binds all four corners; a corner bound to a variable is not compared by value', async () => {
+  const [b] = planBatches([encFor()], { runtime: RUNTIME });
+  const D = dataOf(b), n2 = D.screens[0].T.k.find((k) => k.o === 'n.2'), vi = D.V.indexOf('space/16');
+  assert.ok(vi >= 0);
+  n2.v = { ...(n2.v || {}), r: vi };
+  // the API drops the top-left value: unbound it reads back 0 (see 'readback diff'), bound it takes the variable's value
+  const fig = fakeFor({ ignore: ['topLeftRadius'] });
+  const [s] = decode(await run(codeOf(D), fig), D).screens;
+  const n = byVd(page(fig).children[0])['n.2'];
+  assert.deepEqual(['topLeftRadius', 'topRightRadius', 'bottomRightRadius', 'bottomLeftRadius'].map((k) => n.boundVariables[k] && n.boundVariables[k].id).filter(Boolean).length, 4);
+  assert.equal(s.N['n.2'].d, undefined);
 });

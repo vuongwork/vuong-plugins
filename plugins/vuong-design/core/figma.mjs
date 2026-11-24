@@ -46,11 +46,36 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSyn
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { UsageError, readAllowlist, runVerdict } from './layout.mjs';
-import { encodeScreen, planBatches, newTables, OversizeError } from './figma-encode.mjs';
+import { encodeScreen, planBatches, newTables, OversizeError, batchData, compactIds, jsLiteral, fnv } from './figma-encode.mjs';
 import { varsPayload, varNames } from './figma-vars.mjs';
-import { ordOf, decode, figmaProxy, shotAtDsf, proxyVsFigma, effectNodes } from './figma-check.mjs';
+import { ordOf, decode, expandNodes, figmaProxy, shotAtDsf, proxyVsFigma, effectNodes } from './figma-check.mjs';
 
 const RUNTIME = readFileSync(new URL('./figma-runtime.js', import.meta.url), 'utf8');
+const shaOf = (s) => createHash('sha1').update(s).digest('hex').slice(0, 16);
+// The runtime is installed once in the file (runtime.js: figma.root shared plugin data NS / rt, version in rtv). A screen
+// batch is its data D plus a loader that checks the installed version and D's hash, runs the installed runtime with D
+// and adds the result hash h (resultHash). README "Figma CLI".
+// installed without the comment lines (fewer characters to send)
+const RT_BODY = RUNTIME.replace(/\r\n/g, '\n').replace('const D = __DATA__;\n', '').replace(/^[ \t]*\/\/.*\n/gm, '');
+export const RUNTIME_VERSION = shaOf(RT_BODY).slice(0, 12);
+const NS = 'vuongdesign';
+const FNV_JS = 'h=s=>{let x=2166136261;for(let i=0;i<s.length;i++)x=Math.imul(x^s.charCodeAt(i),16777619);return(x>>>0).toString(36)}';
+export const runtimeInstallCode = () => `const B=${JSON.stringify(RT_BODY)};
+figma.root.setSharedPluginData('${NS}','rt',B);figma.root.setSharedPluginData('${NS}','rtv','${RUNTIME_VERSION}');
+return{runtime:'${RUNTIME_VERSION}',bytes:B.length};
+`;
+export function loaderCode(D) {
+  const C = compactIds(D);
+  return `const D=${jsLiteral(C)};
+const R=figma.root,G=k=>R.getSharedPluginData('${NS}',k),${FNV_JS};
+if(G('rtv')!='${RUNTIME_VERSION}')return{batch:D.batch,stale:'${RUNTIME_VERSION}',have:G('rtv')};
+if(h(JSON.stringify(D))!='${fnv(JSON.stringify(C))}')return{batch:D.batch,damaged:1};
+const out=await new(Object.getPrototypeOf(async function(){}).constructor)('D','figma',G('rt'))(D,figma);
+out.h=h(JSON.stringify(out));return out;
+`;
+}
+// the hash the loader adds to a screen batch result (over the result without h, in its key order)
+export const resultHash = (res) => { const { h, ...r } = res; return fnv(JSON.stringify(r)); };
 export const USAGE = `usage: node core/figma.mjs plan --ds <ds output dir> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo]
        node core/figma.mjs ingest --out <dir> --result <file> [--batch vars-NN|batch-NN|N]
        node core/figma.mjs shots --out <dir> | ingest-shots --out <dir> --result <file> | shots-clean --out <dir>
@@ -97,16 +122,26 @@ function readDs(dsDir) {
   return { ds, ir, tokens, map, screens, source };
 }
 
-export function planAll(dsData, { page = 'Screens', force = [] } = {}) {
+// encodes every screen; hash per screen = its data alone (tables resolved), page and force included
+export function encodeAll(dsData, { page = 'Screens', force = [] } = {}) {
   const { ir, tokens, map, screens } = dsData;
   const tables = newTables(varNames(tokens));
   const encs = screens.map((s) => encodeScreen(s.spec, { screen: s.id, file: ir.file, W: s.W, map, svgDefs: s.svgDefs, tables, tokens }));
-  const batches = planBatches(encs, { runtime: RUNTIME, page, force });
-  const vars = varsPayload(tokens);
+  const hashes = Object.fromEntries(encs.map((e) => [e.screen, sha(JSON.stringify(batchData([e], 0, page, force)))]));
+  return { encs, hashes };
+}
+
+// the plan's items in send order: vars batches, the runtime, screen batches of the screens not in `keep` (numbered from `first`)
+export function planAll(dsData, { page = 'Screens', force = [], keep = new Set(), first = 1, encoded } = {}) {
+  const { encs } = encoded || encodeAll(dsData, { page, force });
+  const batches = planBatches(encs.filter((e) => !keep.has(e.screen)), { wrap: loaderCode, page, force, first });
+  const vars = varsPayload(dsData.tokens);
+  const rt = runtimeInstallCode();
   return [
     ...vars.map((code, i) => ({ key: `vars-${pad(i + 1)}`, kind: 'vars', code, bytes: Buffer.byteLength(code, 'utf8'), screens: [] })),
+    { key: 'runtime', kind: 'runtime', code: rt, bytes: Buffer.byteLength(rt, 'utf8'), screens: [], hash: RUNTIME_VERSION },
     ...batches.map((b) => ({ key: `batch-${pad(b.n)}`, kind: 'screens', n: b.n, code: b.code, data: b.data, bytes: b.bytes, screens: b.screens })),
-  ].map((b) => ({ ...b, hash: sha(b.code) }));
+  ].map((b) => ({ ...b, hash: b.hash || sha(b.code) }));
 }
 
 // calls of a batch: one use_figma, plus one get_screenshot per screen
@@ -121,44 +156,63 @@ async function plan(argv, log) {
   const ids = dsData.screens.map((s) => s.id);
   const force = [...new Set((o.force || []).flatMap((f) => f.split(',')).map((f) => f.trim()).filter(Boolean))];
   for (const f of force) if (!ids.includes(f)) throw new UsageError(`--force ${f}: no such screen (screens: ${ids.join(', ')})`);
-  let all;
-  try { all = planAll(dsData, { page: o.page || 'Screens', force }); } catch (e) {
-    if (e instanceof OversizeError) throw new UsageError(e.message);
-    throw new UsageError(`cannot plan the batches: ${e.message}`);
-  }
+  const page = o.page || 'Screens';
   const F = figDir(o.out);
   mkdirSync(F, { recursive: true });
   const prev = existsSync(statePath(o.out)) ? loadState(o.out) : null;
+  const pb = (prev && prev.batches) || {}, ps = (prev && prev.screens) || {};
+  const filesOf = (key, kind) => ({ file: `${key}.js`, ...(kind === 'screens' ? { data: `${key}.data.json` } : {}) });
+  const has = (key, kind) => Object.values(filesOf(key, kind)).every((f) => existsSync(join(F, f)));
+  let all, encoded, keep;
+  try {
+    encoded = encodeAll(dsData, { page, force });
+    // a screen built (or kept as edited) from the same data is not sent again
+    keep = new Set(o.redo ? [] : ids.filter((s) => {
+      const p = ps[s];
+      return p && (p.status === 'done' || p.status === 'skippedEdited') && p.hash === encoded.hashes[s] && pb[p.batch] && has(p.batch, 'screens');
+    }));
+    const first = Math.max(0, ...[...keep].map((s) => pb[ps[s].batch].n)) + 1;
+    all = planAll(dsData, { page, force, keep, first, encoded });
+  } catch (e) {
+    if (e instanceof OversizeError) throw new UsageError(e.message);
+    throw new UsageError(`cannot plan the batches: ${e.message}`);
+  }
   const st = {
-    version: 1, ds: dsData.ds, file: dsData.ir.file, page: o.page || 'Screens', source: dsData.source, force,
+    version: 2, ds: dsData.ds, file: dsData.ir.file, page, source: dsData.source, force, runtime: RUNTIME_VERSION,
     order: [], batches: {}, screens: {}, run: null,
   };
   const changed = [];
+  // batches whose screens are all or partly kept stay in the state (check reads their data), before the new ones
+  const keptBatches = [...new Set([...keep].map((s) => ps[s].batch))].sort((a, b) => pb[a].n - pb[b].n);
+  const addKept = () => { for (const k of keptBatches) if (!st.batches[k]) { st.batches[k] = pb[k]; st.order.push(k); } };
   for (const b of all) {
-    const p = prev && prev.batches && prev.batches[b.key];
-    const files = { file: `${b.key}.js`, ...(b.kind === 'screens' ? { data: `${b.key}.data.json` } : {}) };
-    const keep = p && p.status === 'done' && p.hash === b.hash && !o.redo && Object.values(files).every((f) => existsSync(join(F, f)));
-    if (keep) st.batches[b.key] = p;
+    if (b.kind === 'screens') addKept();
+    const p = pb[b.key];
+    const files = filesOf(b.key, b.kind);
+    const kept = b.kind !== 'screens' && p && p.status === 'done' && p.hash === b.hash && !o.redo && has(b.key, b.kind);
+    if (kept) st.batches[b.key] = p;
     else {
       const lastFailed = !p ? null : p.status === 'failed' ? (p.errors || []) : (p.lastFailed || null); // kept across plans until a good ingest
       writeFileSync(join(F, files.file), b.code);
       if (b.data) writeFileSync(join(F, files.data), JSON.stringify(b.data));
-      if (p && p.status === 'done' && p.hash !== b.hash) changed.push(b.key);
+      if (b.kind !== 'screens' && p && p.status === 'done' && p.hash !== b.hash) changed.push(b.key);
       st.batches[b.key] = { kind: b.kind, ...(b.n ? { n: b.n } : {}), ...files, screens: b.screens, bytes: b.bytes, hash: b.hash, status: 'pending', ...(lastFailed && p.hash === b.hash ? { lastFailed } : {}) };
     }
     st.order.push(b.key);
-    for (const s of b.screens) {
-      const ps = prev && prev.screens && prev.screens[s];
-      st.screens[s] = keep && ps ? ps : { batch: b.key, status: 'pending' };
-    }
+  }
+  addKept();
+  for (const s of ids) {
+    if (keep.has(s)) { st.screens[s] = ps[s]; continue; }
+    if (ps[s] && (ps[s].status === 'done' || ps[s].status === 'skippedEdited') && !o.redo) changed.push(s);
+    st.screens[s] = { batch: all.find((b) => b.screens.includes(s)).key, status: 'pending', hash: encoded.hashes[s] };
   }
   // batches of an earlier plan that no longer exist
-  for (const k of Object.keys((prev && prev.batches) || {})) {
+  for (const k of Object.keys(pb)) {
     if (st.batches[k]) continue;
     for (const f of [`${k}.js`, `${k}.data.json`]) if (existsSync(join(F, f))) rmSync(join(F, f));
   }
   // estimate and this run's budget
-  const todo = st.order.filter((k) => st.batches[k].status !== 'done');
+  const todo = st.order.filter((k) => st.batches[k].status !== 'done' && !keptBatches.includes(k));
   const tot = { useFigma: 0, screenshot: 0, bytes: 0 };
   for (const k of todo) { const c = callsOf(st.batches[k]); tot.useFigma += c.useFigma; tot.screenshot += c.screenshot; tot.bytes += st.batches[k].bytes; }
   const send = [];
@@ -179,7 +233,10 @@ async function plan(argv, log) {
   const skippedDone = st.order.length - todo.length;
   log(`plan: ${st.order.length} batches (${st.order.filter((k) => st.batches[k].kind === 'vars').length} vars, ${st.order.filter((k) => st.batches[k].kind === 'screens').length} screen), ${ids.length} screens${skippedDone ? `; ${skippedDone} already done (kept)` : ''}`);
   if (changed.length) log(`changed since they were sent: ${changed.join(', ')} (pending again)`);
-  log(`estimate: ${tot.useFigma} use_figma calls (${nv} vars + ${tot.useFigma - nv} screen batches), ${tot.screenshot} get_screenshot calls, ${st.run.kb} KB to send`);
+  const nr = todo.includes('runtime') ? 1 : 0;
+  log(`estimate: ${tot.useFigma} use_figma calls (${nv} vars + ${nr} runtime + ${tot.useFigma - nv - nr} screen batches), ${tot.screenshot} get_screenshot calls, ${st.run.kb} KB to send`);
+  const ks = ids.filter((s) => keep.has(s));
+  if (ks.length) log(`screens unchanged since they were built (not sent again): ${ks.join(', ')}`);
   log(`this run (--max-calls ${maxCalls}): send ${send.length ? send.join(', ') : 'nothing'} (${used} calls)${stopBefore ? `; stops before ${stopBefore}` : ''}`);
   if (tot.screenshot) log('screenshots: after the screen batches run figma.mjs shots --out <dir> (2x clones on page _vd-shots, then ingest-shots and shots-clean: 2 more use_figma calls; README "Figma CLI" step 3)');
   for (const w of warnings) log(`warning: ${w}`);
@@ -223,7 +280,7 @@ export function validateScreenBatch(res, entry, D) {
     s.nodes.forEach((t, j) => {
       if (t === 0) return;
       const ok = isArr(t) && t.length >= 2 && t.length <= 4 && (typeof t[0] === 'number' || typeof t[0] === 'string') && isBox(t[1]) &&
-        (t.length < 3 || t[2] === 0 || isBox(t[2])) && (t.length < 4 || isObj(t[3]));
+        (t.length < 3 || t[2] === 0 || (res.z === 1 && t[2] === 1) || isBox(t[2])) && (t.length < 4 || isObj(t[3]));
       if (!ok) bad.push(`${at}.nodes[${j}]: not 0 or [fid, A, dB?, d?]`);
     });
   }
@@ -250,6 +307,7 @@ const keyOf = (st, res, given) => {
     if (!st.batches[k]) throw new UsageError(`--batch ${g}: no such batch (${st.order.join(', ')})`);
     return k;
   }
+  if (isObj(res) && typeof res.runtime === 'string' && st.batches.runtime) return 'runtime';
   if (isObj(res) && isArr(res.screens) && Number.isInteger(res.batch)) return `batch-${pad(res.batch)}`;
   if (isObj(res) && isObj(res.collections) && Number.isInteger(res.batch)) return `vars-${pad(res.batch + 1)}`;
   throw new UsageError('cannot tell which batch this result belongs to (no batch number); pass --batch');
@@ -261,15 +319,27 @@ async function ingest(argv, log) {
   if (!o.result) throw new UsageError('--result <file> is required');
   const st = loadState(o.out), F = figDir(o.out);
   const res = readJson(resolve(o.result), 'result file');
+  // the loader refused to build: nothing changed in Figma
+  if (isObj(res) && typeof res.stale === 'string') throw new UsageError(`batch ${res.batch}: the file has runtime ${res.have || '(none)'}, the batch needs ${res.stale}: send runtime.js, ingest its result, then send the batch again`);
+  if (isObj(res) && res.damaged) throw new UsageError(`batch ${res.batch}: its data arrived changed (hash mismatch); nothing was built: send the file content verbatim`);
   const key = keyOf(st, res, o.batch);
   const b = st.batches[key];
   if (!b) throw new UsageError(`${key}: not in the plan (${st.order.join(', ')})`);
   const D = b.kind === 'screens' ? readJson(join(F, b.data), `data of ${key}`) : null;
-  const bad = b.kind === 'screens' ? validateScreenBatch(res, b, D) : validateVarsBatch(res, b, st.order.filter((k) => st.batches[k].kind === 'vars').indexOf(key));
+  const bad = b.kind === 'screens' ? validateScreenBatch(res, b, D)
+    : b.kind === 'runtime' ? (isObj(res) && res.runtime === b.hash ? [] : [`runtime is ${JSON.stringify(isObj(res) ? res.runtime : res)}, expected ${b.hash}`])
+      : validateVarsBatch(res, b, st.order.filter((k) => st.batches[k].kind === 'vars').indexOf(key));
+  // a screen batch result carries the hash the loader computed in Figma: a result retyped or cut on the way fails here
+  if (b.kind === 'screens' && !bad.length && res.h !== resultHash(res)) bad.push(res.h === undefined ? 'no result hash h (not the output of this batch\'s loader)' : `result hash h ${res.h} does not match its content (${resultHash(res)}): it was changed after Figma returned it; save the use_figma output verbatim`);
   if (bad.length) throw new UsageError(`${o.result} is not a valid result of ${key}:\n  ${bad.slice(0, 20).join('\n  ')}${bad.length > 20 ? `\n  ... ${bad.length - 20} more` : ''}`);
   const file = `result-${key}.json`;
-  copyFileSync(resolve(o.result), join(F, file));
-  if (b.kind === 'vars') {
+  // a compact screen result (z: 1) is kept expanded, so later steps read plain nodes
+  if (b.kind === 'screens' && res.z === 1) writeFileSync(join(F, file), JSON.stringify(expandNodes(res, D)));
+  else copyFileSync(resolve(o.result), join(F, file));
+  if (b.kind === 'runtime') {
+    b.status = 'done'; b.result = file;
+    log(`runtime: done (${res.runtime}, ${res.bytes} chars installed)`);
+  } else if (b.kind === 'vars') {
     b.status = res.errors.length ? 'failed' : 'done';
     b.result = file;
     if (res.errors.length) b.errors = res.errors; else { delete b.errors; delete b.lastFailed; }
@@ -278,7 +348,7 @@ async function ingest(argv, log) {
   } else {
     let failed = 0;
     for (const s of res.screens) {
-      const rec = { batch: key, result: file };
+      const rec = { batch: key, result: file, ...(st.screens[s.screen] && st.screens[s.screen].hash ? { hash: st.screens[s.screen].hash } : {}) };
       if (s.extra && s.extra.length) rec.extra = s.extra;
       if (s.edited === true) Object.assign(rec, { status: 'skippedEdited', root: s.root, sig: s.sig, edited: true, skippedEdited: true });
       else if (s.root === undefined) { failed++; Object.assign(rec, { status: 'failed', errors: s.errors, fontMissing: s.fontMissing.length }); }

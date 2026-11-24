@@ -421,3 +421,12 @@ test('planBatches needs a runtime with __DATA__ exactly once', () => {
   assert.throws(() => planBatches([enc], { runtime: 'no placeholder' }), /__DATA__/);
   assert.throws(() => planBatches([enc], { runtime: '__DATA__ __DATA__' }), /__DATA__/);
 });
+
+test('compactIds: four equal corner / side bindings become v.r / v.b; different ones stay', async () => {
+  const { compactIds } = await import('../core/figma-encode.mjs');
+  const D = { screens: [{ T: { o: 'n', v: { r0: 1, r1: 1, r2: 1, r3: 1, b0: 2, b1: 2, b2: 3, b3: 2, bg: 4 }, k: [{ o: 'n.0', v: { b0: 5, b1: 5, b2: 5, b3: 5 } }] } }] };
+  const C = compactIds(D);
+  assert.deepEqual(C.screens[0].T.v, { b0: 2, b1: 2, b2: 3, b3: 2, bg: 4, r: 1 });
+  assert.deepEqual(C.screens[0].T.k[0], { v: { b: 5 } });
+  assert.equal(D.screens[0].T.v.r0, 1, 'the input is not changed');
+});

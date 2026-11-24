@@ -634,7 +634,7 @@ export function encodeScreen(spec, ctx = {}) {
 }
 
 // ---------------- batches ----------------
-function batchData(encs, n, page, force) {
+export function batchData(encs, n, page, force) {
   const tb = newTables();
   const screens = encs.map((enc) => {
     const T = structuredClone(enc.T);
@@ -650,18 +650,21 @@ function batchData(encs, n, page, force) {
 }
 
 export function planBatches(encs, opts = {}) {
-  const { limit = PAYLOAD_LIMIT, runtime, page, force } = opts;
-  if (typeof runtime !== 'string' || runtime.split('__DATA__').length !== 2) throw new Error('planBatches: runtime must contain __DATA__ exactly once');
-  const [pre, post] = runtime.split('__DATA__');
+  const { limit = PAYLOAD_LIMIT, runtime, page, force, wrap, first = 1 } = opts;
+  let pre = '', post = '';
+  if (!wrap) {
+    if (typeof runtime !== 'string' || runtime.split('__DATA__').length !== 2) throw new Error('planBatches: runtime must contain __DATA__ exactly once');
+    [pre, post] = runtime.split('__DATA__');
+  }
   const build = (group, n) => {
     const data = batchData(group, n, page, force);
-    const code = pre + JSON.stringify(data) + post;
+    const code = wrap ? wrap(data) : pre + JSON.stringify(data) + post;
     return { n, screens: group.map((e) => e.screen), bytes: Buffer.byteLength(code, 'utf8'), code, data };
   };
   const out = [];
   let group = [], cur = null;
   for (const enc of encs) {
-    const n = out.length + 1;
+    const n = out.length + first;
     const tryB = build([...group, enc], n);
     if (tryB.bytes <= limit) { group.push(enc); cur = tryB; continue; }
     if (!group.length) throw new OversizeError(enc.screen, tryB.bytes, limit);
@@ -673,3 +676,36 @@ export function planBatches(encs, opts = {}) {
   if (group.length) out.push(cur);
   return out;
 }
+
+// ---------------- compact data (figma.mjs loader batches) ----------------
+// compactIds(D): a copy of D where a child's o is left out when it is <parent o>.<index in k>, and written '.<rest>'
+// when it is <parent o>.<rest>, and the four corner (r0..r3) / stroke side (b0..b3) bindings of a node written once as
+// v.r / v.b when they are the same variable; figma-runtime.js expands all of it back before building.
+export function compactIds(D) {
+  const C = structuredClone(D);
+  const four = (e) => {
+    const v = e.v;
+    if (v) for (const p of 'rb') if (v[`${p}0`] != null && [1, 2, 3].every((i) => v[`${p}${i}`] === v[`${p}0`])) { v[p] = v[`${p}0`]; for (let i = 0; i < 4; i++) delete v[`${p}${i}`]; }
+    (e.k || []).forEach(four);
+  };
+  for (const s of C.screens || []) four(s.T);
+  const walk = (e) => (e.k || []).forEach((k, i) => {
+    const o = k.o;
+    walk(k);
+    if (o === `${e.o}.${i}`) delete k.o;
+    else if (o.startsWith(`${e.o}.`)) k.o = o.slice(e.o.length);
+  });
+  for (const s of C.screens || []) walk(s.T);
+  return C;
+}
+// jsLiteral(x): x as a JavaScript expression with identifier keys unquoted and strings in single quotes (fewer
+// characters to escape when the code travels inside a JSON tool call). eval(jsLiteral(x)) deep-equals x.
+const IDENT = /^[A-Za-z_$][\w$]*$/;
+const sq = (s) => `'${JSON.stringify(s).slice(1, -1).replace(/\\"/g, '"').replace(/'/g, "\\'")}'`;
+export function jsLiteral(x) {
+  if (x === null || typeof x !== 'object') return typeof x === 'string' ? sq(x) : JSON.stringify(x);
+  if (Array.isArray(x)) return `[${x.map((v) => (v === undefined ? 'null' : jsLiteral(v))).join(',')}]`;
+  return `{${Object.entries(x).filter(([, v]) => v !== undefined).map(([k, v]) => `${IDENT.test(k) ? k : sq(k)}:${jsLiteral(v)}`).join(',')}}`;
+}
+// fnv(s): 32-bit FNV-1a of the UTF-16 code units, base 36; the loader computes the same in Figma.
+export const fnv = (s) => { let x = 0x811c9dc5; for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619); return (x >>> 0).toString(36); };

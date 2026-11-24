@@ -4,7 +4,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, statSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { main, localScreen } from '../core/figma.mjs';
+import { main, localScreen, resultHash, RUNTIME_VERSION } from '../core/figma.mjs';
+import { compactIds, jsLiteral } from '../core/figma-encode.mjs';
 import { ordOf, rescalePng } from '../core/figma-check.mjs';
 import { makeFakeFigma, DEFAULT_FONTS } from './fake-figma.mjs';
 
@@ -49,6 +50,7 @@ async function sendAll(F, fig = makeFakeFigma({ fonts: DEFAULT_FONTS })) {
   for (const k of st.order) out[k] = await runCode(readFileSync(join(F, st.batches[k].file), 'utf8'), fig);
   return out;
 }
+const rehash = (r) => { r.h = resultHash(r); return r; }; // after a test edits a result
 const save = (dir, name, x) => { const p = join(dir, name); writeFileSync(p, typeof x === 'string' ? x : JSON.stringify(x)); return p; };
 
 // ---------------- plan / ingest (no browser) ----------------
@@ -59,16 +61,20 @@ test('plan on a two-screen ds folder: batches under 50 000 bytes, both screens p
   for (const f of ['vars-01.js', 'batch-01.js', 'batch-01.data.json', 'state.json']) assert.ok(existsSync(join(h.F, f)), f);
   assert.ok(Buffer.byteLength(readFileSync(join(h.F, 'batch-01.js'), 'utf8')) <= 50000);
   const st = readJson(h.F, 'state.json');
-  assert.deepEqual(st.order, ['vars-01', 'batch-01']);
+  assert.deepEqual(st.order, ['vars-01', 'runtime', 'batch-01']);
+  assert.ok(existsSync(join(h.F, 'runtime.js')));
+  assert.equal(st.runtime, RUNTIME_VERSION);
   assert.deepEqual(Object.entries(st.screens).map(([s, x]) => [s, x.status, x.batch]), [['s0', 'pending', 'batch-01'], ['s1', 'pending', 'batch-01']]);
   assert.deepEqual(st.batches['batch-01'].screens, ['s0', 's1']);
   assert.equal(st.page, 'Screens');
-  assert.deepEqual(st.run.calls, { useFigma: 2, screenshot: 2, total: 4 });
-  assert.deepEqual(st.run.send, ['vars-01', 'batch-01']);
-  assert.ok(q.lines.some((l) => /^estimate: 2 use_figma calls \(1 vars \+ 1 screen batches\), 2 get_screenshot calls, [\d.]+ KB to send$/.test(l)), q.lines.join('\n'));
-  // the data file is the D inside the code
+  assert.deepEqual(st.run.calls, { useFigma: 3, screenshot: 2, total: 5 });
+  assert.deepEqual(st.run.send, ['vars-01', 'runtime', 'batch-01']);
+  assert.ok(q.lines.some((l) => /^estimate: 3 use_figma calls \(1 vars \+ 1 runtime \+ 1 screen batches\), 2 get_screenshot calls, [\d.]+ KB to send$/.test(l)), q.lines.join('\n'));
+  // the data file is the D inside the code (compact: ids derivable from the parent left out, a JS literal)
   const D = readJson(h.F, 'batch-01.data.json');
-  assert.ok(readFileSync(join(h.F, 'batch-01.js'), 'utf8').includes(JSON.stringify(D)));
+  const code = readFileSync(join(h.F, 'batch-01.js'), 'utf8');
+  assert.ok(code.startsWith(`const D=${jsLiteral(compactIds(D))};\n`));
+  assert.ok(!code.includes("o:'n.0'") && !code.includes('"o"'), 'n.0 is derivable: not written');
   assert.equal(D.force, undefined);
   rmSync(h.d, { recursive: true, force: true });
 });
@@ -90,9 +96,10 @@ test('resume: an ingested batch is kept on the next plan (not written again) unl
   assert.equal(st.batches['batch-01'].status, 'done');
   assert.equal(st.screens.s0.status, 'done', 'screen state kept');
   assert.equal(statSync(join(h.F, 'batch-01.js')).mtimeMs, mtime, 'batch-01.js not written again');
-  assert.deepEqual(st.run.send, ['vars-01']);
+  assert.deepEqual(st.run.send, ['vars-01', 'runtime']);
   assert.ok(q2.lines.some((l) => /1 already done \(kept\)/.test(l)), q2.lines.join('\n'));
-  assert.ok(q2.lines.some((l) => /^estimate: 1 use_figma calls \(1 vars \+ 0 screen batches\), 0 get_screenshot calls/.test(l)), q2.lines.join('\n'));
+  assert.ok(q2.lines.some((l) => /^estimate: 2 use_figma calls \(1 vars \+ 1 runtime \+ 0 screen batches\), 0 get_screenshot calls/.test(l)), q2.lines.join('\n'));
+  assert.ok(q2.lines.some((l) => l === 'screens unchanged since they were built (not sent again): s0, s1'), q2.lines.join('\n'));
   // --redo: everything pending again
   await main(['plan', '--ds', h.ds, '--out', h.out, '--redo'], { log: () => {} });
   st = readJson(h.F, 'state.json');
@@ -139,6 +146,7 @@ test('ingest: a vars batch with errors fails; an edited screen is skippedEdited;
   assert.match(q0.lines.join('\n'), /vars-01: failed \(1 errors: only a message\)/);
   const b = JSON.parse(JSON.stringify(res['batch-01']));
   b.screens[1] = { screen: 's1', root: '1:99', edited: true, sig: 'abcd1234', extra: ['1:120'] };
+  rehash(b);
   assert.equal(await main(['ingest', '--out', h.out, '--result', save(h.d, 'b.json', b), '--batch', '1'], { log: () => {} }), 0);
   st = readJson(h.F, 'state.json');
   assert.equal(st.batches['batch-01'].status, 'done');
@@ -146,6 +154,7 @@ test('ingest: a vars batch with errors fails; an edited screen is skippedEdited;
   // a screen whose root failed fails the batch
   const f = JSON.parse(JSON.stringify(res['batch-01']));
   f.screens[0] = { screen: 's0', fontMissing: [], errors: [{ o: 'n', msg: 'resize failed' }] };
+  rehash(f);
   await main(['ingest', '--out', h.out, '--result', save(h.d, 'f.json', f)], { log: () => {} });
   st = readJson(h.F, 'state.json');
   assert.deepEqual([st.batches['batch-01'].status, st.screens.s0.status], ['failed', 'failed']);
@@ -156,9 +165,9 @@ test('plan: --max-calls stops at a batch boundary and warns; --force goes into D
   const h = handDs(), q = quiet();
   assert.equal(await main(['plan', '--ds', h.ds, '--out', h.out, '--max-calls', '2', '--force', 's1', '--page', 'Màn hình'], { log: q.log }), 0);
   const st = readJson(h.F, 'state.json');
-  assert.deepEqual([st.run.send, st.run.stopBefore, st.run.sendCalls], [['vars-01'], 'batch-01', 1]);
+  assert.deepEqual([st.run.send, st.run.stopBefore, st.run.sendCalls], [['vars-01', 'runtime'], 'batch-01', 2]);
   assert.ok(q.lines.some((l) => /stops before batch-01/.test(l)));
-  assert.ok(q.lines.some((l) => /^warning: the plan needs 4 calls, over --max-calls 2/.test(l)), q.lines.join('\n'));
+  assert.ok(q.lines.some((l) => /^warning: the plan needs 5 calls, over --max-calls 2/.test(l)), q.lines.join('\n'));
   const D = readJson(h.F, 'batch-01.data.json');
   assert.deepEqual([D.force, D.page], [['s1'], 'Màn hình']);
   const e = async (argv) => { const x = quiet(); const c = await main(argv, { log: x.log }); return [c, x.lines.join('\n')]; };
@@ -167,6 +176,45 @@ test('plan: --max-calls stops at a batch boundary and warns; --force goes into D
   assert.equal((await e(['frobnicate']))[0], 2);
   assert.match((await e(['plan', '--ds', h.d, '--out', h.out]))[1], /no ir\.json/);
   assert.match((await e(['ingest', '--out', join(h.d, 'none'), '--result', 'x.json']))[1], /state\.json/);
+  rmSync(h.d, { recursive: true, force: true });
+});
+
+test('runtime installed once; a batch checks its version and data hash; ingest checks the result hash; only a changed screen is sent again', async () => {
+  const h = handDs(), fig = makeFakeFigma({ fonts: DEFAULT_FONTS });
+  await main(['plan', '--ds', h.ds, '--out', h.out], { log: () => {} });
+  const code = (k) => readFileSync(join(h.F, `${k}.js`), 'utf8');
+  const e = async (argv) => { const x = quiet(); const c = await main(argv, { log: x.log }); return [c, x.lines.join('\n')]; };
+  // batch before the runtime: refused, nothing built
+  const stale = await runCode(code('batch-01'), fig);
+  assert.deepEqual(stale, { batch: 1, stale: RUNTIME_VERSION, have: '' });
+  assert.equal(fig.root.children[0].children.length, 0);
+  const [c0, m0] = await e(['ingest', '--out', h.out, '--result', save(h.d, 'stale.json', stale)]);
+  assert.equal(c0, 2); assert.match(m0, /send runtime\.js/);
+  // install; a damaged literal is refused
+  const rt = await runCode(code('runtime'), fig);
+  assert.equal(rt.runtime, RUNTIME_VERSION);
+  assert.equal((await e(['ingest', '--out', h.out, '--result', save(h.d, 'rt.json', rt)]))[0], 0);
+  assert.deepEqual(await runCode(code('batch-01').replace("tx:'Hello'", "tx:'Hellp'"), fig), { batch: 1, damaged: 1 });
+  // the real batch: the result hash catches a value retyped on the way
+  const res = await runCode(code('batch-01'), fig);
+  assert.equal(res.h, resultHash(res));
+  const bad = JSON.parse(JSON.stringify(res)); bad.screens[0].nodes[0][1][0] += 1;
+  const [c1, m1] = await e(['ingest', '--out', h.out, '--result', save(h.d, 'bad.json', bad)]);
+  assert.equal(c1, 2); assert.match(m1, /result hash h \w+ does not match its content/);
+  assert.equal((await e(['ingest', '--out', h.out, '--result', save(h.d, 'ok.json', res)]))[0], 0);
+  // s1 changes: only s1 goes out, in batch-02; s0 stays with batch-01; the runtime is not sent again
+  writeFileSync(join(h.ds, 'spec-norm-s1.json'), JSON.stringify(screenSpec('Changed')));
+  const [, m2] = await e(['plan', '--ds', h.ds, '--out', h.out]);
+  const st = readJson(h.F, 'state.json');
+  assert.deepEqual(st.run.send, ['vars-01', 'batch-02']);
+  assert.deepEqual(st.batches['batch-02'].screens, ['s1']);
+  assert.deepEqual([st.screens.s0.status, st.screens.s0.batch, st.screens.s1.status, st.screens.s1.batch], ['done', 'batch-01', 'pending', 'batch-02']);
+  assert.match(m2, /changed since they were sent: s1/);
+  assert.match(m2, /not sent again\): s0$/m);
+  const r2 = await runCode(code('batch-02'), fig);
+  assert.equal((await e(['ingest', '--out', h.out, '--result', save(h.d, 'r2.json', r2)]))[0], 0);
+  assert.equal(readJson(h.F, 'state.json').screens.s1.status, 'done');
+  assert.equal(fig.root.children.find((p) => p.name === 'Screens').children.length, 2, 'one frame per screen');
   rmSync(h.d, { recursive: true, force: true });
 });
 
@@ -209,6 +257,8 @@ async function figmaFor(dsName, opts = {}) {
           const A = ref.A.boxes[id], dB = ref.B.boxes[id].map((v, j) => Math.round((v - A[j]) * 100) / 100);
           s.nodes[i] = dB.some((v) => v) ? [t[0], A, dB] : [t[0], A];
         });
+        delete res[k].z; // the entries above are in the plain form
+        rehash(res[k]);
         writeFileSync(join(F, `shot-${s.screen}.png`), opts.fourX && s.screen === 's0' ? await rescalePng(browser, ref.A.png, 2) : ref.A.png);
       }
     }
@@ -251,7 +301,7 @@ test('check: modelled role without norm records; a missing screenshot or a node 
   const D = readJson(F, 'batch-01.data.json');
   const i = ordOf(D.screens[0].T).indexOf('n.1.0');
   b.screens[0].nodes[i] = 0;
-  assert.equal(await main(['ingest', '--out', out, '--result', save(dirname(out), 'b2.json', b)], { log: () => {} }), 0);
+  assert.equal(await main(['ingest', '--out', out, '--result', save(dirname(out), 'b2.json', rehash(b))], { log: () => {} }), 0);
   const q = quiet();
   assert.equal(await main(['check', '--out', out], { log: q.log, fontMap: fm, browser }), 1);
   const [s0, s1] = readJson(F, 'report.json').screens;

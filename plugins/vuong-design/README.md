@@ -196,7 +196,7 @@ The spike's format was about 8 KB per screen. The batch count will change once t
 
 ## Figma runtime
 
-`core/figma-runtime.js` (plan 3 Task 5) is the builder that runs inside Figma: a batch's `code` is this file with its single `__DATA__` replaced by the batch data (`planBatches`). It runs as the code of `use_figma` (top-level await, top-level `return`, no fetch, no console, no `figma.notify`). It is tested on `test/fake-figma.mjs`, a fake Plugin API that throws on the misuses real Figma rejects (FILL outside auto layout, HUG on a node that cannot hug, text before its font is loaded, a paint colour with `a` or a channel above 1). The fake does not compute auto layout, so geometry is checked on real Figma (Task 8).
+`core/figma-runtime.js` (plan 3 Task 5) is the builder that runs inside Figma: `planBatches` without `wrap` gives this file with its single `__DATA__` replaced by the batch data (the tests use that form). `figma.mjs` instead installs the runtime once in the file and sends only data plus a small loader (README "Figma CLI", `runtime.js`). Child ids may come compact (`o` absent = `<parent o>.<index>`, `o` starting with `.` = `<parent o><o>`), and so may bindings (`v.r` = the same variable on `r0..r3`, `v.b` on `b0..b3`); the runtime expands them first. It runs as the code of `use_figma` (top-level await, top-level `return`, no fetch, no console, no `figma.notify`). It is tested on `test/fake-figma.mjs`, a fake Plugin API that throws on the misuses real Figma rejects (FILL outside auto layout, HUG on a node that cannot hug, text before its font is loaded, a paint colour with `a` or a channel above 1). The fake does not compute auto layout, so geometry is checked on real Figma (Task 8).
 
 Per batch: variables, text styles and effect styles are looked up once by name (`getLocalVariablesAsync`, `getLocalTextStylesAsync`, `getLocalEffectStylesAsync`). The page `D.page` (default `Screens`) is found or created, and `setCurrentPageAsync` is called once.
 
@@ -210,32 +210,34 @@ Per node, in this order: create (frames, svg frames and overlays start with `fil
 - Screen-level failure (anything that throws outside a node's own build, e.g. the readback resize): the half-built new frame is removed, the old frame stays, and the screen returns `{ screen, fontMissing, errors: [..., { o: root id, msg }] }`; the next screens of the batch are still built. A failed node lists itself, its descendants (`parent failed`) and every overlay `<o>#stroke` among them in `errors`.
 - Readback: boxes from `absoluteBoundingBox`, relative to the screen frame, at width A. A transformed node (`tf`) reports its box before the transform instead, the convention of the proxy (`NO_TRANSFORM`) and of capture: x, y from `absoluteTransform` with `place()`'s formula inverted (x = X − ox − tx + A·ox + C·oy, y likewise), w / h = `width` / `height` (T8: a 45° checkmark read 11.7 x 11.7 against 6.56 x 9.98). Descendants of a transformed node still read their rotated bounding box (none in the corpus); then the frame is resized to width B (its vertical HUG is restored after `resize`), read again, and resized back to A. The result goes back through the AI, so it is compact: values equal to the encoding are not repeated.
 
-The runtime must stay at or below 15 KB (15 360 B, tested).
+The runtime as installed (LF line ends, comment lines removed) must stay at or below 16 KB (16 384 B, tested).
 
 BatchResult:
 ```
-{ batch, page: name, pageId, screens: [{
+{ batch, page: name, pageId, z: 1, screens: [{               // z: 1 = compact entries, see below
     screen, root: frame id, sig, edited?: true,             // edited: kept frame, nothing else is returned
     extra?: [frame id],                                     // further copies of the screen's frame, left as they are
     nodes: [entry],                                         // one per id of ord(T), see below
     fontMissing: [{ o, family, style, used }], errors: [{ o, msg }],
     unbound?: [{ o, prop: bind code ('rn<i>.c' / 'rn<i>.ts' for runs), name, reason: 'missing-in-file' | 'bind-failed' }],
-    unsupported?: { [o]: { ...raw of the encoding, im?: an image source that could not be loaded } } }] }
+    unsupported?: { [o]: { ...raw of the encoding, im?: an image source that could not be loaded } } }],
+  h?: result hash, added by the figma.mjs loader }
 ```
 - **Order** `ord(T)`: pre-order of the screen's encoded tree `T` (node, then its `k` in order); a node with `bd.o` is followed, after its whole subtree, by `<o>#stroke` (its overlay).
 - **entry** = `0` when the node is not in the result (failed, skipped or not read: see `errors`), else `[fid, A, dB?, d?]`:
   - `fid`: a number N = the node id is `P:N` with `P` the prefix of `root` (`root.split(':')[0]`); a string = the full id when the prefix differs.
   - `A = [x, y, w, h]` at width A. `dB` = B − A per value (rounded 0.01); `0` or absent = B equals A (it is written as `0` only when `d` follows).
   - `d`: only the fields whose actual value, read from the node after building, differs from the encoded intent. Absent = all equal. An absent field of `d` = the actual value equals the encoded intent.
+  - **Compact entries** (`z: 1`, what the runtime returns): the result is retyped by the courier, so the entries are shortened. The anchor of an entry is its nearest ancestor in `ord(T)` (the parent; the node itself for `<o>#stroke`) whose entry is not `0`. Then `A`'s x, y are relative to the anchor's (absolute) x, y; `dB` = `1` means the anchor's `dB`; `fid` = `0` means the previous numeric `fid` in the list + 1. `expandNodes` (core/figma-check.mjs) gives the plain form above; `decode` calls it, and ingest saves the result expanded (without `z`). On the 6 screens s7–s12 the result went from about 26 KB to about 14 KB.
 - **Intent and `d` fields** (actual values are read from the node; the overlay `<o>#stroke` takes its intent from the cell `o`):
   - `text`: characters; intent `tx` (glyph icon: `ic.g`). Text nodes only.
   - `runs`: intent = the encoded runs expanded per character and merged: `[length, fontSize, font, fill, textStyle, variable]` with node values (fs default 12, font `D.F[f]`, fill `D.C[c]` or `#000000`, text style `D.S[ts]`, fill variable `D.V[v.c]`, '' when none), each `rn` entry overriding fs / f / c / ts, and its fill variable = `D.V[rn.v.c]` when the run sets `c` or `v.c`, else the node's. Fonts compare by family + weight + italic (style name parsed as at load). Actual = `getStyledTextSegments(fontSize, fontName, fills, textStyleId)`; on a difference `d.runs` = the actual list with font as `'Family Style'` (covers font, size, fill, text style and fill variables of text).
   - `fills`: non-text. Intent `[D.C[bg]?, 'GRADIENT_LINEAR' | 'GRADIENT_RADIAL' per gr, 'IMAGE' if im]` (overlay `[]`); actual solid paints as `#rrggbb[aa]` (alpha = paint opacity), others by type.
   - `strokes`: non-text. Intent `{ c: [D.C[bd.c]], w: [t, r, b, l] }` when `bd` without `o` (overlay: the cell's `bd`), else `null`; actual `{ c, w: per-side weights }` or `null`.
-  - `radius`: non-text. Intent `rd` as four corners (absent = `[0, 0, 0, 0]`; overlay = the cell's); actual the four corner radii.
+  - `radius`: non-text. Intent `rd` as four corners (absent = `[0, 0, 0, 0]`; overlay = the cell's); actual the four corner radii, except that a corner bound to a variable counts as its intent: its value is the variable's (`radius/full` reads 9999 for `rd` 99) and `vars` checks the binding.
   - `es`: non-text. Intent `D.S[es]` or '' (overlay ''); actual effect style name or ''.
   - `op`: intent `op` or 1 (overlay 1); actual opacity.
-  - `vars`: intent = `e.v` mapped to Figma fields (`bg` fills, `sc` strokes, `pt pr pb pl g cg` paddings / itemSpacing / counterAxisSpacing, `w h` width / height, `r0..r3` corners, `b0..b3` per-side stroke weights, `op` opacity, `fs` fontSize, `vf` / `vs` icon vector fill / stroke) with `D.V` names; text `c` is left to `runs`; with `bd.o` the `sc` / `b*` codes belong to the overlay (the overlay also takes `r*`). Actual = `boundVariables` entries with an id, `fills` / `strokes` = the variable of the first bound solid paint (non-text), `vf` / `vs` = the first bound vector paint inside an svg icon. On a difference `d.vars` = the whole actual map.
+  - `vars`: intent = `e.v` mapped to Figma fields (`bg` fills, `sc` strokes, `pt pr pb pl g cg` paddings / itemSpacing / counterAxisSpacing, `w h` width / height, `r0..r3` corners, `b0..b3` per-side stroke weights, `op` opacity, `fs` fontSize, `vf` / `vs` icon vector fill / stroke) with `D.V` names; text `c` is left to `runs`; with `bd.o` the `sc` / `b*` codes belong to the overlay (the overlay also takes `r*`). Actual = `boundVariables` entries with an id, `fills` / `strokes` = the variable of the first bound solid paint (non-text), `vf` / `vs` = the first bound vector paint inside an svg icon. When the intent binds one variable to all four stroke sides and real Figma lists it on some of them only (seen on s7–s12: only `strokeLeftWeight`), with no other variable on a side, the sides count as bound (the weights are still compared in `strokes`). On a difference `d.vars` = the whole actual map.
   - `icon`: `0` when an svg icon has no child at all.
   - Not compared: line height, letter spacing, decoration, case, alignment, autoresize, sizing, layout (geometry is checked through the boxes). Known limit of the check's layer 3 (paint / text style): a decoration, case or alignment that Figma drops is not reported.
   - `boundVariables` values that are arrays (text fields of a TEXT node, e.g. `fontSize`, are a `VariableAlias[]`) are read from their first alias; `fills` / `strokes` are taken from the paints, not from `boundVariables`.
@@ -263,9 +265,13 @@ node core/figma.mjs shots --out <dir>    # then ingest-shots --out <dir> --resul
 node core/figma.mjs check  --out <dir> [--mutate] [--allowlist <json>] [--html <file> --root <sel> ...capture options] [--tol-* <px>]
 ```
 
-- **plan** encodes every screen (`spec-norm-<id>.json`, `token-map.json`, `tokens.json`, `ir.json`), writes the variable batches (`varsPayload`) and the screen batches (`planBatches`, each at most 50 000 bytes), and prints the estimate: `use_figma` calls (vars + screen batches still to send), `get_screenshot` calls (one per screen), total KB. It lists the batches for this run, in order, while the calls fit `--max-calls` (default 40). It stops at a batch boundary (`state.run.stopBefore`) and warns when the plan needs more. A batch already `done` with the same code is kept and not written again, unless `--redo`. The same input gives the same numbering. `--force <screen>` (repeatable or comma-separated) puts the screen in `D.force`: the runtime rebuilds it even when it was edited by hand. `--ds` must be the folder of one HTML file (in corpus mode, `<out>/<file stem>`).
-- **ingest** validates a result against the BatchResult shape of its batch (README "Figma runtime"; vars batches: "Figma variables"), copies it to `result-<key>.json` and merges it into `state.json`.
-  - Malformed JSON or a wrong shape → exit 2, state unchanged. Wrong shapes: a wrong batch number, a screen missing or not in the batch, `nodes` not the length of the encoding, an entry that is not `0` or `[fid, A, dB?, d?]`.
+- **plan** encodes every screen (`spec-norm-<id>.json`, `token-map.json`, `tokens.json`, `ir.json`), writes the variable batches (`varsPayload`), `runtime.js` and the screen batches (`planBatches`, each at most 50 000 bytes), and prints the estimate: `use_figma` calls (vars + runtime + screen batches still to send), `get_screenshot` calls (one per screen), total KB. It lists the batches for this run, in order, while the calls fit `--max-calls` (default 40). It stops at a batch boundary (`state.run.stopBefore`) and warns when the plan needs more. The same input gives the same numbering.
+  - **Runtime once**: `runtime.js` stores the runtime in the file's shared plugin data (`figma.root`, namespace `vuongdesign`: `rt` = the code, `rtv` = `RUNTIME_VERSION`, 12 hex of its SHA-1). It is sent again only when the runtime changes; that does not make the screens pending.
+  - **Screen batch** = `const D=<data>;` + a loader of about 500 bytes. The data is a JavaScript literal (identifier keys unquoted, strings in single quotes: fewer characters to escape inside the JSON of the tool call) with compact child ids. The loader returns `{ batch, stale, have }` when the file's runtime version is not the batch's, `{ batch, damaged: 1 }` when the data's FNV-1a hash differs from the one planned (the code was changed on the way), and otherwise runs the installed runtime with D and adds `h`, the FNV-1a of the result's JSON, to the result.
+  - **Per screen**: each screen has a hash of its own data (tables resolved, page and force included). A screen `done` or `skippedEdited` with the same hash is not sent again (`screens unchanged ... (not sent again)`); the others are packed into new batches, numbered after the batches kept. Changing one screen sends one screen. `--redo` sends every screen. `--force <screen>` (repeatable or comma-separated) puts the screen in `D.force`: the runtime rebuilds it even when it was edited by hand. `--ds` must be the folder of one HTML file (in corpus mode, `<out>/<file stem>`).
+- **ingest** validates a result against the BatchResult shape of its batch (README "Figma runtime"; vars batches: "Figma variables"), copies it to `result-<key>.json` (a compact screen result, `z: 1`, is saved expanded) and merges it into `state.json`.
+  - Malformed JSON or a wrong shape → exit 2, state unchanged. Wrong shapes: a wrong batch number, a screen missing or not in the batch, `nodes` not the length of the encoding, an entry that is not `0` or `[fid, A, dB?, d?]`, a screen batch result whose `h` is missing or does not match its content (the result was retyped or cut after Figma returned it: save the tool output verbatim). A `stale` or `damaged` loader answer exits 2 with what to send.
+  - `runtime`: the result `{ runtime, bytes }` must carry the planned version.
   - A vars batch with a non-empty `errors` is `failed`, its errors kept (each item must be `{ msg, kind?, name? }` with string values, else exit 2). `plan` warns (and records `state.run.warnings`) while a failed vars batch is unsent and screen batches are scheduled. A screen batch is `failed` when a screen's root failed, else `done`.
   - Per screen: `done`, `skippedEdited` (`edited: true`: the frame was changed by hand and kept), or `failed`. `extra` frames are recorded.
   - The batch is told by the result's `batch` (a vars result counts from 0); `--batch` overrides it.
@@ -292,7 +298,8 @@ Exit codes: 0 every screen passes the gate (and no mutation was missed), 1 other
 
 AI workflow (one Figma file the user named; never two writers on the same file):
 1. Run `ds.mjs`, then `figma.mjs plan --ds <ds out> --out <dir>`. Tell the user the estimate before the first write.
-2. For each batch of this run, in order (`vars-*` first): send the file's content as the code of `use_figma`, save the returned JSON as a file, run `figma.mjs ingest --out <dir> --result <file>`. For a `failed` batch: read its errors, fix, run `plan` again (done batches are kept), resend.
+2. For each batch of this run, in order (`vars-*`, then `runtime`, then `batch-*`): send the file's content as the code of `use_figma`, save the returned JSON as a file, run `figma.mjs ingest --out <dir> --result <file>`. For a `failed` batch: read its errors, fix, run `plan` again (done screens are kept), resend.
+   Send them through one `vuong-design:vd-figma-courier` agent for the whole run (`agents/vd-figma-courier.md`: tools Read, Write and `use_figma` only, no skill load), given the fileKey, the sessionId and the (script, result path) pairs in order. Its own context is about 10k tokens, against about 64k for a general-purpose agent that also loads `figma-use`; the scripts only need what the controller already checked. The result hash catches a result it did not save verbatim.
 3. Screenshots at 2x. `get_screenshot` never goes above a node's native size, so a shot of the screen frame itself is 1x. Instead:
    1. `figma.mjs shots --out <dir>` writes `shots.js`. Send it with `use_figma`. On the page `_vd-shots` (created when missing, its old children removed) it clones every built screen frame (`root` in `state.json`), calls `rescale(2)` on the clone and places the clones in a row. It returns `{ page, clones: { screen: id }, sizes: { screen: [w, h] }, missing, errors }`. The Screens page ends as it was (a clone is created next to its frame and moved at once).
    2. Save the result and run `figma.mjs ingest-shots --out <dir> --result <file>`. It records the clones in `state.shots` and prints one `get_screenshot` per screen: the clone's id, `maxDimension` = the clone's larger side (2 × the frame's).
@@ -308,9 +315,10 @@ Files in `<out>/figma/`:
 | File | Written by | Content |
 |---|---|---|
 | `vars-NN.js` | plan | variables and styles, `use_figma` code (run in order) |
-| `batch-NN.js`, `batch-NN.data.json` | plan | one screen batch: runtime + data, and the data D alone (check decodes the readback with it) |
+| `runtime.js` | plan | installs the runtime in the file (shared plugin data); sent once per runtime version |
+| `batch-NN.js`, `batch-NN.data.json` | plan | one screen batch: compact data + loader, and the data D alone with full ids (check decodes the readback with it) |
 | `state.json` | plan, ingest | progress (shape below) |
-| `result-<key>.json` | ingest | the BatchResult as returned |
+| `result-<key>.json` | ingest | the BatchResult as returned (screen batches: entries expanded, without `z`) |
 | `shots.js`, `shots-clean.js` | shots, shots-clean | `use_figma` code: the 2x clones on `_vd-shots`, and their removal |
 | `result-shots.json` | ingest-shots | the shots result as returned |
 | `shot-<screen>.png` | the AI | `get_screenshot` of the screen's 2x clone |
@@ -318,10 +326,10 @@ Files in `<out>/figma/`:
 
 `state.json`:
 ```
-{ version: 1, ds, file, page, source: { html, root, widen, webFonts }, force: [screen], order: [key],
-  batches: { [key]: { kind: 'vars' | 'screens', n?, file, data?, screens, bytes, hash,
+{ version: 2, ds, file, page, source: { html, root, widen, webFonts }, force: [screen], runtime: version, order: [key],
+  batches: { [key]: { kind: 'vars' | 'runtime' | 'screens', n?, file, data?, screens, bytes, hash,
                       status: 'pending' | 'done' | 'failed', result?, errors?, fontMissing? } },
-  screens: { [id]: { batch, status: 'pending' | 'done' | 'failed' | 'skippedEdited', result?, root?, sig?,
+  screens: { [id]: { batch, hash, status: 'pending' | 'done' | 'failed' | 'skippedEdited', result?, root?, sig?,
                      edited?, skippedEdited?, extra?, errors?, fontMissing?, unbound?: { [reason]: n } } },
   shots?: { page, clones: { [screen]: clone id }, sizes?: { [screen]: [w, h] }, missing? },
   run: { maxCalls, calls: { useFigma, screenshot, total }, kb, send: [key], sendCalls, stopBefore } }

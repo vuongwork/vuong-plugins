@@ -43,7 +43,40 @@ const DSF = 2;
 
 export const ordOf = (e, a = []) => { a.push(e.o); (e.k || []).forEach((k) => ordOf(k, a)); if (e.bd && e.bd.o) a.push(e.o + '#stroke'); return a; };
 
+// ordParents(T) -> [[o, parent o | undefined]] in ordOf order (a '#stroke' entry's parent is its node)
+const ordParents = (e, p, a = []) => { a.push([e.o, p]); (e.k || []).forEach((k) => ordParents(k, e.o, a)); if (e.bd && e.bd.o) a.push([`${e.o}#stroke`, e.o]); return a; };
+// expandNodes(res, D) -> res   a result with z: 1 (compact nodes, README "Figma runtime") back to the plain form, in
+// place: A relative to the nearest ancestor that has an entry -> relative to the root, dB 1 -> that ancestor's dB,
+// fid 0 -> the previous numeric fid + 1. Drops z. A result without z is returned as it is.
+export function expandNodes(res, D) {
+  if (!res || res.z !== 1) return res;
+  for (const s of res.screens || []) {
+    if (!Array.isArray(s.nodes)) continue;
+    const sc = D.screens.find((x) => x.screen === s.screen);
+    if (!sc) continue;
+    const P = ordParents(sc.T), Q = {}, X = {};
+    let pv = -1;
+    s.nodes = s.nodes.map((t, i) => {
+      const [o, p] = P[i] || [], q = Q[p];
+      Q[o] = t ? o : q;
+      if (!t) return 0;
+      const r = q && X[q], [f0, A0, b0, d] = t;
+      const f = f0 === 0 ? pv + 1 : f0;
+      if (typeof f === 'number') pv = f;
+      const A = r ? A0.map((x, j) => (j < 2 ? r2(x + r[1][j]) : x)) : A0;
+      const out = [f, A];
+      if (t.length > 2) out.push(b0 === 1 ? (r && r[2]) || 0 : b0);
+      if (d) out.push(d);
+      X[o] = out;
+      return out;
+    });
+  }
+  delete res.z;
+  return res;
+}
+
 export function decode(res, D) {
+  expandNodes(res, D);
   for (const s of res.screens) {
     if (!s.nodes) continue;
     const T = D.screens.find((x) => x.screen === s.screen).T, pf = s.root.split(':')[0] + ':';

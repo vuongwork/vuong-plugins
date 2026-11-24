@@ -1,6 +1,7 @@
 // vuong-design builder (plan 3 Task 5): the code of a use_figma call. D: figma-encode.mjs header. Result, build order,
 // signature: README "Figma runtime". S: screen state; e: encoded node, o: its id, v: its bindings.
 const D = __DATA__;
+for(const s of D.screens)(function x(e){const v=e.v;if(v)for(const p of'rb')if(v[p]!=null){for(let i=0;i<4;i++)v[p+i]=v[p];delete v[p]}(e.k||[]).forEach((k,i)=>{k.o=k.o==null?e.o+'.'+i:k.o[0]=='.'?e.o+k.o:k.o;x(k)})})(s.T);// compact ids
 const F=figma,U=undefined,MX=F.mixed,BF='bind-failed',BK='#000000',r2=v=>Math.round(v*100)/100+0,VM=new Map,VN=new Map,SM=new Map,SN=new Map,FC={},LD=new Set,AV=new Map,
 WN='Thin ExtraLight Light Regular Medium SemiBold Bold ExtraBold Black'.split(' '),WL=WN.map(x=>x.toLowerCase());
 for(const v of await F.variables.getLocalVariablesAsync())VM.set(v.name,v)&&VN.set(v.id,v.name);
@@ -146,16 +147,17 @@ if(J(g)!=J(run(e,t)))d.runs=g.map((x,i)=>(x[2]=fn(sg[i].fontName),x))}
 else{const b=e.bd,st=pl(n.strokes);
 ck('fills',ov?[]:[...e.bg!=U?[D.C[e.bg]]:[],...(e.gr||[]).map(g=>'GRADIENT_'+(g.k=='R'?'RADIAL':'LINEAR')),...e.im?['IMAGE']:[]],pl(n.fills)||[]);
 ck('strokes',b&&(ov||!b.o)?{c:[D.C[b.c]],w:b.w.length?b.w:[b.w,b.w,b.w,b.w]}:null,st?{c:st,w:SI.map(k=>r2(n[k]))}:null);
-ck('radius',e.rd>=0?[e.rd,e.rd,e.rd,e.rd]:e.rd||[0,0,0,0],CO.map(k=>r2(n[k])));
+const ri=e.rd>=0?[e.rd,e.rd,e.rd,e.rd]:e.rd||[0,0,0,0];ck('radius',ri,CO.map((k,i)=>bv[k]?ri[i]:r2(n[k])));// bound corner: vars checks it
 ck('es',ov?'':D.S[e.es]||'',SN.get(n.effectStyleId)||'');
 for(const k of['fills','strokes'])if(pv(n[k]))vg[k]=pv(n[k])}
 ck('op',ov||e.op==U?1:e.op,r2(n.opacity));
 for(const k in v)if(ov?/^(sc|b\d|r\d)$/.test(k):!(o2&&/^(sc|b\d)$/.test(k))&&!(T&&k=='c'))vw[VF[k]]=D.V[v[k]];
 for(const k in bv){const a=bv[k]&&(bv[k].length?bv[k][0]:bv[k]);if(a&&a.id&&k!='fills'&&k!='strokes')vg[k]=VN.get(a.id)||a.id}
 if(e.ic&&e.ic.i!=U&&!ov){const x=n.findAll(()=>1);if(!x[0])d.icon=0;for(const[k,c]of[['vf','fills'],['vs','strokes']]){const p=x.map(y=>pv(y[c])).find(z=>z);if(p)vg[k]=p}}
+const sw=vw[SI[0]];if(sw&&SI.every(k=>vw[k]==sw)&&SI.some(k=>vg[k]==sw)&&SI.every(k=>!vg[k]||vg[k]==sw))SI.forEach(k=>vg[k]=sw);
 if(so(vw)!=so(vg))d.vars=vg;
 return Object.keys(d)[0]&&d},
-ord=(e,a=[])=>{a.push(e.o);(e.k||[]).forEach(k=>ord(k,a));if(e.bd&&e.bd.o)a.push(e.o+'#stroke');return a},
+ordP=(e,p,a=[])=>{a.push([e.o,p]);(e.k||[]).forEach(k=>ordP(k,e.o,a));if(e.bd&&e.bd.o)a.push([e.o+'#stroke',e.o]);return a},
 PG=D.page||'Screens',pg=F.root.children.find(p=>p.name==PG)||(()=>{const p=F.createPage();p.name=PG;return p})();
 await F.setCurrentPageAsync(pg);
 for(let i=0;i<12;i+=2)VF[PD[i]]=PD[i+1];
@@ -180,14 +182,18 @@ const M={},pf=root.id.split(':')[0]+':',ui=[],us={};
 for(const[o,n,e,ov]of S.reg)if(!S.bad.has(o)&&A[o]&&B[o])try{const d=read(n,e,ov),b=B[o].map((x,i)=>r2(x-A[o][i])),t=[n.id.indexOf(pf)?n.id:+n.id.slice(pf.length),A[o]];
 if(d||b.some(x=>x))t.push(b.some(x=>x)?b:0);if(d)t.push(d);M[o]=t}catch(z){fail(o,z)}
 for(const o in S.i){const I=S.i[o];if(I.u)ui.push(...I.u.map(u=>({o,...u})));if(I.raw||I.im)us[o]=I.im?{...I.raw,im:I.im}:I.raw}
-res.root=root.id;res.nodes=ord(sc.T).map(o=>M[o]||0);
+// compact nodes: README "Figma runtime"
+const Q={};let pv=-1;
+res.root=root.id;res.nodes=ordP(sc.T).map(([o,p])=>{const t=M[o],q=Q[p];Q[o]=t?o:q;if(!t)return 0;
+const[f,A,b,d]=t,r=q&&M[q],c=[typeof f=='number'&&f==pv+1?0:f,r?A.map((x,i)=>i<2?r2(x-r[1][i]):x):A],pb=r&&r[2];if(typeof f=='number')pv=f;
+if(t.length>2)c.push(b&&pb&&J(b)==J(pb)?1:b);if(d)c.push(d);return c});
 if(ui[0])res.unbound=ui;
 if(Object.keys(us)[0])res.unsupported=us;
 pd(root,'sig',res.sig=sig(root));
 if(t)t.remove()}
 res.fontMissing=S.fm;res.errors=S.er;
 return res},
-out={batch:D.batch,page:pg.name,pageId:pg.id,screens:[]};
+out={batch:D.batch,page:pg.name,pageId:pg.id,z:1,screens:[]};
 for(const sc of D.screens){S={reg:[],late:[],i:{},fm:[],er:[],bad:new Set};
 try{out.screens.push(await screen(sc))}catch(z){try{S.root&&S.root.remove()}catch(y){}// keep the old frame, drop the half-built one
 out.screens.push({screen:sc.screen,fontMissing:S.fm,errors:[...S.er,{o:sc.T.o,msg:String(z&&z.message||z).slice(0,200)}]})}}

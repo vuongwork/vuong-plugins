@@ -151,13 +151,18 @@ Luật cụ thể đã chốt:
 
 ## 10. Component
 
-- Ứng viên: phần tử có cùng chữ ký cấu trúc lặp lại (bản thử dùng ngưỡng ≥ 3 lần). Khác cấu trúc nhỏ → biến thể của cùng component set, không tạo component mới.
+- Ứng viên (không có ngưỡng số lần hay số màn cố định; quyết định 2026-11-24, thay ngưỡng ≥ 3 lần của bản thử):
+  - **Thành component, bất kể số lần và số màn:** control theo bảng loại bên dưới; phần tử có lớp trạng thái (`is-*`, `data-state`); phần tử có class riêng, cùng chữ ký cấu trúc ở mọi lần xuất hiện và có hình riêng (nền, viền, bo góc hoặc bóng).
+  - **Đề xuất, người dùng chọn ở trang xem trước:** thẻ trần (không class) lặp cùng chữ ký từ 2 lần. Chưa chọn thì vẫn dựng bằng layer rời.
+  - **Không bao giờ:** gốc màn, khung bố cục không có hình riêng, khối 1 node (trừ control).
+  - Mỗi component ghi lý do được chọn (ví dụ "control: button", "class .task-row, 4 lần, 2 màn"); người dùng bỏ được qua file names.
+  - Khác cấu trúc nhỏ → biến thể của cùng component set, không tạo component mới.
 - AI đặt tên theo vai trò (bản thử ra `cmp/div`, `cmp/a`: không dùng được).
 - **Trạng thái** (Figma là nguồn để dev code theo nên không được thiếu). Thứ tự ưu tiên:
   1. HTML vẽ sẵn (nhận qua class như `is-disabled` hoặc `data-state="error"`) → lấy từ HTML.
   2. HTML không có → sinh theo luật của design system (nhấn: lớp phủ cùng màu chữ 10%; tắt: nội dung 38%, nền 12%; focus: viền 2px token focus; lỗi: token lỗi; đang tải: thay nhãn bằng vòng quay). Đánh dấu *đề xuất*.
   3. Luật không áp được → ghi vào báo cáo độ phủ, không tự vẽ.
-- Bảng trạng thái theo loại có sẵn trong plugin (nút: thường, nhấn, tắt, đang tải, focus; ô nhập: trống, focus, đã nhập, lỗi, tắt; ô tích: chưa tích, đã tích, tắt; tab: chọn, chưa chọn). Mobile bỏ hover.
+- Bảng trạng thái theo loại có sẵn trong plugin (nút: thường, nhấn, tắt, đang tải, focus; ô nhập: trống, focus, đã nhập, lỗi, tắt; ô tích: chưa tích, đã tích, tắt; nút chọn một (radio): chọn, chưa chọn, tắt; công tắc: bật, không bật, tắt; chip: chọn, chưa chọn, tắt; tab: chọn, chưa chọn). "Tắt" là không dùng được (disabled). Mobile bỏ hover.
 - Duyệt một lượt: plugin dựng trang HTML xem trước mọi component với đủ trạng thái (chạy trên máy, không tốn lượt gọi Figma). Người dùng duyệt bộ luật, sau đó mới ghi Figma. Sửa luật một chỗ thì mọi component đổi theo.
 - Nội dung khác nhau giữa các instance: text property, boolean property, **instance swap cho icon** (bản thử thiếu bước này nên tab "Tiến độ" hiện sai icon).
 - Thứ tự dựng: nguyên tử → ghép. Auto layout bắt buộc, gắn biến cho màu, padding, gap, bo góc; chữ dùng text style.

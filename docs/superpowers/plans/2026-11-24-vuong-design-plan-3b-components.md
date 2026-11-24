@@ -55,24 +55,33 @@
 
 **Files:** tạo `core/components.mjs`, `test/components.test.mjs`.
 
-`findComponents(screens: [{ screen, spec }], { min = 3 })`:
-- **Chữ ký cấu trúc** của một cây con: `roleSig` của gốc (inventory.mjs, đã bỏ lớp trạng thái qua `STATE`) + loại node, layoutMode, số con và chữ ký con theo thứ tự, đệ quy. Không gồm: nội dung chữ, icon cụ thể, kích thước, màu. Cây con có ≥ `min` lần xuất hiện trên toàn file (mọi màn) và ≥ 2 node → ứng viên. Cây con nằm trong một ứng viên lớn hơn có cùng số lần xuất hiện thì không tách riêng (task row chứa checkbox: checkbox chỉ thành component riêng khi nó cũng xuất hiện ngoài task row).
+`findComponents(screens: [{ screen, spec }], { bareMin = 2 })`:
+- **Chữ ký cấu trúc** của một cây con: `roleSig` của gốc (inventory.mjs, đã bỏ lớp trạng thái qua `STATE`) + loại node, layoutMode, số con và chữ ký con theo thứ tự, đệ quy. Không gồm: nội dung chữ, icon cụ thể, kích thước, màu. Đếm lần xuất hiện trên toàn file (mọi màn).
+- **Loại** (`kindOf`, theo thẻ / role / thuộc tính của gốc trong IR): `button` (thẻ button, `role=button`, `a` có lớp btn), `input` (input/textarea/select), `checkbox` (input checkbox, `role=checkbox`), `radio` (input radio, `role=radio`), `switch` (`role=switch`), `chip` (`aria-pressed`, hoặc class có từ `chip` ngoài `role=tablist`), `tab` (`role=tab`, con của `role=tablist`), `other`.
+- **Chọn ứng viên** (spec mục 10, không có ngưỡng số lần hay số màn cố định), mỗi ứng viên ghi `reason`:
+  - `control`: loại khác `other` → component, kể cả 1 lần, kể cả 1 node.
+  - `state`: có lần xuất hiện mang lớp trạng thái (`is-*`, `data-state`, lớp `STATE`) → component set.
+  - `class`: gốc có class không phải trạng thái, mọi lần xuất hiện của class đó cùng chữ ký, gốc có hình riêng (nền, viền, bo góc hoặc bóng) và cây ≥ 2 node → component, kể cả 1 lần. Class có ở các cây khác chữ ký → không tự chọn, vào `proposed` cho từng chữ ký.
+  - `bare`: thẻ trần (không class) cùng chữ ký ≥ `bareMin` lần, ≥ 2 node → `proposed` (không dựng thành component). Câu `ask` khoá `cmp:<chữ ký rút gọn>` trong `vd-names.draft.json` (giữ / bỏ, tên); chỉ thành component khi `vd-names.json` có câu trả lời giữ. Agent không ghi câu trả lời.
+  - Không bao giờ: gốc màn, khung không có hình riêng (trừ `control` / `state`), khối 1 node (trừ `control`).
+  - Lồng nhau: `control` luôn là component riêng (instance lồng trong component ngoài). Ứng viên `class` / `bare` nằm trong một ứng viên lớn hơn có cùng số lần xuất hiện thì không tách riêng.
+  - Người dùng bỏ một component qua `vd-names.json` (`cmp:<tên>`: bỏ) → dựng bằng layer rời, ghi `skipped` lý do `user`.
 - **Biến thể:** các lần xuất hiện có cùng chữ ký nhưng khác lớp trạng thái (`is-*`, `data-state`, các lớp `STATE`), hoặc khác paint/type theo role, gộp thành một component set; trục biến thể lấy từ tên lớp (`state=selected`). Khác biệt chỉ do đo (≤ 0,5 px, R67) không tạo biến thể.
 - **Thuộc tính:** chữ khác nhau giữa các lần xuất hiện → TEXT; con có ở lần này, không có ở lần khác (cùng chữ ký phần còn lại) → BOOLEAN; icon khác nhau ở cùng vị trí → INSTANCE_SWAP (mỗi icon khác nhau thành một component icon trong set `icon/*`).
 - **Tên:** lớp CSS đặc trưng nhất của gốc (lớp không phải trạng thái, xuất hiện ở mọi lần): `.task-row` → `task-row`. Không có lớp (thẻ trần) → tên `ask` trong `vd-names.draft.json` (khoá `cmp:<chữ ký rút gọn>`), tạm `cmp-<n>`.
-- Ra `components.json`: `{ v: 1, components: [{ name, sig, variants: [{ props, nodes: [{ screen, node }] }], props: [{ name, type, default }], icons? }], skipped: [{ sig, count, reason }] }`.
+- Ra `components.json`: `{ v: 1, components: [{ name, kind, reason, sig, count, screens, variants: [{ props, nodes: [{ screen, node }] }], props: [{ name, type, default }], icons? }], proposed: [{ sig, count, screens, nodes, ask }], skipped: [{ sig, count, reason }] }`.
 
-- [ ] **Step 1: Viết test** trên spec dựng tay: 3 hàng giống nhau khác chữ → 1 component, 1 thuộc tính TEXT; 2 hàng thường + 1 hàng `is-done` → 1 set, 2 biến thể; con thiếu ở 1 lần → BOOLEAN; icon khác → INSTANCE_SWAP; `noise is not a variant` (gap 12 / 12,01); đảo thứ tự màn → `components.json` giống từng byte; 2 lần xuất hiện (< min) → `skipped` có lý do.
+- [ ] **Step 1: Viết test** trên spec dựng tay: 3 hàng giống nhau khác chữ → 1 component, 1 thuộc tính TEXT; 2 hàng thường + 1 hàng `is-done` → 1 set, 2 biến thể; con thiếu ở 1 lần → BOOLEAN; icon khác → INSTANCE_SWAP; `noise is not a variant` (gap 12 / 12,01); đảo thứ tự màn → `components.json` giống từng byte; nút xuất hiện 1 lần, 1 màn → component `reason: control`; khối có class riêng và nền, 1 lần → component `reason: class`; khung có class nhưng không có hình riêng → không chọn; thẻ trần 2 lần → `proposed` có câu `ask`, không vào `components`; có câu trả lời giữ trong `vd-names.json` → thành component; thẻ trần 1 lần → không chọn; checkbox trong task row → component riêng lồng trong task row; người dùng bỏ → `skipped` lý do `user`.
 - [ ] **Step 2: Chạy** → FAIL. **Step 3: Viết.** **Step 4: Chạy** → PASS.
-- [ ] **Step 5: Đo trên Planora và corpus** (không ghi Figma): số component, biến thể, thuộc tính, tỉ lệ node của màn nằm trong instance, các ứng viên bị bỏ và lý do. Ghi vào README mục mới "Components". Đối chiếu danh sách component của `figma-plan.md` Planora (task row, checkbox, hũ 1-3-5, nút, chip, nav, sheet): mục nào không được tìm ra → ghi lý do; người dùng quyết có cần luật bổ sung không trước Task 3.
+- [ ] **Step 5: Đo trên Planora và corpus** (không ghi Figma): số component theo `reason` và `kind`, số `proposed`, biến thể, thuộc tính, tỉ lệ node của màn nằm trong instance, các ứng viên bị bỏ và lý do, tỉ lệ khối có class / thẻ trần trong HTML Planora (nếu phần lớn là thẻ trần thì báo người dùng: dấu hiệu `class` ít tác dụng). Ghi vào README mục mới "Components". Đối chiếu danh sách component của `figma-plan.md` Planora (task row, checkbox, hũ 1-3-5, nút, chip, nav, sheet): mục nào không được tìm ra → ghi lý do; người dùng quyết có cần luật bổ sung không trước Task 3.
 - [ ] **Step 6: Commit** `feat(vuong-design): component candidates, variants and properties from repeated structures`.
 
 ### Task 3: Loại component và bảng trạng thái
 
 **Files:** `core/components.mjs`, `core/states.mjs` (mới), test tương ứng.
 
-- Loại theo thẻ / role / thuộc tính của gốc trong IR: `button` (thẻ button, `role=button`, `a` có lớp btn), `input` (input/textarea/select), `checkbox` (input checkbox, `role=checkbox`), `tab` (`role=tab`, con của `role=tablist`), `other`.
-- Bảng trạng thái theo loại (mục 10; mobile không có hover): nút: thường, nhấn, tắt, đang tải, focus; ô nhập: trống, focus, đã nhập, lỗi, tắt; ô tích: chưa tích, đã tích, tắt; tab: chọn, chưa chọn.
+- Loại lấy từ `kindOf` (Task 2).
+- Bảng trạng thái theo loại (mục 10; mobile không có hover): nút: thường, nhấn, tắt, đang tải, focus; ô nhập: trống, focus, đã nhập, lỗi, tắt; ô tích: chưa tích, đã tích, tắt; radio: chọn, chưa chọn, tắt; công tắc: bật, không bật, tắt; chip: chọn, chưa chọn, tắt; tab: chọn, chưa chọn. "Tắt" = disabled.
 - Nguồn từng trạng thái, theo thứ tự: biến thể đã có từ HTML (Task 2) → `html`; không có → sinh theo luật trong `vd-rules.json` mục `states` (mặc định của spec: nhấn = lớp phủ màu chữ 10%; tắt = nội dung 38%, nền 12%; focus = viền 2 px token focus; lỗi = token lỗi; đang tải = thay nhãn bằng vòng quay) → `proposed`; luật cần token chưa có (không có token focus / lỗi) → `missing`, ghi vào `coverage.json`, không vẽ.
 - Mặc định của luật vào `vd-rules.draft.json` mục `states` với `approved` trống.
 
@@ -133,8 +142,8 @@ Component được dựng từ spec của lần xuất hiện đầu tiên (theo
 - [ ] **Step 5: Cập nhật** `figma-plan.md` của Planora (dòng kế hoạch 3b, danh sách component thật so với danh sách dự kiến). Không ghi thông tin cá nhân.
 - [ ] **Step 6: Commit** plugin `docs(vuong-design): plan 3b acceptance on real Figma` và Planora `docs(design): Planora components on Figma (plan 3b)`.
 
-## Câu hỏi mở cho người dùng (trả lời trước Task 2 Step 5)
+## Quyết định của người dùng (2026-11-24)
 
-1. Ngưỡng ứng viên `min = 3` lần xuất hiện (theo bản thử) hay 2?
-2. Component chỉ dùng trong một màn có tách ra không (mặc định có, nếu đủ `min`)?
-3. Giá trị luật trạng thái mặc định ở Task 3 (lấy từ mục 10 của spec) có giữ nguyên cho Planora không?
+1. Không có ngưỡng số lần cố định: control, lớp trạng thái và class riêng có hình riêng tự thành component bất kể số lần; thẻ trần lặp từ 2 lần chỉ là đề xuất, người dùng chọn (Task 2, spec mục 10).
+2. Không xét số màn: component dùng trong một màn vẫn tách ra nếu có dấu hiệu trên.
+3. Giá trị luật trạng thái mặc định của mục 10 giữ tạm cho Planora; bảng loại thêm radio, công tắc, chip. Người dùng sẽ duyệt lại ở trang xem trước (Task 4).

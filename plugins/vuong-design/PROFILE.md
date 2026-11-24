@@ -56,6 +56,14 @@ lowers accuracy is a warning (`W`).
   fixed width (a dialog 312 px wide), or let it fill. Checked by W17. Use `box-sizing: border-box` with `width: 100%`.
 - No icon inside a line of text (Figma text cannot hold one): make a flex row of text, icon, text, or drop the icon.
   Checked by W18. Also avoid `text-align: justify` and `<sub>`/`<sup>` (write O₃ with the Unicode subscript), both W5.
+- Wrapped text fills its column: a paragraph in a column flex with `align-items: center` hugs its content and widens
+  with the screen in CSS, while Figma keeps the width of a wrapped text box. Stretch it (`align-self: stretch`) and
+  centre with `text-align: center`. Checked by W19.
+- No `space-evenly` / `space-around`, not even imitated with empty `flex: 1` spacers (dropped: nothing to draw). Use
+  `justify-content: space-between`; one empty spacer between two groups is fine. Checked by W20.
+- Proportional parts: anchor them at an edge (`left: 0; width: NN%`, proven). A % offset from the edge (`left: 20%`,
+  a range bar, a marker) is not modelled reliably by the pipeline yet (plan 5 follow-up); no lint code until the cause
+  is known.
 - No height tied to width: `aspect-ratio` or vertical padding in % on a stretching element keeps its ratio in CSS but
   not in Figma auto layout, and everything below it moves. Give a stretching image a fixed height (or a fixed width, if
   the ratio matters more than stretching). Checked by W14.
@@ -106,6 +114,8 @@ The list of properties for W5 mirrors `unsupported()` in `core/capture.mjs` (R46
 | W16 | warn | `flex-grow` other than 0 or 1 (Figma fills share space equally) |
 | W17 | warn | `max-width` that caps a filling element when widened (the Figma model keeps filling) |
 | W18 | warn | icon or image inside running text |
+| W19 | warn | wrapped text centred (or start/end-aligned) across a column flex, so it hugs and widens with the screen |
+| W20 | warn | two or more empty growing spacers in one flex container (space-evenly imitation) |
 
 ## Checking
 

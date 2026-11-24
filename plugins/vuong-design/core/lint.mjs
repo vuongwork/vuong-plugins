@@ -473,6 +473,39 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
     }
   });
   // W17: max-width that starts capping between A and B (the Figma model keeps filling)
+  // W20: an empty, unpainted flex item that grows is a spacer: capture drops it (nothing to draw), its siblings fall
+  // back to the container's packing. Figma has no space-evenly; use space-between.
+  roots.forEach((root, si) => {
+    const spacers = new Map(); // container -> empty growing items
+    for (const el of root.querySelectorAll('*')) {
+      if (isSvgInner(el) || !visible(el) || [...el.childNodes].some((n) => n.nodeType === 1 || n.textContent.trim())) continue;
+      const p = el.parentElement;
+      if (!p || !/flex/.test(getComputedStyle(p).display)) continue;
+      const cs = getComputedStyle(el);
+      const painted = !/^(transparent|rgba\(.*,\s*0\))$/.test(cs.backgroundColor) || cs.backgroundImage !== 'none' || cs.boxShadow !== 'none' || ['Top', 'Right', 'Bottom', 'Left'].some((k) => parseFloat(cs['border' + k + 'Width']) > 0);
+      if (!painted && parseFloat(cs.flexGrow) > 0) spacers.set(p, [...(spacers.get(p) || []), el]);
+    }
+    // one spacer between two groups is space-between (inferred fine); two or more imitate space-evenly / -around
+    for (const [p, list] of spacers) if (list.length >= 2) add('W20', si, `${list.length} empty growing spacers (space-evenly imitation): they are dropped and the items repack; Figma has no space-evenly, use space-between`, p, root);
+  });
+  // W19: wrapped text that hugs its content (not stretched, not growing) widens with the screen in CSS; Figma keeps the
+  // width of a wrapped text box. Make it fill its parent (align-self: stretch / width: 100%) and align the text instead.
+  const hugText = [];
+  roots.forEach((root, si) => {
+    for (const el of root.querySelectorAll('*')) {
+      if (isSvgInner(el) || !visible(el) || !el.parentElement) continue;
+      if (![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) continue;
+      const cs = getComputedStyle(el), lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2;
+      const r = el.getBoundingClientRect();
+      if (r.height < lh * 1.5) continue;
+      const pcs = getComputedStyle(el.parentElement);
+      // only text centred / start / end-aligned across a column flex (row items: W3, grid: W1, block flow fills)
+      if (!/flex/.test(pcs.display) || !/column/.test(pcs.flexDirection) || /inline/.test(cs.display)) continue;
+      const align = cs.alignSelf === 'auto' || cs.alignSelf === 'normal' ? pcs.alignItems : cs.alignSelf;
+      if (/stretch|normal/.test(align)) continue;
+      hugText.push({ el, si, root, wA: r.width });
+    }
+  });
   const inner = (p) => { const cs = getComputedStyle(p); return p.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight); };
   const capEls = [];
   roots.forEach((root, si) => {
@@ -507,6 +540,12 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
     // capped at B while its parent offers more room, and it was filling (or growing) before: Figma keeps filling
     const pB = inner(c.el.parentElement);
     if (wB >= c.mw - 0.5 && pB > wB + 1 && (c.wA >= c.pA - 0.5 || wB > c.wA + 0.5)) add('W17', c.si, `max-width ${c.mw}px caps this element when widened; the Figma model keeps it filling: give it a fixed width, or let it fill`, c.el, c.root);
+  });
+  hugText.forEach((t) => {
+    const wB = t.el.getBoundingClientRect().width;
+    const p = t.el.parentElement, pcs = getComputedStyle(p);
+    const pin = p.clientWidth - parseFloat(pcs.paddingLeft) - parseFloat(pcs.paddingRight);
+    if (wB > t.wA + 0.5 && wB < pin - 0.5) add('W19', t.si, 'wrapped text hugs its content and widens with the screen; Figma keeps its width: make it fill (align-self: stretch) and use text-align', t.el, t.root);
   });
   const overB = clipOver();
   roots.forEach((root, si) => {

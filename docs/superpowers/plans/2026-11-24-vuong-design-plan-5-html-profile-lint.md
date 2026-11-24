@@ -178,3 +178,15 @@ Sonnet 5.5, 25,2k token output, 2 vòng lint, layout 1/5. Ba lỗ hổng mới v
 - Thử nhánh "các FILL anh em có bề rộng khác nhau" cho W16: báo trên 3 màn vẫn qua layout → bỏ.
 
 Bốn lượt, gốc chung của mọi lỗ hổng (W12–W18): một kích thước hay vị trí đổi theo bề rộng theo cách auto layout không có. Lượt sau nên là kiểm tra hồi quy: chạy lại một đề cũ với skill mới, kỳ vọng lint sạch thì layout đạt.
+
+### Lượt 5: hồi quy Trời Hôm Nay (skill đã cập nhật)
+
+Sonnet 5.5, 18,2k token output (lượt 4: 25,2k), 2,7 phút, **1 vòng lint sạch**, xử lý đúng cả 9 chỗ spec mâu thuẫn profile. Layout vẫn 1/5 vì ba cơ chế mới:
+
+- **W19** chữ nhiều dòng căn giữa trong cột flex `align-items:center` ôm nội dung, nới thì rộng ra; Figma giữ bề rộng (W1, W4 qua màn nền). Sửa `align-items: stretch` + `text-align: center`.
+- **W20** 7 spacer rỗng `flex:1` giả space-evenly: capture bỏ (không vẽ gì), các cột dồn kiểu space-between (W1, W4). Một spacer giữa hai nhóm thì không sao (không báo).
+- Sửa hai lỗi trên: W1, W4 đạt → 3/5 (W5 đã đạt sẵn).
+- **Pipeline (ưu tiên cao, profile đang khuyên dùng):** phần tử absolute đặt bằng **offset %** (`left:20%; width:60%` thanh khoảng, `left:10%…60%` dải AQI, chấm `left:70%` + `margin-left:-6px`) lệch: dải AQI sai ngay ở bề rộng A (x lệch 19,74 px mỗi đoạn), thanh/chấm sai ở B (-24 px). `left:0; width:%` (Ví Nhỏ) và `top:50%` đường lưới (Hẹn Khám) thì đạt; Planora có 8 offset % vẫn đạt. Chưa rõ nguyên nhân (strip absolute `left:0;right:0` lồng? SCALE với offset?), nên **chưa làm luật lint** (thử W21: báo nhầm 9 chỗ đạt). Repro: `$VD_CORPUS_DIR/samples-out/troi-hom-nay-v2/troi-hom-nay.html`, màn W2, W3.
+- Thử W19 bản rộng (mọi chữ nhiều dòng giãn khi nới): báo nhầm 11 chỗ Planora và hàng chục chỗ corpus → thu về chỉ cột flex có căn ngang khác stretch.
+
+Đánh giá: skill nay tránh được mọi lỗi đã biết ngay vòng đầu và tốn ít token hơn (18k so với 25–30k). Lỗ hổng mới vẫn xuất hiện ở các cơ chế chưa gặp; ngoài phần offset % (pipeline), profile v1 sau 5 lượt bao 9 cơ chế co giãn (W12–W20).

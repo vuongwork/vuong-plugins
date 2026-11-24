@@ -40,6 +40,10 @@ Sonnet, because lint checks the result mechanically. Do not read `lint.json` int
    - no `flex-grow` other than 1 (proportions = fixed px or absolute %), no `max-width` on a filling element (fixed
      width instead), `box-sizing: border-box` with `width: 100%`
    - no icon inside a line of text, no `text-align: justify`, no `<sub>`/`<sup>` (Unicode ₀₁₂₃ instead)
+   - wrapped text in a column flex is stretched (`align-self: stretch`) and centred with `text-align`, never hugging
+   - no space-evenly/around and no rows of empty `flex: 1` spacers: use `space-between`
+   - proportional bars/markers: `left: 0; width: NN%` only; tell the user when the spec needs a % offset (range bar,
+     marker), it is a known pipeline gap
    - no `aspect-ratio` or %-padding on a stretching element: give images a fixed px height
    - content must end inside the screen (trim long text/lists); nothing cut by the screen bottom
    - no `%` width/height except 100% on in-flow elements; a progress fill or chart bar is `position:absolute; left:0;

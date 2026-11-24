@@ -93,6 +93,12 @@ test('lint-stretch: W16 grow ratio, W17 max-width cap, W18 inline icon, W5 justi
   assert.match(w5, /vertical-align/);
 });
 
+test('lint-hug: W19 centred wrapped text that hugs, W20 space-evenly spacers; nothing on stretched text or one spacer', { skip }, async () => {
+  const r = await lint('lint-hug.html');
+  assert.deepEqual(codes(r), ['W19', 'W20']);
+  for (const f of r.findings) assert.equal(f.screen, 'A2', `${f.code} ${f.sel}`);
+});
+
 test('lint-shrink: W3 on the row that relies on flex-shrink, not on the min-width:0 / flex:1 rows', { skip }, async () => {
   const r = await lint('lint-shrink.html');
   assert.deepEqual(codes(r), ['W3']);

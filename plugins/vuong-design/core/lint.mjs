@@ -357,6 +357,7 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
   // it does not follow its parent when widened. Authored values are read with every element display:none (computed
   // width/height then give the specified value, as capture does for R47), in one pass.
   const flow = [];
+  const ratioEls = []; // W14 candidates: height tied to width (aspect-ratio, % vertical padding)
   roots.forEach((root, si) => {
     for (const el of root.querySelectorAll('*')) {
       if (isSvgInner(el) || el.tagName.toLowerCase() === 'svg' || !visible(el)) continue;
@@ -369,11 +370,13 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
     const st = document.createElement('style');
     st.textContent = '*{display:none !important}';
     document.head.appendChild(st);
-    const vals = flow.map((f) => { const cs = getComputedStyle(f.el); return [cs.width, cs.height]; });
+    const vals = flow.map((f) => { const cs = getComputedStyle(f.el); return [cs.width, cs.height, cs.paddingTop, cs.paddingBottom]; });
     st.remove();
     flow.forEach((f, i) => {
       const bad = [['width', vals[i][0]], ['height', vals[i][1]]].filter(([, v]) => /%$/.test(v) && parseFloat(v) !== 100);
       for (const [k, v] of bad) add('W12', f.si, `${k}: ${v} on an in-flow element (Figma has no % size; use position:absolute inside a relative parent)`, f.el, f.root);
+      // W14 (padding hack): a vertical padding in % makes the height follow the width
+      if ([vals[i][2], vals[i][3]].some((v) => /%$/.test(v) && parseFloat(v) !== 0)) ratioEls.push({ ...f, how: 'vertical padding in %' });
     });
   }
   // W13: Figma has no z-index; a later layer always draws on top. CSS paints an absolute/fixed element above later
@@ -416,6 +419,30 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
   }
   w3();
   const wrapA = wraps.map(lines);
+  flow.forEach((f) => { const ar = getComputedStyle(f.el).aspectRatio; if (ar && ar !== 'auto') ratioEls.push({ ...f, how: `aspect-ratio ${ar}` }); });
+  const ratioA = ratioEls.map((r) => r.el.getBoundingClientRect().width);
+  // W15: content cut by the bottom of a clipping box. Harmless when the same leaves are hidden at A and B and none
+  // straddles the edge; otherwise what is visible changes when widened and the Figma model cannot follow.
+  const clipOver = () => roots.map((root) => {
+    const out = [];
+    for (const el of [root, ...root.querySelectorAll('*')]) {
+      if (isSvgInner(el) || !visible(el)) continue;
+      const cs = getComputedStyle(el);
+      if (cs.overflowY === 'visible' || el.scrollHeight <= el.clientHeight + 1) continue;
+      const edge = el.getBoundingClientRect().top + el.clientTop + el.clientHeight;
+      let cut = 0;
+      const hidden = new Set();
+      for (const leaf of el.querySelectorAll('*')) {
+        if (isSvgInner(leaf) || leaf.firstElementChild && leaf.localName !== 'svg' || !visible(leaf)) continue;
+        const r = leaf.getBoundingClientRect();
+        if (r.top >= edge - 0.5) hidden.add(leaf);
+        else if (r.bottom > edge + 1) cut++;
+      }
+      out.push({ el, cut, hidden });
+    }
+    return out;
+  });
+  const overA = clipOver();
   const A = snap();
   const targets = roots.map((r) => r.closest(widenSel || '[data-vd-widen]') || r);
   const done = new Set();
@@ -432,6 +459,19 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
   roots.forEach((root, si) => {
     if (B[si].w - A[si].w < 1) add('W2', si, 'screen does not stretch when widened (fixed width)', root, root);
     else if (!B[si].kids.some((w, i) => w - A[si].kids[i] >= 1)) add('W2', si, 'screen stretches but nothing inside it does', root, root);
+  });
+  ratioEls.forEach((r, i) => {
+    if (r.el.getBoundingClientRect().width - ratioA[i] >= 1) add('W14', r.si, `${r.how} on an element that stretches: its height follows its width in CSS, not in Figma; give it a fixed height`, r.el, r.root);
+  });
+  const overB = clipOver();
+  roots.forEach((root, si) => {
+    const els = new Set([...overA[si], ...overB[si]].map((o) => o.el));
+    for (const el of els) {
+      const a = overA[si].find((o) => o.el === el), b = overB[si].find((o) => o.el === el);
+      const ha = a ? a.hidden : new Set(), hb = b ? b.hidden : new Set();
+      const same = ha.size === hb.size && [...ha].every((x) => hb.has(x));
+      if ((a && a.cut) || (b && b.cut) || !same) add('W15', si, 'content is cut by the bottom of a clipping box and what is visible changes when widened; shorten the content to fit', el, root);
+    }
   });
   wraps.forEach((w, i) => {
     const b = lines(w);

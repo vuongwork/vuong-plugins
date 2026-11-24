@@ -77,6 +77,13 @@ test('lint-zorder: W13 on a dropdown covered by a later row, not on the same dro
   assert.match(w[0].sel, /menu/);
 });
 
+test('lint-ratio: W14 on a stretching aspect-ratio box, W15 on content cut by the screen bottom; nothing on a fixed-width ratio', { skip }, async () => {
+  const r = await lint('lint-ratio.html');
+  assert.deepEqual(codes(r), ['W14', 'W15']);
+  for (const f of r.findings) assert.equal(f.screen, 'A2');
+  assert.match(r.findings.find((f) => f.code === 'W14').msg, /aspect-ratio 16 \/ 9/);
+});
+
 test('lint-shrink: W3 on the row that relies on flex-shrink, not on the min-width:0 / flex:1 rows', { skip }, async () => {
   const r = await lint('lint-shrink.html');
   assert.deepEqual(codes(r), ['W3']);

@@ -154,3 +154,13 @@ Việc cho pipeline, làm **sau khi merge kế hoạch 3** (không thuộc lint)
 - [ ] **Chuẩn hoá (kế hoạch 2, `normalize.mjs`): GRID4 không hỏi kích thước theo dữ liệu.** Hẹn Khám: 39 câu GRID4, nhiều câu là chiều cao cột biểu đồ (63,59; 104,39 px…) và khoảng lệch avatar chồng nhau (7,2x px). Câu gộp "áp dụng mọi giá trị lưới 4 px" sẽ làm tròn cột và **sai số liệu**. Bỏ qua: phần tử absolute có kích thước/inset %, giá trị suy ra từ căn giữa (padding lẻ do `height` cố định), con của vùng biểu đồ. Test: biểu đồ cột tỉ lệ không sinh GRID4.
 - [ ] **Crop (kế hoạch 1/3, `verify.mjs`):** Hẹn Khám F1 vòng radio viền 2 px (ratio 0,063 > 0,05, peak 10) và F3 chữ `line-through` (ratio 0,10, peak 29–30). Tìm nguyên nhân (khử răng cưa vòng tròn, vị trí/độ dày gạch ngang) trước khi nghĩ đến nới ngưỡng.
 - [ ] **Mã màn:** `layout`/`ds` đặt `s0…` thay vì giá trị `data-vd-screen` (lint đã dùng `M1`, `F1`…). Capture/pipeline nên lấy id từ thuộc tính khi có.
+
+### Lượt 3: Góc Đọc (ảnh, chữ dài, cài đặt)
+
+Sonnet 5.5, 29,8k token output, 2 vòng lint (vòng 1: 6 cảnh báo, vòng 2 sạch), layout 2/5. Hai lỗ hổng mới:
+
+- **W14** `aspect-ratio` trên phần tử giãn: CSS giữ tỉ lệ khi nới, Figma giữ chiều cao → mọi thứ bên dưới lệch (R1, R2, R4). Chốt chiều cao px → R4 hết lỗi bố cục.
+- **W15** nội dung bị cắt ở đáy khung màn và phần nhìn thấy đổi khi nới (bài dài R2, danh sách R1). Cắt nội dung cho vừa → R1, R2 đạt; tổng 4/5. Ca giáp ranh: bản đã cắt vẫn có một chấm đầu dòng 6 px ẩn khác nhau ở A/B → W15 báo nhưng layout qua (chấp nhận, là cảnh báo).
+- Còn lại R4: chip lệch 2,02 px do làm tròn bề rộng chữ (`figmaModel`), cùng loại Planora s4 → pipeline.
+
+Ba lượt, mỗi lượt lộ đúng một nhóm lỗ hổng mới mà lint bỏ sót (W12; W13; W14 + W15). Profile chưa thể coi là ổn định: chạy tiếp một mẫu khác loại sau khi merge.

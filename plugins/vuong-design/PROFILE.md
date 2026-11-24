@@ -46,6 +46,11 @@ lowers accuracy is a warning (`W`).
 - Figma has no `z-index`: a later layer always draws on top. An overlay that spills out of its parent (dropdown menu,
   popover, tooltip, snackbar) goes after the content it covers, normally as the last child of the screen with explicit
   offsets; nesting it inside the field it belongs to puts it under the following rows in Figma. Checked by W13.
+- No height tied to width: `aspect-ratio` or vertical padding in % on a stretching element keeps its ratio in CSS but
+  not in Figma auto layout, and everything below it moves. Give a stretching image a fixed height (or a fixed width, if
+  the ratio matters more than stretching). Checked by W14.
+- Content fits its screen: a long article or list cut by the bottom of the screen shows a different part when widened
+  (text re-wraps), which the Figma model cannot follow. Shorten it so the last item ends inside the frame. Checked by W15.
 - `position: absolute` only for overlays (FAB, badge, bottom bar), not as the main layout. No grid, float or table for
   screen layout.
 
@@ -86,6 +91,8 @@ The list of properties for W5 mirrors `unsupported()` in `core/capture.mjs` (R46
 | W11 | warn | wrapping flex row (or column) whose line breaks change between width A and A + 120 px |
 | W12 | warn | `%` width or height (other than 100 %) on an in-flow element |
 | W13 | warn | absolute/fixed element that escapes its parent and is overlapped by later in-flow content (Figma draws it underneath) |
+| W14 | warn | `aspect-ratio` (or vertical padding in %) on an element that stretches when widened |
+| W15 | warn | content cut by the bottom of a clipping box, where what is visible changes when widened |
 
 ## Checking
 

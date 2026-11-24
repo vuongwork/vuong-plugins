@@ -35,6 +35,8 @@ Sonnet, because lint checks the result mechanically. Do not read `lint.json` int
      nav, button, input), make `(height - content) / 2` a multiple of 4
    - an overlay that spills out of its parent (dropdown, popover, snackbar) is the last child of the screen with
      explicit offsets, never nested in the field it belongs to (Figma has no z-index)
+   - no `aspect-ratio` or %-padding on a stretching element: give images a fixed px height
+   - content must end inside the screen (trim long text/lists); nothing cut by the screen bottom
    - no `%` width/height except 100% on in-flow elements; a progress fill or chart bar is `position:absolute; left:0;
      top:0; bottom:0; width:NN%` inside a `position:relative` track
 4. Lint loop (at most 3 rounds):

@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><title>lint</title><style>
+:root{--color-bg:#ffffff;--color-ink:#1a1a1a;--color-photo:#b98a6a;--space-3:12px;--space-4:16px;--radius-md:12px;--font-sans:"Be Vietnam Pro",sans-serif;--size-body:14px;--size-body-lh:20px}
+body{margin:0;background:var(--color-bg);color:var(--color-ink);font-family:var(--font-sans);font-size:var(--size-body);line-height:var(--size-body-lh)}
+.frame{width:360px}
+.screen{height:300px;padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-3);overflow:hidden}
+.photo{background:var(--color-photo);border-radius:var(--radius-md)}
+.wide{align-self:stretch;aspect-ratio:16/9}
+.fixed{width:120px;aspect-ratio:4/3}
+.short{height:auto}
+</style></head><body>
+<div class="frame" data-vd-widen><div class="screen short" data-vd-screen="A1">
+  <div class="photo fixed"></div>
+  <p>Ảnh rộng cố định giữ tỉ lệ thì không sao.</p>
+</div></div>
+<div class="frame" data-vd-widen><div class="screen" data-vd-screen="A2">
+  <div class="photo wide"></div>
+  <p>Đoạn văn dài nằm dưới ảnh giãn theo bề ngang. Khi nới rộng, ảnh cao thêm và đoạn văn xuống dòng ít đi, nên phần bị cắt ở đáy khung thay đổi. Figma không theo được cả hai điều này.</p>
+  <p>Đoạn thứ hai chỉ để chắc chắn nội dung tràn qua đáy khung.</p>
+</div></div>
+</body></html>

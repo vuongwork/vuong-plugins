@@ -293,7 +293,7 @@ test('check: a readback matching the page passes in the norm role (screenshot re
   assert.equal(code, 0, q.lines.join('\n'));
   const html = readFileSync(join(F, 'report.html'), 'utf8');
   assert.match(html, /<h3>Figma<\/h3>/);
-  assert.match(html, /Proxy vs Figma \(norm proxy/);
+  assert.match(html, /Proxy vs Figma \(Figma box minus norm proxy box/);
 });
 
 test('check: modelled role without norm records; a missing screenshot or a node missing from the readback fails the screen', { skip }, async () => {

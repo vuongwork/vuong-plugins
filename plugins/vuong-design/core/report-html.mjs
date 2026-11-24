@@ -333,7 +333,7 @@ export function renderFigma(v) {
     `${f.extra && f.extra.length ? ` Further copies of this frame in Figma, left alone: ${esc(f.extra.join(', '))}.` : ''}</p>`);
   const pv = f.proxyVsFigma;
   if (pv) {
-    out.push(`<p>Proxy vs Figma (${esc(pv.ref)} proxy box minus Figma box, per node): largest ${['A', 'B'].map((M) => `${pv[M].max == null ? 'n/a' : px(pv[M].max)} at ${M}`).join(', ')}.</p>`);
+    out.push(`<p>Proxy vs Figma (Figma box minus ${esc(pv.ref)} proxy box, per node): largest ${['A', 'B'].map((M) => `${pv[M].max == null ? 'n/a' : px(pv[M].max)} at ${M}`).join(', ')}.</p>`);
     const rows = ['A', 'B'].flatMap((M) => pv[M].worst.map((w) => `<tr><td><code>${esc(w.id)}</code></td><td>${M}</td><td>${esc(describeDelta(w.delta))}</td></tr>`));
     if (rows.length) out.push(`<table><tr><th>node</th><th>width</th><th>Figma vs proxy</th></tr>${rows.join('')}</table>`);
   }

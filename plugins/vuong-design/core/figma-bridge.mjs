@@ -2,7 +2,8 @@
 // the plugin polls this server, runs each job in Figma and posts the result back, so no batch or result passes through a
 // model. The bridge only moves bytes; figma.mjs serve decides the jobs and ingests the results (README "Figma bridge").
 //
-// Protocol (loopback only: 127.0.0.1 and ::1, CORS open because the plugin UI iframe has origin null):
+// Protocol (loopback only: 127.0.0.1 and ::1, CORS open because the plugin UI iframe has origin null; a request with
+// any other Origin header, i.e. from a web page, is refused with 403):
 //   GET  /next            -> { session, done: true } | { session, wait: true } | { session, id, key, kind, code?, root?, scale?, n, of }
 //                            (a job already served and not answered is served again: the plugin was reloaded)
 //   POST /result?id=<id>  <- JSON { ok: true, text } (text = JSON of the code's return value) | { ok: false, error }
@@ -35,11 +36,16 @@ export function startBridge({ next, onResult, port = BRIDGE_PORT, host = '127.0.
     // keep answering { done } for a moment so the plugin sees the end, then close
     setTimeout(() => { for (const sv of servers) { sv.close(); sv.closeAllConnections(); } resolveDone(finished); }, lingerMs);
   };
+  // the next job; a next() that throws stops the queue (never serve the finished job again). A new job arms the job
+  // timeout at once, so a plugin closed between two jobs still ends the run.
   const advance = () => {
-    const j = next();
-    if (!j) { cur = null; finish(true); return; }
+    cur = null;
+    let j;
+    try { j = next(); } catch (e) { finish(false, `next job: ${String((e && e.message) || e)}`); return; }
+    if (!j) { finish(true); return; }
     cur = { ...j, id: ++ids };
     curAt = 0;
+    if (connected) arm(jobTimeoutMs, `the plugin did not ask for ${cur.key} within ${Math.round(jobTimeoutMs / 1000)} s`);
   };
   const send = (res, code, obj) => { res.writeHead(code, { ...cors, 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
   const body = (req) => new Promise((ok, bad) => {
@@ -52,6 +58,9 @@ export function startBridge({ next, onResult, port = BRIDGE_PORT, host = '127.0.
   const handler = async (req, res) => {
     try {
       if (req.method === 'OPTIONS') { res.writeHead(204, cors); res.end(); return; }
+      // the plugin UI iframe has origin null; a web page open in a browser sends its own origin: refused
+      const origin = req.headers.origin;
+      if (origin !== undefined && origin !== 'null') return send(res, 403, { ok: false, msg: 'origin not allowed' });
       const u = new URL(req.url, 'http://x');
       if (req.method === 'GET' && u.pathname === '/next') {
         if (!connected) { connected = true; log(`plugin connected (session ${session})`); }

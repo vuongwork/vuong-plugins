@@ -192,6 +192,8 @@ async function plan(argv, log) {
   const st = {
     version: 2, ds: dsData.ds, file: dsData.ir.file, page, source: dsData.source, force, runtime: RUNTIME_VERSION,
     order: [], batches: {}, screens: {}, run: null,
+    // the shots on disk stay recorded (with the frame each is of), so check can tell a shot of an earlier build
+    ...(prev && prev.shots ? { shots: prev.shots } : {}),
   };
   const changed = [];
   // batches whose screens are all or partly kept stay in the state (check reads their data), before the new ones
@@ -458,7 +460,9 @@ async function ingestShots(argv, log) {
   }
   if (bad.length) throw new UsageError(`${o.result} is not a valid shots result:\n  ${bad.join('\n  ')}`);
   copyFileSync(resolve(o.result), join(F, 'result-shots.json'));
-  st.shots = { page: res.page, clones: res.clones, ...(res.sizes ? { sizes: res.sizes } : {}), ...(res.missing && res.missing.length ? { missing: res.missing } : {}) };
+  // roots: the frame each shot is of (check ignores a shot whose screen was built again since)
+  const roots = Object.fromEntries(Object.keys(res.clones).filter((x) => st.screens[x].root).map((x) => [x, st.screens[x].root]));
+  st.shots = { page: res.page, clones: res.clones, ...(res.sizes ? { sizes: res.sizes } : {}), ...(res.missing && res.missing.length ? { missing: res.missing } : {}), roots };
   writeFileSync(statePath(o.out), json(st));
   for (const [s, id] of Object.entries(res.clones)) {
     const z = res.sizes && res.sizes[s];
@@ -510,7 +514,7 @@ async function serve(argv, log, deps = {}) {
     const s = shotList.shift();
     return s ? { key: `shot-${s.screen}`, kind: 'shot', screen: s.screen, root: s.root, scale: 2 } : null;
   };
-  const shotSizes = {};
+  const shotSizes = {}, shotRoots = {};
   const onResult = async (job, p) => {
     if (!p || !p.ok) return { ok: false, msg: `Figma error: ${(p && p.error) || 'no result'}` };
     if (job.kind === 'shot') {
@@ -518,6 +522,7 @@ async function serve(argv, log, deps = {}) {
       if (!buf || buf.length < 24 || buf.readUInt32BE(0) !== 0x89504e47) return { ok: false, msg: 'not a PNG' };
       writeFileSync(join(F, `shot-${safe(job.screen)}.png`), buf);
       shotSizes[job.screen] = pngSize(buf);
+      shotRoots[job.screen] = job.root;
       log(`  ${job.key}: ${shotSizes[job.screen].join(' x ')} px`);
       return { ok: true, msg: shotSizes[job.screen].join('x') };
     }
@@ -544,7 +549,7 @@ async function serve(argv, log, deps = {}) {
   const r = await br.done;
   if (o.shots && Object.keys(shotSizes).length) {
     const st = loadState(o.out);
-    st.shots = { via: 'export', scale: 2, sizes: shotSizes };
+    st.shots = { via: 'export', scale: 2, sizes: shotSizes, roots: shotRoots };
     writeFileSync(statePath(o.out), json(st));
   }
   const kb = (n) => Math.round(n / 100) / 10;
@@ -568,7 +573,7 @@ const CHECK_OPTS = {
 const clone = (x) => JSON.parse(JSON.stringify(x));
 
 // what check needs from the ds folder and the plan, per screen
-function checkInputs(st, F) {
+export function checkInputs(st, F) {
   const ds = st.ds;
   const ir = readJson(join(ds, 'ir.json'));
   const nj = existsSync(join(ds, 'normalisation.json')) ? readJson(join(ds, 'normalisation.json')) : { entries: [] };
@@ -583,7 +588,11 @@ function checkInputs(st, F) {
       D = readJson(join(F, st.batches[ss.batch].data));
     }
     const shot = join(F, `shot-${safe(id)}.png`);
-    return { id, specText: readFileSync(p, 'utf8'), state: ss, sres, D, shot: existsSync(shot) ? shot : null };
+    // a shot of an earlier frame (the screen was built again since: another root) is not used: the crops would compare
+    // the new build with the old picture. Shots recorded without roots (before 2026-11-24) are used as before.
+    const shotRoot = st.shots && st.shots.roots ? st.shots.roots[id] : undefined;
+    const stale = shotRoot !== undefined && shotRoot !== ss.root;
+    return { id, specText: readFileSync(p, 'utf8'), state: ss, sres, D, shot: existsSync(shot) && !stale ? shot : null, ...(stale ? { staleShot: true } : {}) };
   });
   return { ir, entries: nj.entries || [], screens };
 }
@@ -726,7 +735,7 @@ async function check(argv, log, deps) {
       screensOut.push({ summary, gate: g, report, flags: report.flags, allowlistDraft, figma, ...(mutations ? { mutations } : {}) });
       const v = await screenView(browser, inp.ir.file, entry, g, summary, { crop: 'figma', approval: 'figma', label: 'Figma' });
       views.push({ ...v, figma });
-      log(`  ${x.id}: ${summary.pass ? 'pass' : 'fail'}${sres ? '' : ` (no readback: ${ss.status})`}${shot ? '' : ' (no screenshot)'} (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
+      log(`  ${x.id}: ${summary.pass ? 'pass' : 'fail'}${sres ? '' : ` (no readback: ${ss.status})`}${shot ? '' : x.staleShot ? ' (screenshot of an earlier build: take new shots)' : ' (no screenshot)'} (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
     }
     const { pass, missed } = runVerdict(screensOut);
     const seconds = Math.round((Date.now() - t0) / 100) / 10;

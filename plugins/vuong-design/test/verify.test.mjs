@@ -2329,6 +2329,9 @@ test('R83 gate: a real-Figma norm root can be allowlisted, a record-check root c
   // a record-check root stays open
   const rc = { ...clean, roots: clean.roots.map((x) => (nr.includes(x) ? { ...x, recordCheck: true } : x)) };
   assert.ok(gate(rc, entries, where).open.roots.length > 0);
+  // a norm-layout root (R78, `on`: the local norm layout proxy, not Figma) stays open (review: R83 too broad)
+  const nl = { ...clean, roots: clean.roots.map((x) => (nr.includes(x) ? { ...x, on: 'normLayout' } : x)) };
+  assert.ok(gate(nl, entries, where).open.roots.length > 0);
   // the same report without the real-Figma mark (a ds check): R66
   assert.ok(gate({ ...clean, figmaReal: undefined }, entries, where).open.roots.length > 0);
 });

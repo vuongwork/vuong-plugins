@@ -86,6 +86,44 @@ h1,h2,p{margin:0}
 .scrim{position:absolute;left:0;top:0;right:0;bottom:0;background:var(--color-scrim)}
 .sheet{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-5) var(--space-4) var(--space-6);background:var(--color-surface);border-radius:var(--radius-lg) var(--radius-lg) 0 0}
 .grab{align-self:center;width:40px;height:4px;border-radius:var(--radius-full);background:var(--color-line)}
+/* vd:component progress-bar (proportional part: absolute, anchored at left:0, % width; never width:% in flow (W12), never a % left offset) */
+.track{position:relative;align-self:stretch;height:8px;border-radius:var(--radius-full);background:var(--color-line)}
+.track .fill{position:absolute;left:0;top:0;bottom:0;border-radius:var(--radius-full);background:var(--color-primary)}
+/* vd:component hero-text (wrapped centred text fills its column and centres with text-align (W19)) */
+.hero{display:flex;flex-direction:column;align-items:stretch;gap:var(--space-1);text-align:center}
+/* vd:component meta-row (icon next to text: a flex row, never an icon inside a line of text (W18)) */
+.meta{display:flex;align-items:center;gap:var(--space-1);color:var(--color-muted);font-size:var(--size-caption);line-height:var(--size-caption-lh)}
+.meta .icon{color:var(--color-muted)}
+/* vd:component stat-row (equal columns: flex 1 1 0, dividers are their own 1 px elements (W16)) */
+.stats{display:flex;align-items:stretch;padding:var(--space-3) 0;background:var(--color-surface);border-radius:var(--radius-md);box-shadow:var(--shadow-card)}
+.stat{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:stretch;gap:var(--space-1);text-align:center}
+.vline{width:1px;background:var(--color-line)}
+/* vd:component segmented (equal segments: flex 1 1 0) */
+.seg{display:flex;gap:var(--space-1);padding:var(--space-1);border-radius:var(--radius-md);background:var(--color-line)}
+.seg-item{flex:1 1 0;min-width:0;display:flex;align-items:center;justify-content:center;height:36px;border-radius:var(--radius-sm);font-weight:500}
+.seg-item.on{background:var(--color-surface);color:var(--color-primary);font-weight:600}
+/* vd:component switch-row (switch drawn with flex, knob pushed by justify-content) */
+.switch-row{display:flex;align-items:center;gap:var(--space-3)}
+.switch-row .label{flex:1;min-width:0}
+.switch{display:flex;align-items:center;justify-content:flex-start;width:44px;height:24px;padding:0 var(--space-1);box-sizing:border-box;border-radius:var(--radius-full);background:var(--color-line)}
+.switch.on{justify-content:flex-end;background:var(--color-primary)}
+.knob{width:16px;height:16px;border-radius:var(--radius-full);background:var(--color-surface)}
+/* vd:component text-field (label above a 48 px box; error/focus states change the colour, keep the border width) */
+.field{display:flex;flex-direction:column;gap:var(--space-1)}
+.input{display:flex;align-items:center;gap:var(--space-2);height:48px;padding:0 var(--space-3);box-sizing:border-box;border:1px solid var(--color-line);border-radius:var(--radius-md);background:var(--color-surface)}
+.input .val{flex:1 1 0;min-width:0}
+/* vd:component dropdown-menu (an overlay that spills out of its field: LAST child of the screen, px offsets (W13)) */
+.menu{position:absolute;left:var(--space-4);right:var(--space-4);display:flex;flex-direction:column;padding:var(--space-1) 0;background:var(--color-surface);border:1px solid var(--color-line);border-radius:var(--radius-md);box-shadow:var(--shadow-fab)}
+.menu .opt{display:flex;align-items:center;gap:var(--space-2);padding:var(--space-3) var(--space-4)}
+.menu .opt span{flex:1 1 0;min-width:0}
+.menu .opt.on{background:var(--color-primary-soft);color:var(--color-primary);font-weight:600}
+/* vd:component dialog (fixed width, never max-width (W17); centred by its full-screen overlay; last in the screen; actions end-aligned: a lone left button + space-between drifts 2 px in the Figma model, plan 5 follow-up) */
+.dialog-wrap{position:absolute;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center}
+.dialog{width:312px;box-sizing:border-box;display:flex;flex-direction:column;gap:var(--space-3);padding:var(--space-6);background:var(--color-surface);border-radius:var(--radius-lg)}
+.dialog-actions{display:flex;align-items:center;justify-content:flex-end}
+.dialog-actions .pair{display:flex;gap:var(--space-2)}
+.text-btn{display:flex;align-items:center;justify-content:center;height:40px;padding:0 var(--space-4);border-radius:var(--radius-full);color:var(--color-primary);font-weight:600}
+.text-btn.filled{background:var(--color-primary);color:var(--color-on-primary)}
 </style>
 </head>
 <body>
@@ -156,6 +194,64 @@ h1,h2,p{margin:0}
     <h2 class="title">New task</h2>
     <div class="card"><p class="caption">Title</p><p>What needs doing?</p></div>
     <div class="btn"><span>Add</span></div>
+  </div>
+</div>
+</div>
+
+<!-- Screen 4: proven patterns for proportions, centred text, equal columns, controls -->
+<div class="frame" data-vd-widen>
+<div class="screen" data-vd-screen="S4" data-vd-name="Patterns">
+  <div class="status-bar"><span>9:41</span><span>100%</span></div>
+  <div class="app-bar"><h1 class="title">Progress</h1></div>
+  <div class="content">
+    <!-- vd:component hero-text -->
+    <div class="hero"><p class="headline">65%</p><p>Six of the ten tasks planned for this week are done. Keep the last four light.</p></div>
+    <!-- vd:component progress-bar -->
+    <div class="track"><div class="fill" style="width:65%"></div></div>
+    <!-- vd:component meta-row -->
+    <div class="meta"><svg class="icon" width="16" height="16"><use href="#ic-calendar"/></svg><span>Updated every 30 minutes</span></div>
+    <!-- vd:component stat-row -->
+    <div class="stats">
+      <div class="stat"><p class="title">12</p><p class="caption">Done</p></div><div class="vline"></div>
+      <div class="stat"><p class="title">4</p><p class="caption">Left this week</p></div><div class="vline"></div>
+      <div class="stat"><p class="title">2</p><p class="caption">Late</p></div>
+    </div>
+    <!-- vd:component segmented -->
+    <div class="seg"><div class="seg-item on">Week</div><div class="seg-item">Month</div><div class="seg-item">Year</div></div>
+    <!-- vd:component switch-row -->
+    <div class="card">
+      <div class="switch-row"><span class="label">Evening summary</span><div class="switch on"><div class="knob"></div></div></div>
+      <div class="switch-row"><span class="label">Weekend reminders</span><div class="switch"><div class="knob"></div></div></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- Screen 5: a form with an open dropdown and a dialog: overlays come last -->
+<div class="frame" data-vd-widen>
+<div class="screen" data-vd-screen="S5" data-vd-name="Form overlays">
+  <div class="status-bar"><span>9:41</span><span>100%</span></div>
+  <div class="app-bar"><h1 class="title">New task</h1></div>
+  <div class="content">
+    <!-- vd:component text-field -->
+    <div class="field"><p class="caption">Title</p><div class="input"><span class="val">Buy groceries</span></div></div>
+    <div class="field"><p class="caption">List</p><div class="input"><span class="val">Errands</span><svg class="icon" width="24" height="24"><use href="#ic-calendar"/></svg></div></div>
+    <div class="field"><p class="caption">Notes</p><div class="input"><span class="val">Milk, eggs, bread</span></div></div>
+  </div>
+  <!-- vd:component dropdown-menu (top = bottom of the List field, in px) -->
+  <div class="menu" style="top:232px">
+    <div class="opt"><span>Work</span></div>
+    <div class="opt on"><span>Errands</span><svg class="icon" width="24" height="24"><use href="#ic-check"/></svg></div>
+    <div class="opt"><span>Home</span></div>
+  </div>
+  <!-- vd:component dialog -->
+  <div class="scrim"></div>
+  <div class="dialog-wrap">
+    <div class="dialog">
+      <p class="title">Discard changes?</p>
+      <p>The task has not been saved yet.</p>
+      <div class="dialog-actions"><div class="pair"><div class="text-btn">Cancel</div><div class="text-btn filled">Discard</div></div></div>
+    </div>
   </div>
 </div>
 </div>

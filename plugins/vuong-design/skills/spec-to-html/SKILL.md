@@ -21,7 +21,9 @@ Sonnet, because lint checks the result mechanically. Do not read `lint.json` int
      integer line-heights, shadows), then write them as `--color-*`, `--space-*`, `--radius-*`, `--font-*`, `--size-*`,
      `--shadow-*`.
 2. Copy `PLUGIN/templates/starter.html` to the target path. Keep its structure (one `.frame[data-vd-widen]` per screen,
-   a `[data-vd-screen]` inside) and reuse its components (`<!-- vd:component name -->`) instead of re-inventing them.
+   a `[data-vd-screen]` inside) and reuse its components (`<!-- vd:component name -->`) instead of re-inventing them:
+   progress bars, centred text, equal columns, segmented controls, switches, fields, dropdowns and dialogs are there,
+   each already proven to pass layout.
 3. Write the screens, one per state (tab, modal, sheet, step), with `data-vd-screen` ids taken from the spec's screen
    codes. Remove the sample screens. Hard rules, all from PROFILE.md:
    - every color, space, radius and font size is `var(--...)`; no `var()` inside a function or with a fallback
@@ -54,9 +56,13 @@ Sonnet, because lint checks the result mechanically. Do not read `lint.json` int
    If errors remain after 3 rounds, stop and tell the user which codes are left. Do not weaken a rule, add
    `--no-lint`, or edit lint to get past it. Warnings are fixed if cheap, otherwise reported.
 5. When lint reports 0 errors: `node PLUGIN/core/layout.mjs --html <file> --out <dir>` (no `--root`; the lint gate runs
-   again). Report the pass count; a failing screen goes back to the user with the report path.
+   again). If a screen fails, run `node PLUGIN/core/diagnose.mjs --out <dir>` and read only its lines (never
+   report.json / ir.json). A root at width B means something changes when widened: fix it if a PROFILE.md rule covers
+   it, then rerun layout once. Approvals and crops alone are pipeline-side: report them, do not chase pixels.
+6. Log the session cost: `node PLUGIN/core/session-log.mjs --log <dir>/runs.jsonl` (reads this session's transcript,
+   appends one line with model, output tokens and minutes).
 
 ## Done
 
 The file lints with 0 errors (warnings listed), layout ran, and the answer names the HTML path, the lint line, and the
-layout line. Nothing else is pasted into the conversation.
+layout line (plus diagnose lines for a failing screen). Nothing else is pasted into the conversation.

@@ -28,6 +28,19 @@ One page load and one widening (A, A + 120 px), no model, a few seconds. stdout 
 
 Flow for new designs: `skills/spec-to-html` (spec to HTML, lint loop of at most 3 rounds) starting from `templates/starter.html`, then `layout.mjs` / `ds.mjs`, which run the lint gate first and need no `--root` for a profile file.
 
+## Diagnose and session log
+
+```
+node plugins/vuong-design/core/diagnose.mjs --out <layout or ds output dir> [--max <n>] [--json]
+node plugins/vuong-design/core/session-log.mjs --log <runs.jsonl> [--transcript <session.jsonl>] [--label <text>]
+```
+
+- `diagnose.mjs`: a few lines per failing screen (screen id from `data-vd-screen`, then roots, approvals, crops, data,
+  unchecked, each with width A/B, delta [dx, dy, dw, dh] px and the node as the last three `tag.class` levels). Lets a
+  model act on a failed layout without reading `report.json` / `ir.json`. Exit 0 all pass, 1 a failure, 2 usage.
+- `session-log.mjs`: appends the current Claude Code session's cost (models, API calls, output / input / cache tokens,
+  minutes) to a runs log, from the newest transcript of the working directory's project folder.
+
 ## Layout CLI
 
 ```

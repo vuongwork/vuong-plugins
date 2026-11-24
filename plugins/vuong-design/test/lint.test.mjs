@@ -163,6 +163,6 @@ test('main: --json prints the full result', { skip }, async () => {
 test('templates/starter.html: 0 errors, 0 warnings, every token group fully on var()', { skip }, async () => {
   const r = await lintFile(join(FIX, '..', '..', 'templates', 'starter.html'), { browser });
   assert.deepEqual(r.findings, []);
-  assert.deepEqual(r.screens.map((s) => s.id), ['S1', 'S2', 'S3']);
+  assert.deepEqual(r.screens.map((s) => s.id), ['S1', 'S2', 'S3', 'S4', 'S5']);
   for (const g of ['color', 'space', 'radius', 'fontSize']) assert.equal(r.tokens[g].ratio, 1, g);
 });

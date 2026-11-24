@@ -190,3 +190,11 @@ Sonnet 5.5, 18,2k token output (lượt 4: 25,2k), 2,7 phút, **1 vòng lint s�
 - Thử W19 bản rộng (mọi chữ nhiều dòng giãn khi nới): báo nhầm 11 chỗ Planora và hàng chục chỗ corpus → thu về chỉ cột flex có căn ngang khác stretch.
 
 Đánh giá: skill nay tránh được mọi lỗi đã biết ngay vòng đầu và tốn ít token hơn (18k so với 25–30k). Lỗ hổng mới vẫn xuất hiện ở các cơ chế chưa gặp; ngoài phần offset % (pipeline), profile v1 sau 5 lượt bao 9 cơ chế co giãn (W12–W20).
+
+### Hoàn thiện bước spec → HTML (2026-11-24)
+
+- `starter.html` thêm S4–S5 với 9 component đã chứng minh qua 5 lượt (progress-bar, hero-text, meta-row, stat-row, segmented, switch-row, text-field, dropdown-menu, dialog). Lint 0/0, layout 5/5.
+- **Pipeline:** hàng nút hộp thoại `space-between` với một nút lẻ bên trái + cặp nút bên phải lệch 2,04 px (approval `figmaModel`, drift); dồn phải bằng `flex-end` thì đạt. Template dùng `flex-end` cho tới khi sửa.
+- `core/diagnose.mjs`: tóm tắt thư mục layout/ds thành vài dòng mỗi màn hỏng (thay cho việc model đọc report.json/ir.json). Skill bước 5 dùng nó.
+- `core/session-log.mjs`: ghi chi phí session (model, token, phút) vào `runs.jsonl`. Skill bước 6.
+- Còn: thử nhánh có `tokens.css` của dự án (chưa lượt nào chạy).

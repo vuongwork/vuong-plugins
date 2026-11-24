@@ -139,3 +139,18 @@ Nội dung (tiếng Anh như README, ngắn, mỗi luật một mục có mã):
 - `normalize` tự sửa HTML ngoài (thay `<use>` bằng symbol, nhúng ảnh, gắn `data-vd-screen`): làm khi có HTML ngoài thật cần đưa vào.
 - Sinh lại mockup Planora theo profile: không làm; s3/s4 đã có hướng xử lý ở kế hoạch 3.
 - Hợp nhất log đo chạy (`runs.jsonl`) cho cả `ds.mjs`/`figma.mjs`: lint có `--log` trước, các lệnh khác theo sau.
+
+## Kết quả thử thật và việc chuyển sang pipeline (2026-11-24)
+
+Hai lượt `spec-to-html` (Sonnet 5.5, đề trong `$VD_CORPUS_DIR/specs/`):
+
+| Mẫu | Token output | Vòng lint | Layout đầu → sau sửa | Lỗ hổng profile tìm ra |
+|---|---|---|---|---|
+| Ví Nhỏ (5 màn) | 29,2k | 1 (0/0) | 2/5 → 5/5 | W12: `width:%` trong luồng (thanh tiến độ) |
+| Hẹn Khám (5 màn) | 24,8k | 1 (0/0) | 2/5 → 3/5 | W13: lớp phủ tràn khỏi cha bị nội dung sau đè (dropdown) |
+
+Việc cho pipeline, làm **sau khi merge kế hoạch 3** (không thuộc lint):
+
+- [ ] **Chuẩn hoá (kế hoạch 2, `normalize.mjs`): GRID4 không hỏi kích thước theo dữ liệu.** Hẹn Khám: 39 câu GRID4, nhiều câu là chiều cao cột biểu đồ (63,59; 104,39 px…) và khoảng lệch avatar chồng nhau (7,2x px). Câu gộp "áp dụng mọi giá trị lưới 4 px" sẽ làm tròn cột và **sai số liệu**. Bỏ qua: phần tử absolute có kích thước/inset %, giá trị suy ra từ căn giữa (padding lẻ do `height` cố định), con của vùng biểu đồ. Test: biểu đồ cột tỉ lệ không sinh GRID4.
+- [ ] **Crop (kế hoạch 1/3, `verify.mjs`):** Hẹn Khám F1 vòng radio viền 2 px (ratio 0,063 > 0,05, peak 10) và F3 chữ `line-through` (ratio 0,10, peak 29–30). Tìm nguyên nhân (khử răng cưa vòng tròn, vị trí/độ dày gạch ngang) trước khi nghĩ đến nới ngưỡng.
+- [ ] **Mã màn:** `layout`/`ds` đặt `s0…` thay vì giá trị `data-vd-screen` (lint đã dùng `M1`, `F1`…). Capture/pipeline nên lấy id từ thuộc tính khi có.

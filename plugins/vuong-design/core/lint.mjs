@@ -353,6 +353,29 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
     }
     return counts.join('+');
   };
+  // W12: an in-flow element sized in % (other than 100 %) keeps its px size in Figma auto layout (no % sizes there), so
+  // it does not follow its parent when widened. Authored values are read with every element display:none (computed
+  // width/height then give the specified value, as capture does for R47), in one pass.
+  const flow = [];
+  roots.forEach((root, si) => {
+    for (const el of root.querySelectorAll('*')) {
+      if (isSvgInner(el) || el.tagName.toLowerCase() === 'svg' || !visible(el)) continue;
+      const cs = getComputedStyle(el);
+      if (cs.position === 'absolute' || cs.position === 'fixed') continue;
+      flow.push({ el, si, root });
+    }
+  });
+  {
+    const st = document.createElement('style');
+    st.textContent = '*{display:none !important}';
+    document.head.appendChild(st);
+    const vals = flow.map((f) => { const cs = getComputedStyle(f.el); return [cs.width, cs.height]; });
+    st.remove();
+    flow.forEach((f, i) => {
+      const bad = [['width', vals[i][0]], ['height', vals[i][1]]].filter(([, v]) => /%$/.test(v) && parseFloat(v) !== 100);
+      for (const [k, v] of bad) add('W12', f.si, `${k}: ${v} on an in-flow element (Figma has no % size; use position:absolute inside a relative parent)`, f.el, f.root);
+    });
+  }
   w3();
   const wrapA = wraps.map(lines);
   const A = snap();

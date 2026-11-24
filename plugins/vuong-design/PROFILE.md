@@ -36,6 +36,9 @@ lowers accuracy is a warning (`W`).
 - Flex. A stretching element uses `flex: 1` / `align-self: stretch` / `width: 100%`; a hugging element stays natural.
   Do not rely on flex-shrink: give a text block `min-width: 0; flex: 1` instead of letting it shrink.
 - A wrapping row (`flex-wrap`) must break at the same items at the checked widths (A and A + 120 px); a row that gains or loses a line when widened is not reproduced by the Figma model. Keep chip rows to one line, or few enough chips. Checked by W11.
+- No `%` width or height on an in-flow element other than `100%`: Figma auto layout has no % sizes, so it keeps the px
+  size when widened. A proportional part (progress fill, chart bar) is `position: absolute` with % insets/size inside a
+  `position: relative` parent (it becomes a scale constraint). Checked by W12.
 - `position: absolute` only for overlays (FAB, badge, bottom bar), not as the main layout. No grid, float or table for
   screen layout.
 
@@ -74,6 +77,7 @@ The list of properties for W5 mirrors `unsupported()` in `core/capture.mjs` (R46
 | W9 | warn | more than 25 % of the elements of a screen are absolute/fixed, or `vw` / `vh` used inside a screen |
 | W10 | warn | `var()` nested in a function or with a fallback |
 | W11 | warn | wrapping flex row (or column) whose line breaks change between width A and A + 120 px |
+| W12 | warn | `%` width or height (other than 100 %) on an in-flow element |
 
 ## Checking
 

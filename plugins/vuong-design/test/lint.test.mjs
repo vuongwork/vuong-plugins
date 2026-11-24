@@ -59,6 +59,15 @@ test('lint-wrap: W11 on the chip row that re-wraps when widened, not on the row 
   assert.match(w[0].msg, /3\+1 -> 4/);
 });
 
+test('lint-pct: W12 on an in-flow % width, not on the absolute fill or width:100%', { skip }, async () => {
+  const r = await lint('lint-pct.html');
+  assert.deepEqual(codes(r), ['W12']);
+  const w = r.findings.filter((f) => f.code === 'W12');
+  assert.equal(w.length, 1);
+  assert.match(w[0].sel, /^div.bar:nth-of-type(1) > div.fill$/);
+  assert.match(w[0].msg, /width: 65%/);
+});
+
 test('lint-shrink: W3 on the row that relies on flex-shrink, not on the min-width:0 / flex:1 rows', { skip }, async () => {
   const r = await lint('lint-shrink.html');
   assert.deepEqual(codes(r), ['W3']);

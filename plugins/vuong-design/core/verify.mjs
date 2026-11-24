@@ -1545,7 +1545,7 @@ export function verifyScreen(input, opts = {}) {
     crop.length === 0 && cropLinked.length === 0 && data.length === 0 && needsApproval.length === 0;
   return {
     id: screen.id, checked, total: list.length, unchecked, uncheckedReasons, nodes, roots, modelDeltas, modelFollowers, modelDrift, needsApproval,
-    crop, cropExplained, cropLinked, ...(figReal ? { cropReference } : {}), cropChecked: Array.isArray(crops) ? crops.length : 0, cropWidths: Array.isArray(crops) ? [...new Set(crops.map((c) => c.width))] : [],
+    crop, cropExplained, cropLinked, ...(figReal ? { cropReference, figmaReal: true } : {}), cropChecked: Array.isArray(crops) ? crops.length : 0, cropWidths: Array.isArray(crops) ? [...new Set(crops.map((c) => c.width))] : [],
     data, pixel, strict, skipped, pass, flags, tol: { frame: tolFrame, text: tolText, model: tolModel },
     ...(normOut ? { norm: normOut } : {}),
   };

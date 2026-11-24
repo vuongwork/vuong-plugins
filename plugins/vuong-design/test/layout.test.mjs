@@ -165,7 +165,7 @@ test('sampleIndexes spreads n of N evenly; readAllowlist accepts an array or { a
   rmSync(d, { recursive: true, force: true });
 });
 
-test('corpus.json: the 5 acceptance files with their roots, empty allowlist', () => {
+test('corpus.json: the 5 acceptance files with their roots; the allowlist holds only user-approved entries', () => {
   const c = loadCorpus(join(HERE, 'corpus.json'), '/corpus');
   assert.deepEqual(c.files.map((f) => [f.file, f.root, f.widen ?? null]), [
     ['planora-ui-screens.html', '.cell .sc', '.ph'],
@@ -174,7 +174,9 @@ test('corpus.json: the 5 acceptance files with their roots, empty allowlist', ()
     ['calendar-layout-v2.html', '.ph', null],
     ['calendar-layout-v3.html', '.ph', null],
   ]);
-  assert.deepEqual(c.allowlist, []);
+  // the user approved the s4 chip row approval (2.28 px at B) on 2026-11-24
+  assert.deepEqual(c.allowlist.map((e) => [e.file, e.screen, e.node, e.width, e.kind, e.approved]), [['planora-ui-screens.html', 's4', 'n.0.11.11.3', 'B', 'approval', true]]);
+  assert.ok(c.allowlist.every((e) => e.approved === true && e.reason && e.fingerprint));
 });
 
 // ---------------- end to end (browser) ----------------

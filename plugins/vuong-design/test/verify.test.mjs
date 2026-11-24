@@ -2307,3 +2307,28 @@ test('R82 figma-real: a plain frame crop fails above 0.25, or on ratio and peak 
   assert.deepEqual(run(false, aa, bar), ['n.1'], 'not a Figma readback: as before');
   assert.deepEqual(run(true, aa, { ...bar, shadow: 'rgb(0, 0, 0) 0px 1px 2px 0px' }), ['n.1'], 'a shadow is not read back: the crop gates as before');
 });
+
+// R83 (t8 s11, user-approved 2026-11-24): on a real-Figma check a norm root (Figma drew other than predicted) can be
+// allowlisted; a record-check root never; not on a ds / layout check (R66 stands there)
+test('R83 gate: a real-Figma norm root can be allowlisted, a record-check root cannot, a non-Figma one cannot', async () => {
+  const { gate, allowlistEntry } = await import('../core/pipeline.mjs');
+  const where = { file: 'f.html', screen: 's', tree: padFixture([]).screen.tree };
+  const inp = normFixture();
+  for (const M of ['A', 'B']) Object.assign(inp.norm.proxy[M], { mark: 'figma-real', unread: [] });
+  nmove(inp, 'n.1', [0, 0, 0, 15], ['B']); // a frame 15 px taller at B in Figma, nothing predicts it
+  const rep = verifyScreen(inp);
+  assert.equal(rep.figmaReal, true);
+  const nr = normRoots(rep).filter((x) => !x.explainedBy);
+  assert.ok(nr.length > 0, JSON.stringify(rep.roots));
+  const entries = nr.map((x) => ({ ...allowlistEntry('root', x, where), reason: 'Figma text wraps at B', approved: true }));
+  const clean = { ...rep, data: [], needsApproval: [] };
+  assert.equal(gate(clean, [], where).pass, false);
+  const g = gate(clean, entries, where);
+  assert.deepEqual(g.open.roots, []);
+  assert.equal(g.allowed.roots.length, nr.length);
+  // a record-check root stays open
+  const rc = { ...clean, roots: clean.roots.map((x) => (nr.includes(x) ? { ...x, recordCheck: true } : x)) };
+  assert.ok(gate(rc, entries, where).open.roots.length > 0);
+  // the same report without the real-Figma mark (a ds check): R66
+  assert.ok(gate({ ...clean, figmaReal: undefined }, entries, where).open.roots.length > 0);
+});

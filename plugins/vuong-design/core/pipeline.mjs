@@ -203,9 +203,13 @@ export function gate(report, allowlist = [], where = {}) {
     }
     return { open, allowed };
   };
-  // R66: a norm root is explained by its report entry or not at all: an unexplained one is never allowlisted
-  const roots = split('root', report.roots.filter((r) => !r.explainedBy && r.layer !== 'norm'));
-  roots.open.push(...report.roots.filter((r) => !r.explainedBy && r.layer === 'norm'));
+  // R66: a norm root is explained by its report entry or not at all: an unexplained one is never allowlisted.
+  // R83: on a real-Figma check (report.figmaReal) a norm root is Figma drawing other than the norm proxy predicts (a
+  // renderer difference the user may approve: t8 s11, a text Chrome fits with 0.37 px to spare wraps in Figma), so it
+  // can be allowlisted; a record-check root (a record whose `to` is wrong) never can.
+  const normAllow = (r) => !!report.figmaReal && !r.recordCheck;
+  const roots = split('root', report.roots.filter((r) => !r.explainedBy && (r.layer !== 'norm' || normAllow(r))));
+  roots.open.push(...report.roots.filter((r) => !r.explainedBy && r.layer === 'norm' && !normAllow(r)));
   const approvals = split('approval', report.needsApproval);
   const crops = split('crop', report.crop);
   // R44: a crop attached to an unexplained root passes or fails with that root's allowlist entry, never its own

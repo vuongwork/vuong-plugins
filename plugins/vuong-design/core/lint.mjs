@@ -136,6 +136,9 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
     }
     if (/overline/.test(cs.textDecorationLine || '')) o.push('text-decoration overline');
     if (cs.textDecorationLine && cs.textDecorationLine !== 'none' && cs.textDecorationStyle !== 'solid') o.push('text-decoration style');
+    // sample 4 (Troi Hom Nay): justified text needs approval (4 px), sub/superscript shifts the line box (2 px)
+    if ((cs.textAlign === 'justify' || cs.textAlign === 'justify-all') && (!pcs || pcs.textAlign !== cs.textAlign)) o.push('text-align justify');
+    if (/inline/.test(cs.display) && cs.verticalAlign !== 'baseline' && el && el.localName !== 'svg' && el.localName !== 'img' && [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) o.push(`vertical-align ${cs.verticalAlign} (sub/superscript)`);
     return o;
   };
   const visible = (el) => el.getClientRects().length > 0;
@@ -307,13 +310,15 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
   const size = (it) => { const r = it.el.getBoundingClientRect(); return it.col ? r.height : r.width; };
   const shrunk = new Set();
   const w3 = () => {
-    const before = items.map(size);
+    const psize = (it) => { const r = it.el.parentElement.getBoundingClientRect(); return it.col ? r.height : r.width; };
+    const before = items.map(size), pBefore = items.map(psize);
     const st = document.createElement('style');
     st.textContent = '*,*::before,*::after{flex-shrink:0 !important}';
     document.head.appendChild(st);
-    const after = items.map(size);
+    const after = items.map(size), pAfter = items.map(psize);
     st.remove();
-    const hit = items.filter((it, i) => after[i] > before[i] + 0.5);
+    // an item that only grows because its container grew (no shrink of its own) is not reported
+    const hit = items.filter((it, i) => after[i] > before[i] + 0.5 && Math.abs(pAfter[i] - pBefore[i]) <= 0.5);
     const set = new Set(hit.map((h) => h.el));
     for (const h of hit) {
       // report the item that shrinks, not an ancestor whose size only follows it
@@ -443,6 +448,40 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
     return out;
   });
   const overA = clipOver();
+  // W16: Figma FILL children of one auto layout share the free space equally (layoutGrow is 0 or 1)
+  roots.forEach((root, si) => {
+    for (const p of [root, ...root.querySelectorAll('*')]) {
+      if (isSvgInner(p) || !visible(p)) continue;
+      const pcs = getComputedStyle(p);
+      if (!/flex/.test(pcs.display)) continue;
+      const kids = [...p.children].filter((k) => visible(k) && !/absolute|fixed/.test(getComputedStyle(k).position));
+      const grow = kids.filter((k) => parseFloat(getComputedStyle(k).flexGrow) > 0);
+      for (const k of grow) {
+        const g = parseFloat(getComputedStyle(k).flexGrow);
+        if (g !== 1) add('W16', si, `flex-grow ${g}: Figma fills share space equally (grow is 0 or 1); use fixed sizes for proportions`, k, root);
+      }
+    }
+  });
+  // W18: an icon or image inside running text (Figma text cannot hold an inline icon)
+  roots.forEach((root, si) => {
+    for (const el of root.querySelectorAll('*')) {
+      if (isSvgInner(el) || !visible(el)) continue;
+      if (getComputedStyle(el).display.startsWith('flex') || getComputedStyle(el).display.startsWith('grid')) continue;
+      const hasText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+      const inline = [...el.children].some((k) => /^(svg|img)$/.test(k.localName) && /inline/.test(getComputedStyle(k).display));
+      if (hasText && inline) add('W18', si, 'icon or image inside running text: Figma text cannot hold it; put text and icon in a flex row, or drop the icon', el, root);
+    }
+  });
+  // W17: max-width that starts capping between A and B (the Figma model keeps filling)
+  const inner = (p) => { const cs = getComputedStyle(p); return p.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight); };
+  const capEls = [];
+  roots.forEach((root, si) => {
+    for (const el of root.querySelectorAll('*')) {
+      if (isSvgInner(el) || !visible(el)) continue;
+      const mw = parseFloat(getComputedStyle(el).maxWidth);
+      if (Number.isFinite(mw)) capEls.push({ el, si, root, mw, wA: el.getBoundingClientRect().width, pA: inner(el.parentElement) });
+    }
+  });
   const A = snap();
   const targets = roots.map((r) => r.closest(widenSel || '[data-vd-widen]') || r);
   const done = new Set();
@@ -462,6 +501,12 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
   });
   ratioEls.forEach((r, i) => {
     if (r.el.getBoundingClientRect().width - ratioA[i] >= 1) add('W14', r.si, `${r.how} on an element that stretches: its height follows its width in CSS, not in Figma; give it a fixed height`, r.el, r.root);
+  });
+  capEls.forEach((c) => {
+    const wB = c.el.getBoundingClientRect().width;
+    // capped at B while its parent offers more room, and it was filling (or growing) before: Figma keeps filling
+    const pB = inner(c.el.parentElement);
+    if (wB >= c.mw - 0.5 && pB > wB + 1 && (c.wA >= c.pA - 0.5 || wB > c.wA + 0.5)) add('W17', c.si, `max-width ${c.mw}px caps this element when widened; the Figma model keeps it filling: give it a fixed width, or let it fill`, c.el, c.root);
   });
   const overB = clipOver();
   roots.forEach((root, si) => {

@@ -164,3 +164,17 @@ Sonnet 5.5, 29,8k token output, 2 vòng lint (vòng 1: 6 cảnh báo, vòng 2 s�
 - Còn lại R4: chip lệch 2,02 px do làm tròn bề rộng chữ (`figmaModel`), cùng loại Planora s4 → pipeline.
 
 Ba lượt, mỗi lượt lộ đúng một nhóm lỗ hổng mới mà lint bỏ sót (W12; W13; W14 + W15). Profile chưa thể coi là ổn định: chạy tiếp một mẫu khác loại sau khi merge.
+
+### Lượt 4: Trời Hôm Nay (chia và giãn bề ngang)
+
+Sonnet 5.5, 25,2k token output, 2 vòng lint, layout 1/5. Ba lỗ hổng mới và hai bổ sung W5:
+
+- **W16** `flex-grow` ≠ 0/1 (chia 2 : 1, dải 6 đoạn tỉ lệ): Figma FILL chia đều, lệch ngay ở bề rộng A (W3).
+- **W17** `max-width` chặn phần tử đang giãn (hộp thoại 312 px): Figma vẫn giãn ở B (W4).
+- **W18** icon nằm trong dòng chữ: chữ bị tách node, lệch ~3 px (W5).
+- **W5 thêm** `text-align: justify` (cần duyệt 4 px) và `vertical-align` sub/super (dòng cao thêm 2 px).
+- **W3 sửa** chỉ báo phần tử tự co, không báo phần tử chỉ to ra theo cha (ô nhập trong hộp thoại bị báo nhầm).
+- Sửa theo luật (ghim px, bề rộng cố định, bỏ icon trong dòng): 3/5; còn lại W3 là sub/justify (nay W5) và W2 là chấm đánh dấu dùng margin âm thò ra ngoài cha (crop 0,078) → **pipeline**, chưa đủ rõ để thành luật.
+- Thử nhánh "các FILL anh em có bề rộng khác nhau" cho W16: báo trên 3 màn vẫn qua layout → bỏ.
+
+Bốn lượt, gốc chung của mọi lỗ hổng (W12–W18): một kích thước hay vị trí đổi theo bề rộng theo cách auto layout không có. Lượt sau nên là kiểm tra hồi quy: chạy lại một đề cũ với skill mới, kỳ vọng lint sạch thì layout đạt.

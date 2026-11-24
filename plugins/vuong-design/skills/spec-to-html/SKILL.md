@@ -37,6 +37,9 @@ Sonnet, because lint checks the result mechanically. Do not read `lint.json` int
      explicit offsets, never nested in the field it belongs to (Figma has no z-index)
    - truncation ("…"): write the shortened text with "…" so it fits one line at width A; never text-overflow, nowrap
      or line-clamp; never silently wrap instead
+   - no `flex-grow` other than 1 (proportions = fixed px or absolute %), no `max-width` on a filling element (fixed
+     width instead), `box-sizing: border-box` with `width: 100%`
+   - no icon inside a line of text, no `text-align: justify`, no `<sub>`/`<sup>` (Unicode ₀₁₂₃ instead)
    - no `aspect-ratio` or %-padding on a stretching element: give images a fixed px height
    - content must end inside the screen (trim long text/lists); nothing cut by the screen bottom
    - no `%` width/height except 100% on in-flow elements; a progress fill or chart bar is `position:absolute; left:0;

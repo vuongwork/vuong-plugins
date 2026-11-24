@@ -84,6 +84,15 @@ test('lint-ratio: W14 on a stretching aspect-ratio box, W15 on content cut by th
   assert.match(r.findings.find((f) => f.code === 'W14').msg, /aspect-ratio 16 \/ 9/);
 });
 
+test('lint-stretch: W16 grow ratio, W17 max-width cap, W18 inline icon, W5 justify + subscript; nothing on equal fills or an icon in a flex row', { skip }, async () => {
+  const r = await lint('lint-stretch.html');
+  assert.deepEqual(codes(r), ['W5', 'W16', 'W17', 'W18']);
+  for (const f of r.findings) assert.equal(f.screen, 'A2', `${f.code} ${f.sel}`);
+  const w5 = r.findings.filter((f) => f.code === 'W5').map((f) => f.msg).join(' | ');
+  assert.match(w5, /justify/);
+  assert.match(w5, /vertical-align/);
+});
+
 test('lint-shrink: W3 on the row that relies on flex-shrink, not on the min-width:0 / flex:1 rows', { skip }, async () => {
   const r = await lint('lint-shrink.html');
   assert.deepEqual(codes(r), ['W3']);

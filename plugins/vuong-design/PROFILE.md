@@ -49,6 +49,13 @@ lowers accuracy is a warning (`W`).
 - Truncated text (a spec asks for "…"): write the shortened text with the ellipsis in the content, short enough to fit
   on one line at width A ("Nguyễn Hoàng Phương…"). No `text-overflow`, no `white-space: nowrap` + clipping. The text
   stays as written when widened, which Figma reproduces.
+- Proportions: Figma fills share the free space equally (grow is 0 or 1), so `flex: 2` / `flex: 1` splits and
+  segments sized by `flex-grow` are not reproduced. Use fixed px widths, or absolute % parts in a relative track (W12).
+  Checked by W16.
+- No `max-width` on an element that fills: when widened it stops at the cap in CSS but keeps filling in Figma. Give it a
+  fixed width (a dialog 312 px wide), or let it fill. Checked by W17. Use `box-sizing: border-box` with `width: 100%`.
+- No icon inside a line of text (Figma text cannot hold one): make a flex row of text, icon, text, or drop the icon.
+  Checked by W18. Also avoid `text-align: justify` and `<sub>`/`<sup>` (write O₃ with the Unicode subscript), both W5.
 - No height tied to width: `aspect-ratio` or vertical padding in % on a stretching element keeps its ratio in CSS but
   not in Figma auto layout, and everything below it moves. Give a stretching image a fixed height (or a fixed width, if
   the ratio matters more than stretching). Checked by W14.
@@ -96,6 +103,9 @@ The list of properties for W5 mirrors `unsupported()` in `core/capture.mjs` (R46
 | W13 | warn | absolute/fixed element that escapes its parent and is overlapped by later in-flow content (Figma draws it underneath) |
 | W14 | warn | `aspect-ratio` (or vertical padding in %) on an element that stretches when widened |
 | W15 | warn | content cut by the bottom of a clipping box, where what is visible changes when widened |
+| W16 | warn | `flex-grow` other than 0 or 1 (Figma fills share space equally) |
+| W17 | warn | `max-width` that caps a filling element when widened (the Figma model keeps filling) |
+| W18 | warn | icon or image inside running text |
 
 ## Checking
 

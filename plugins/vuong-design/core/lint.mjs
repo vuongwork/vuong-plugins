@@ -291,7 +291,7 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
     out.tokens[g] = { var: v, literal: l, ratio: v + l ? Math.round((v / (v + l)) * 1000) / 1000 : 1 };
   }
 
-  // ---- layout: W3 (flex-shrink) at A, widen once (W2), W3 at B ----
+  // ---- layout: W3 (flex-shrink) at A, widen once (W2, W11), W3 at B ----
   const items = []; // flex items (not out of flow), per screen
   roots.forEach((root, si) => {
     for (const el of root.querySelectorAll('*')) {
@@ -327,7 +327,34 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
   };
   const snap = () => roots.map((root) => ({ w: root.getBoundingClientRect().width, kids: [...root.querySelectorAll('*')].map((e) => (isSvgInner(e) ? 0 : e.getBoundingClientRect().width)) }));
   out.screens = roots.map((root) => { const r = root.getBoundingClientRect(); return { w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100 }; });
+  // W11: a wrapping flex container must break at the same items at A and B (the Figma model cannot re-wrap)
+  const wraps = [];
+  roots.forEach((root, si) => {
+    for (const el of root.querySelectorAll('*')) {
+      if (isSvgInner(el) || !visible(el)) continue;
+      const cs = getComputedStyle(el);
+      if (/flex/.test(cs.display) && cs.flexWrap !== 'nowrap') wraps.push({ el, si, root, col: /column/.test(cs.flexDirection) });
+    }
+  });
+  const lines = (w) => {
+    // children in flow, grouped into lines by their cross-axis start; signature = item count per line
+    const starts = [];
+    for (const k of w.el.children) {
+      const kcs = getComputedStyle(k);
+      if (kcs.position === 'absolute' || kcs.position === 'fixed' || !visible(k)) continue;
+      const r = k.getBoundingClientRect();
+      if (!r.width && !r.height) continue;
+      starts.push(w.col ? r.left : r.top);
+    }
+    const counts = [];
+    let last = null;
+    for (const v of starts) {
+      if (last === null || Math.abs(v - last) > 1) { counts.push(1); last = v; } else counts[counts.length - 1]++;
+    }
+    return counts.join('+');
+  };
   w3();
+  const wrapA = wraps.map(lines);
   const A = snap();
   const targets = roots.map((r) => r.closest(widenSel || '[data-vd-widen]') || r);
   const done = new Set();
@@ -344,6 +371,10 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
   roots.forEach((root, si) => {
     if (B[si].w - A[si].w < 1) add('W2', si, 'screen does not stretch when widened (fixed width)', root, root);
     else if (!B[si].kids.some((w, i) => w - A[si].kids[i] >= 1)) add('W2', si, 'screen stretches but nothing inside it does', root, root);
+  });
+  wraps.forEach((w, i) => {
+    const b = lines(w);
+    if (b !== wrapA[i]) add('W11', w.si, `wrapping ${w.col ? 'column' : 'row'} breaks differently when widened (items per line ${wrapA[i] || '0'} -> ${b || '0'})`, w.el, w.root);
   });
   w3();
   out.findings = [...found.values()];

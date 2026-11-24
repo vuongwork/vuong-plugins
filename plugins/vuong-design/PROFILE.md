@@ -35,7 +35,7 @@ lowers accuracy is a warning (`W`).
 
 - Flex. A stretching element uses `flex: 1` / `align-self: stretch` / `width: 100%`; a hugging element stays natural.
   Do not rely on flex-shrink: give a text block `min-width: 0; flex: 1` instead of letting it shrink.
-- A wrapping row (`flex-wrap`) must break at the same items at the checked widths (A and A + 120 px); a row that gains or loses a line when widened is not reproduced by the Figma model. Keep chip rows to one line, or few enough chips.
+- A wrapping row (`flex-wrap`) must break at the same items at the checked widths (A and A + 120 px); a row that gains or loses a line when widened is not reproduced by the Figma model. Keep chip rows to one line, or few enough chips. Checked by W11.
 - `position: absolute` only for overlays (FAB, badge, bottom bar), not as the main layout. No grid, float or table for
   screen layout.
 
@@ -73,6 +73,7 @@ The list of properties for W5 mirrors `unsupported()` in `core/capture.mjs` (R46
 | W8 | warn | system font (Figma substitutes Inter) |
 | W9 | warn | more than 25 % of the elements of a screen are absolute/fixed, or `vw` / `vh` used inside a screen |
 | W10 | warn | `var()` nested in a function or with a fallback |
+| W11 | warn | wrapping flex row (or column) whose line breaks change between width A and A + 120 px |
 
 ## Checking
 
@@ -91,7 +92,7 @@ groups per code, merged by code + screen + message):
 
 | File | Screens | Time | E | W |
 |---|---|---|---|---|
-| planora-ui-screens.html | 18 | 1.5 s | 0 | 22: W1 x11, W3 x7, W7 x4 |
+| planora-ui-screens.html | 18 | 1.5-1.8 s | 0 | 26: W1 x11, W3 x7, W7 x4, W11 x4 |
 | 2026-11-05-ui-redesign-entry-mockup.html | 2 | 1.0 s | 0 | 8: W1 x2, W6 x2, W7 x4 |
 | calendar-layout.html | 2 | 0.9 s | 0 | 5: W8 x2 (Times New Roman, the browser default), W7 x3 |
 | calendar-layout-v2.html | 2 | 0.6 s | 0 | 8: W1 x2, W7 x4, W8 x2 |
@@ -99,5 +100,6 @@ groups per code, merged by code + screen + message):
 | templates/starter.html | 3 | 1.2 s | 0 | 0 |
 
 Planora: no errors; W3 fires on the `.say` rows (the avatar svg and the bubble shrink; s3 and s4 by capture ids), W7 shows
-the token gap (color 73 % on `var()`, spacing, radius and font-size 0 %). `layout.mjs --html templates/starter.html`
+the token gap (color 73 % on `var()`, spacing, radius and font-size 0 %). W11 fires on s2, s4, s9, s11 (rows that re-wrap when widened); s4's is the chip row behind its
+2.28 px drift, the other three still pass layout, so W11 is a risk, not a certain failure. `layout.mjs --html templates/starter.html`
 (no `--root`): 3 of 3 screens pass.

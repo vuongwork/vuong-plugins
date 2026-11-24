@@ -18,7 +18,7 @@ VD_PLAYWRIGHT_FROM=/path/to/dir node --test plugins/vuong-design/test/
 
 ## Input profile and lint
 
-Input HTML should follow [PROFILE.md](PROFILE.md) (`vd-html v1`): screens marked `data-vd-screen`, tokens as CSS variables, flex layout, no scripts, `data:` images. Every rule has a code (`E1..E8` break the pipeline, `W1..W10` lower accuracy).
+Input HTML should follow [PROFILE.md](PROFILE.md) (`vd-html v1`): screens marked `data-vd-screen`, tokens as CSS variables, flex layout, no scripts, `data:` images. Every rule has a code (`E1..E8` break the pipeline, `W1..W11` lower accuracy).
 
 ```
 node plugins/vuong-design/core/lint.mjs --html <file> [--root <sel>] [--widen <sel>] [--out <dir>] [--strict] [--log <runs.jsonl>] [--json]

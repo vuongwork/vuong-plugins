@@ -9,6 +9,10 @@
 //    width in Figma terms (figmaNaturalW): a text -> figmaTextBox(max).w; an H frame -> paddings + gaps + its HUG /
 //    FIXED children at their modelled widths + its one FILL child at the rest (two or more FILL children, wrap or
 //    space-between: unchanged); a V frame -> paddings + the widest child (FILL children at the inner width).
+//    A text's natural width there is figmaTextBox + FIGMA_TEXT_SLACK (1 px): on real Figma (Planora t8, 259
+//    single-line HUG texts, 2026-11-24) Figma's own width was figmaTextBox -2..+1 px (234 equal, 13 at +1), and a
+//    text at a max of exactly figmaTextBox wrapped its last word at width B (s3, s8, s11: +1 line). The slack is a
+//    model delta of about 1 px at B, under tolModel.
 //  - fonts Figma lacks are replaced (node.font.ff / run ff) so the proxy renders with the real font; reported.
 //    Each family list is first resolved to the family Chrome actually rendered (opts.rendered = screen.fontsRendered,
 //    falling back to the first family). A rendered family that Figma has is kept; otherwise it is substituted by
@@ -50,9 +54,11 @@ export function resolveFamily(fontMap, list, renderedList) {
 }
 
 const r2 = (v) => Math.round(v * 100) / 100 + 0;
+// Figma's text width can exceed figmaTextBox by 1 px (see the header); a max must leave room for it
+export const FIGMA_TEXT_SLACK = 1;
 // the Figma natural width of a node whose Chrome natural width is W (src: the node before the model, mod: after)
 export function figmaNaturalW(src, mod, W) {
-  if (src.t === 'T' && src.font) return figmaTextBox(W, 0, parseFloat(src.font.ls) || 0).w;
+  if (src.t === 'T' && src.font) return figmaTextBox(W, 0, parseFloat(src.font.ls) || 0).w + FIGMA_TEXT_SLACK;
   const L = src.lay;
   if (!L || L.wrap || L.sb || !src.kids || !mod.kids) return W;
   const flow = src.kids.map((k, i) => [k, mod.kids[i]]).filter(([k]) => !k.abs);

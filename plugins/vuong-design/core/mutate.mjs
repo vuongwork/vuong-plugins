@@ -71,7 +71,7 @@
 // id+width), 'data' (id+kind), 'approval' (needsApproval, id+width), 'coverage' (unchecked node, id). A mutation that
 // only shows up as an explained root is NOT caught (listed in `explainedOnly`). allCaught = null when no kind ran (R34), else every result that was run
 // is caught (skipped ones do not count).
-import { normColor } from './verify.mjs';
+import { normColor, figPlainFrame } from './verify.mjs';
 import { runScreen } from './pipeline.mjs';
 import { ordOf, decode, actualNodes } from './figma-check.mjs';
 
@@ -486,11 +486,17 @@ export async function runMutations(browser, screen, inferred, fontMap, opts = {}
 //  - figIconPx: a pixel fault, the readback unchanged: the first icon leaf (another icon identity on the screen) is
 //    drawn as that other icon in a proxy of the target spec, and its crop is measured against the Figma screenshot in
 //    place of the real one (run(screen, { kind, o }) does the measuring; the icon identity itself is not read back).
+//  - figHide: a pixel fault, the readback unchanged: the plain frame leaf (verify figPlainFrame) whose background
+//    differs most from the nearest ancestor background (largest channel difference, at least HIDE_CONTRAST = the crop
+//    peak gate; the first in readback order on a tie) is drawn transparent (covered or clipped in Figma while its data
+//    reads back right), measured as figIconPx. A paler frame vanishing is under what a crop can see (t8: a pale pill
+//    on cream, 0.035 / 11); its fill colour is checked as data.
 // runFigMutations({ id, base (report on the real readback), screen (the screen result), D (batch data), tree (source
 //   tree), spec (spec-norm tree), run: async (screen result) -> report }) -> { id, baseline, results, allCaught } as
 //   runMutations: caught = a failure the baseline does not have (same keys) on the target, its spec ancestors or
 //   descendants.
-export const FIG_KINDS = ['figMove', 'figText', 'figFill', 'figDrop', 'figCase', 'figDash', 'figIconPx'];
+export const FIG_KINDS = ['figMove', 'figText', 'figFill', 'figDrop', 'figCase', 'figDash', 'figIconPx', 'figHide'];
+export const FIG_PIXEL_KINDS = new Set(['figIconPx', 'figHide']);
 const FIG_WN = ['Thin', 'ExtraLight', 'Light', 'Regular', 'Medium', 'SemiBold', 'Bold', 'ExtraBold', 'Black'];
 const invertHex = (h) => {
   const m = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(h);
@@ -514,6 +520,31 @@ export function swapIconSpec(spec, id) {
   return sp;
 }
 
+// hideFrameSpec(spec, id) -> a copy of spec whose plain frame leaf id has a transparent background, or null when id is
+// not a plain frame leaf or its background equals the nearest ancestor background (nothing would change)
+const HIDE_CONTRAST = 40;
+const rgbOf = (c) => { const m = /rgba?\(([^)]+)\)/.exec(String(c)); if (!m) return null; const v = m[1].split(',').map((x) => parseFloat(x)); return v.length >= 3 && (v[3] == null || v[3] > 0) ? v.slice(0, 3) : null; };
+// the largest channel difference between frame id's background and the nearest ancestor background (null: unknown)
+export function hideContrast(spec, id) {
+  const e = find(spec, id);
+  if (!e || !e.n.paint) return null;
+  const up = [];
+  for (const a of walk(spec)) if (a.n.kids && a.n.kids.some((k) => k.id === id || walk(k).some((x) => x.n.id === id))) up.push(a.n);
+  const anc = up.reverse().find((n) => n.paint && n.paint.bg != null && rgbOf(n.paint.bg));
+  const a = rgbOf(e.n.paint.bg), b = anc ? rgbOf(anc.paint.bg) : null;
+  return a && b ? Math.max(...a.map((v, i) => Math.abs(v - b[i]))) : null;
+}
+export function hideFrameSpec(spec, id) {
+  const sp = clone(spec), e = find(sp, id);
+  if (!e || !figPlainFrame(e.n)) return null;
+  const up = [];
+  for (const a of walk(sp)) if (a.n.kids && a.n.kids.some((k) => k.id === id || walk(k).some((x) => x.n.id === id))) up.push(a.n);
+  const anc = up.reverse().find((n) => n.paint && n.paint.bg != null);
+  if (anc && normColor(anc.paint.bg) === normColor(e.n.paint.bg)) return null;
+  e.n.paint = { ...e.n.paint, bg: 'rgba(0, 0, 0, 0)' };
+  return sp;
+}
+
 export function chooseFig(kind, sres, D, tree, spec) {
   const T = D.screens.find((x) => x.screen === sres.screen).T;
   const src = new Map();
@@ -532,6 +563,12 @@ export function chooseFig(kind, sres, D, tree, spec) {
   if (kind === 'figCase') return cands.find((o) => { const n = act.get(o); return n.e.t === 'T' && n.text !== String(n.text).toUpperCase() && (n.runs || []).length; }) || null;
   if (kind === 'figDash') return cands.find((o) => /^(dashed|dotted)$/.test(act.get(o).dash || '') && (act.get(o).strokes || act.has(`${o}#stroke`))) || null;
   if (kind === 'figIconPx') return spec ? leaves.find((o) => src.get(o).kind === 'icon' && swapIconSpec(spec, o)) || null : null;
+  if (kind === 'figHide') {
+    if (!spec) return null;
+    let best = null, bc = HIDE_CONTRAST - 1;
+    for (const o of cands) { if (!hideFrameSpec(spec, o)) continue; const c = hideContrast(spec, o); if (c != null && c > bc) { best = o; bc = c; } }
+    return best;
+  }
   return null;
 }
 
@@ -573,7 +610,7 @@ export async function runFigMutations({ id, base, screen: sres, D, tree, spec, r
     if ((kind === 'figCase' || kind === 'figDash') && !(D && D.rd)) { results.push({ kind, target: null, caught: null, by: [], skipped: 'not read back (batch without D.rd)' }); continue; }
     const o = sres && sres.nodes ? chooseFig(kind, sres, D, tree, spec) : null;
     if (!o) { results.push({ kind, target: null, caught: null, by: [], skipped: sres && sres.nodes ? 'no candidate' : 'no readback' }); continue; }
-    const rep = kind === 'figIconPx' ? await run(clone(sres), { kind, o }) : await run(mutateFig(kind, sres, D, o));
+    const rep = FIG_PIXEL_KINDS.has(kind) ? await run(clone(sres), { kind, o }) : await run(mutateFig(kind, sres, D, o));
     if (!rep) { results.push({ kind, target: o, caught: null, by: [], skipped: 'no screenshot crop' }); continue; }
     const hit = new Set([o]);
     const e = find(spec, o);

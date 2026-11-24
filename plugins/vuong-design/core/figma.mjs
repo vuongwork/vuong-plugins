@@ -638,7 +638,7 @@ async function check(argv, log, deps) {
   const { pixelDiff } = await import('./imgdiff.mjs');
   const { gate, summarize, specJson, allowlistEntry } = await import('./pipeline.mjs');
   const { defaultFontMap } = await import('./font-map.mjs');
-  const { runFigMutations, swapIconSpec } = await import('./mutate.mjs');
+  const { runFigMutations, swapIconSpec, hideFrameSpec } = await import('./mutate.mjs');
   const { buildProxyHtml, renderProxy } = await import('./proxy.mjs');
   const fontMap = deps.fontMap || defaultFontMap();
   const t0 = Date.now();
@@ -688,8 +688,8 @@ async function check(argv, log, deps) {
         // figIconPx: the icon drawn as another one (proxy of the target spec) replaces the node's crop against the shot,
         // and its norm-proxy-vs-shot crop (R77 iii) too: the shot shows the right icon, the proxy the wrong one
         const fc = sc.fontCss || {}, po = { fontLinks: fc.links || [], fontFaces: fc.faces || [], ...(webFonts ? {} : { webFonts: false }) };
-        const pixelCrops = async (o) => {
-          const sp = swapIconSpec(target.spec, o);
+        const pixelCrops = async (o, kind) => {
+          const sp = (kind === 'figHide' ? hideFrameSpec : swapIconSpec)(target.spec, o);
           if (!sp || !shot || !crops || !crops.some((c) => c.id === o)) return null;
           const P = { A: await renderProxy(browser, buildProxyHtml(sp, sc.svgDefs || {}, fontMap, po), sc.W[0], { origin: sc.origin[0] }) };
           const m = await measureCrops(browser, sc, fig, { ...verifyOpts, widths: ['A'], base: P, ids: [o] });
@@ -699,7 +699,7 @@ async function check(argv, log, deps) {
         };
         mutations = await runFigMutations({
           id: x.id, base: report, screen: sres, D: x.D, tree: sc.tree, spec: target.spec,
-          run: async (m, px) => { if (!px) return verifyScreen(input(build(m)), verifyOpts); const pc = await pixelCrops(px.o); return pc ? verifyScreen(input(build(m), pc.cr, pc.rf), verifyOpts) : null; },
+          run: async (m, px) => { if (!px) return verifyScreen(input(build(m)), verifyOpts); const pc = await pixelCrops(px.o, px.kind); return pc ? verifyScreen(input(build(m), pc.cr, pc.rf), verifyOpts) : null; },
         });
       }
       const ids = [];

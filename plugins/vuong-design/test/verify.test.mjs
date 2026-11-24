@@ -2263,3 +2263,47 @@ test('R77 (iii) figma-real: a SRC_SQUASH record explains the icon crop only when
   assert.deepEqual(r.crop.map((c) => c.id), ['n.0.0']);
   assert.match(r.crop[0].normWhy, /no crop of the norm proxy/);
 });
+
+// R81 (t8 s17 / s4, 2026-11-24): on real Figma a HUG text's width is Figma's own, -2 .. +1 px from the norm proxy
+test('R81 figma-real: a HUG text 1-2 px narrower, its HUG card and the icon after it are explained by figmaText; 3 px or a non-Figma proxy are not', () => {
+  const run = (dw, real = true) => {
+    const inp = normFixture();
+    if (real) for (const M of ['A', 'B']) Object.assign(inp.norm.proxy[M], { mark: 'figma-real', unread: [] });
+    nmove(inp, 'n.0.0', [0, 0, dw, 0]); nmove(inp, 'n.0', [0, 0, dw, 0]); nmove(inp, 'n.0.1', [dw, 0, 0, 0]);
+    return normRoots(verifyScreen(inp));
+  };
+  let r = run(-2);
+  assert.ok(r.length > 0);
+  assert.deepEqual(r.filter((x) => !x.explainedBy), [], JSON.stringify(r));
+  assert.ok(r.every((x) => x.explainedBy === 'figmaText'));
+  assert.ok(r.some((x) => x.id === 'n.0.0'), 'the text is the root; its card follows it');
+  // -1 px (t8 s4): the text is within tolText, so the HUG card is the root: explained through its text
+  r = run(-1);
+  assert.ok(r.some((x) => x.id === 'n.0' && x.explainedBy === 'figmaText'), JSON.stringify(r));
+  assert.deepEqual(r.filter((x) => !x.explainedBy), []);
+  assert.deepEqual(run(1).filter((x) => !x.explainedBy), []);
+  // 3 px: beyond what Figma's text measurement does (figMove plants 3 px)
+  assert.ok(run(-3).some((x) => !x.explainedBy));
+  // not a Figma readback: as before
+  assert.ok(run(-2, false).some((x) => !x.explainedBy));
+});
+
+// R82 (t8 s8 / s11 markers): a plain frame leaf on real Figma fails its crop only on ratio and peak together
+test('R82 figma-real: a plain frame crop fails above 0.25, or on ratio and peak together; other frames and other proxies as before', () => {
+  const run = (real, crop, paint) => {
+    const inp = fixture();
+    if (paint) inp.screen.tree.kids[1].paint = paint;
+    if (real) for (const M of ['A', 'B']) Object.assign(inp.proxy[M], { mark: 'figma-real', unread: [] });
+    inp.crops = [crop];
+    return verifyScreen(inp).crop.map((c) => c.id);
+  };
+  const bar = { bg: 'rgb(38, 51, 92)', radius: ['2px', '2px', '2px', '2px'], pos: 'absolute' };
+  const aa = { id: 'n.1', width: 'A', ratio: 0.17, diff: 12, peak: 24 }, edge = { id: 'n.1', width: 'A', ratio: 0.041, diff: 9, peak: 51 };
+  const hidden = { id: 'n.1', width: 'A', ratio: 0.6, diff: 300, peak: 180 };
+  assert.deepEqual(run(true, aa, bar), []);
+  assert.deepEqual(run(true, edge, bar), []);
+  assert.deepEqual(run(true, hidden, bar), ['n.1'], 'a covered / clipped bar still fails');
+  assert.deepEqual(run(true, { id: 'n.1', width: 'A', ratio: 0.305, diff: 60, peak: 32 }, bar), ['n.1'], 'the weakest measured hidden frame (t8 s2): ratio over 0.25');
+  assert.deepEqual(run(false, aa, bar), ['n.1'], 'not a Figma readback: as before');
+  assert.deepEqual(run(true, aa, { ...bar, shadow: 'rgb(0, 0, 0) 0px 1px 2px 0px' }), ['n.1'], 'a shadow is not read back: the crop gates as before');
+});

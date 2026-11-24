@@ -279,9 +279,10 @@ test('check: a readback matching the page passes in the norm role (screenshot re
     // D.rd: text decoration / case and the dash pattern are read back, so only crop-B and effects stay unread
     assert.deepEqual(s.report.skipped, ['figma-crop-B', 'figma-effect']);
     assert.ok(s.report.cropChecked > 0 && s.report.cropWidths.join() === 'A', 'crops measured on the screenshot at A');
-    // no dashed stroke and no icon on these screens: figDash / figIconPx have no candidate (skipped, never missed)
+    // no dashed stroke, no icon and no plain frame leaf on these screens: figDash / figIconPx / figHide have no
+    // candidate (skipped, never missed)
     assert.deepEqual(s.mutations.results.map((r) => [r.kind, r.caught]), [['figMove', true], ['figText', true], ['figFill', true], ['figDrop', true],
-      ['figCase', true], ['figDash', null], ['figIconPx', null]]);
+      ['figCase', true], ['figDash', null], ['figIconPx', null], ['figHide', null]]);
     assert.deepEqual(s.mutations.results.find((r) => r.kind === 'figCase').found, ['data|n.1.0|font-style']);
     assert.equal(s.figma.proxyVsFigma.A.max, 0);
   }

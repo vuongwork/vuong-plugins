@@ -248,6 +248,20 @@ const CROP_PEAK = 40;
 //  - a frame with a dashed / dotted border: reference only once the dash pattern is read back (no 'stroke-style')
 //  - an icon leaf: fails above FIG_ICON_RATIO or at FIG_ICON_PEAK
 //  - anything else: CROP_RATIO / CROP_PEAK as everywhere
+// Figma's own width of a single-line HUG text against the norm (Chrome, figmaTextBox) proxy, measured on real Figma
+// (Planora t8, 259 texts, 2026-11-24): -2 .. +1 px (234 equal). R81: a norm root on real Figma within that range is
+// Figma's text measurement, explainedBy 'figmaText'.
+const FIG_TEXT_DW = [-2, 1];
+// R82: a plain frame leaf (solid background, radius, border: all read back as data) on real Figma fails its crop
+// above FIG_PLAIN_RATIO, or when both the ratio and the peak are over the gate: a 2.5 px bar at a fractional x differs
+// in anti-aliasing only. Measured on t8 (118 plain frame crops, 2026-11-24): noise max ratio 0.172 (the s8 / s11
+// markers, peak 22-25, boxes equal within 0.05 px), max peak 51 (ratio 0.041); a hidden frame (background drawn
+// transparent, 110 with any visible change) min ratio 0.305 (peak 32), then 0.426 / 62.
+const FIG_PLAIN_RATIO = 0.25;
+const PLAIN_PAINT = new Set(['bg', 'radius', 'border', 'pos', 'clip', 'opacity', 'strokeOverlay']);
+// n: a source tree node (kind 'frame') or a spec node (t 'F'); same paint keys
+export const figPlainFrame = (n) => !!n && (n.t === 'F' || n.kind === 'frame') && !n.syn && !(n.kids && n.kids.length) && !n.icon && n.kind !== 'icon' && n.kind !== 'image'
+  && !!n.paint && n.paint.bg != null && Object.keys(n.paint).every((k) => PLAIN_PAINT.has(k)) && (!n.paint.opacity || n.paint.opacity === 1 || n.paint.opacity === '1');
 const FIG_ICON_RATIO = 0.25;
 const FIG_ICON_PEAK = 100;
 const CROP_MAX_AREA = 4000;
@@ -1080,13 +1094,38 @@ export function verifyScreen(input, opts = {}) {
     if (mism.length) return { normMismatch: mism };
     return { entry: [...new Set(related.map((a) => a.entry))] };
   };
+  // R81 (real Figma, the Figma pass only): a root whose every axis is a HUG text's width within FIG_TEXT_DW, or agrees
+  // with what its children / parent measured (a HUG chip following its text, a later sibling pushed by it), and that
+  // has such a text in its subtree or as an earlier sibling, is Figma's text measurement
+  const figTextWithin = (M, s) => s && s.t === 'T' && s.sz && s.sz[0] === 'HUG' && (() => { const d = NDM[M].get(s.id); return !!d && Math.abs(d[2]) > EPS && d[2] >= FIG_TEXT_DW[0] - EPS && d[2] <= FIG_TEXT_DW[1] + EPS; })();
+  const figTextExplain = (M, root) => {
+    if (on || !(TGT && TGT.A && TGT.A.mark === 'figma-real')) return null; // figReal is declared later (layer 3)
+    const s = specAll.get(root.id), d = NDM[M].get(root.id);
+    if (!s || !d) return null;
+    const sub = [], add = (n) => { sub.push(n); (n.kids || []).forEach(add); };
+    add(s);
+    const par = specParent.get(s.id), sibs = par ? (par.kids || []) : [];
+    const src0 = [...sub, ...sibs.slice(0, Math.max(0, sibs.indexOf(s)))].flatMap((n) => { const a = []; const w = (x) => { a.push(x); (x.kids || []).forEach(w); }; w(n); return a; });
+    if (!src0.some((n) => figTextWithin(M, n))) return null;
+    const t = byId.has(root.id) ? tolOf(byId.get(root.id).n) : tolFrame;
+    for (const w of root.why) {
+      const [ax, size] = AXW[w], m = d[ax + (size ? 2 : 0)];
+      if (w === 'w' && figTextWithin(M, s)) continue;
+      const p = size ? predSize(M, s, ax, t) : predPos(M, s, ax, t);
+      if (!p || Math.abs(m - p.v) > p.tol + EPS) return null;
+    }
+    return { explainedBy: 'figmaText' };
+  };
   for (const M of W) {
     const { mroots, followers } = attribute(M, NDM[M], true, (k) => { const b = src(k, M), d = NDM[M].get(k.id); return [0, 1, 2, 3].map((i) => b[i] + d[i]); });
     if (!on) normFollowers[M] = followers;
     for (const r of mroots) {
-      const x = normExplain(M, r);
+      const x0 = normExplain(M, r), ft = x0.entry ? null : figTextExplain(M, r);
+      const x = ft ? { ...ft, figText: x0 } : x0;
       const root = { id: r.id, width: M, delta: r.delta, why: r.why, layer: 'norm', ...(on ? { on } : {}) };
-      if (x.entry) Object.assign(root, { explainedBy: 'norm', entry: x.entry }); else Object.assign(root, x);
+      if (x.entry) Object.assign(root, { explainedBy: 'norm', entry: x.entry });
+      else if (x.explainedBy) Object.assign(root, { explainedBy: x.explainedBy });
+      else Object.assign(root, x);
       out.push(root);
     }
     // R66 record agreement: every box record is checked against the measured norm delta where it acts, root or not
@@ -1400,7 +1439,9 @@ export function verifyScreen(input, opts = {}) {
     return Array.isArray(b) && b.some((x) => x && x.w > 0 && /^(dashed|dotted)$/.test(x.style)) && !figUnread.has('stroke-style');
   };
   const figIcon = (e) => figReal && !!e && e.n.kind === 'icon' && !(e.n.kids && e.n.kids.length);
-  const cropFails = (c, e) => (figIcon(e) ? c.ratio > (opts.figIconRatio ?? FIG_ICON_RATIO) || (c.peak ?? 0) >= (opts.figIconPeak ?? FIG_ICON_PEAK) : failing(c));
+  const figPlain = (e) => figReal && !!e && figPlainFrame(e.n);
+  const cropFails = (c, e) => (figIcon(e) ? c.ratio > (opts.figIconRatio ?? FIG_ICON_RATIO) || (c.peak ?? 0) >= (opts.figIconPeak ?? FIG_ICON_PEAK)
+    : figPlain(e) ? c.ratio > (opts.figPlainRatio ?? FIG_PLAIN_RATIO) || (c.ratio > cropRatio && (c.peak ?? 0) >= cropPeak) : failing(c));
   const cropReference = [];
   const cropsL = Array.isArray(input.cropsLayout) ? input.cropsLayout : null, cropsNL = Array.isArray(input.cropsNormVsLayout) ? input.cropsNormVsLayout : null;
   const cropsRF = Array.isArray(input.cropsRefVsFigma) ? input.cropsRefVsFigma : null;

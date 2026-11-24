@@ -171,8 +171,8 @@ test('colours, fonts, png size, proxy vs Figma', () => {
 
 test('readback mutations: deterministic targets and the planted change', () => {
   const D = Dof(), s = screenRes();
-  // figDash: no dashed stroke here; figIconPx: needs the spec (and another icon)
-  assert.deepEqual(FIG_KINDS.map((k) => chooseFig(k, s, D, TREE)), ['n.0.0', 'n.0.0', 'n.0', 'n.2', 'n.0.0', null, null]);
+  // figDash: no dashed stroke here; figIconPx / figHide: need the spec (another icon / a plain frame leaf)
+  assert.deepEqual(FIG_KINDS.map((k) => chooseFig(k, s, D, TREE)), ['n.0.0', 'n.0.0', 'n.0', 'n.2', 'n.0.0', null, null, null]);
   // figCase: every run reads back UPPER
   assert.ok(mutateFig('figCase', s, D, 'n.0.0').nodes[2][3].runs.every((r) => r.length === 8 && r[7] === 'U'));
   const mv = mutateFig('figMove', s, D, 'n.0.0');
@@ -279,4 +279,23 @@ test('D.rd: decoration, case and the dash pattern come from the readback; withou
   assert.deepEqual(mo.nodes[1], so.nodes[1], 'the node entry is unchanged');
   assert.equal(mo.nodes[4][3].strokes.d, undefined);
   assert.equal(figmaProxy(dec(mo, Do), Do, SPEC).A.dom['n.0'].stroke[0], '1px solid rgb(220, 230, 224)');
+});
+
+test('figHide: a plain frame leaf whose background differs from its nearest ancestor\'s is drawn transparent', async () => {
+  const { hideFrameSpec, hideContrast } = await import('../core/mutate.mjs');
+  const spec = { id: 'n', t: 'F', paint: { bg: 'rgb(255, 255, 255)' }, kids: [
+    { id: 'n.0', t: 'F', paint: { bg: 'rgb(255, 255, 255)' } },
+    { id: 'n.1', t: 'F', paint: { bg: 'rgb(211, 226, 217)', radius: ['5px', '5px', '5px', '5px'] }, kids: [
+      { id: 'n.1.0', t: 'F', paint: { bg: 'rgb(38, 51, 92)', radius: ['2px', '2px', '2px', '2px'], pos: 'absolute' } }] },
+    { id: 'n.2', t: 'F', paint: { bg: 'rgb(38, 51, 92)', shadow: 'rgb(0, 0, 0) 0px 1px 2px 0px' } },
+  ] };
+  assert.equal(hideFrameSpec(spec, 'n.0'), null, 'same as the background behind it');
+  assert.equal(hideFrameSpec(spec, 'n.1'), null, 'not a leaf');
+  assert.equal(hideFrameSpec(spec, 'n.2'), null, 'a shadow: not a plain frame');
+  const sp = hideFrameSpec(spec, 'n.1.0');
+  assert.equal(sp.kids[1].kids[0].paint.bg, 'rgba(0, 0, 0, 0)');
+  assert.equal(spec.kids[1].kids[0].paint.bg, 'rgb(38, 51, 92)', 'the input is not changed');
+  // figHide picks the largest contrast with the background behind (at least 40 on a channel: the crop peak gate)
+  assert.equal(hideContrast(spec, 'n.1.0'), 175);
+  assert.equal(hideContrast(spec, 'n.1'), 44);
 });

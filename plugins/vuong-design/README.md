@@ -16,6 +16,10 @@ Work in progress: this is the layout-engine skeleton.
 VD_PLAYWRIGHT_FROM=/path/to/dir node --test plugins/vuong-design/test/
 ```
 
+## Input profile
+
+Input HTML should follow [PROFILE.md](PROFILE.md) (`vd-html v1`); `core/lint.mjs` checks it.
+
 ## Layout CLI
 
 ```

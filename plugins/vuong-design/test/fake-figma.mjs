@@ -377,9 +377,14 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
       const f = born(new Frame());
       const num = (k) => { const m = new RegExp(`<svg[^>]*\\s${k}="([\\d.]+)"`).exec(svg); return m ? +m[1] : 24; };
       f.width = num('width'); f.height = num('height');
-      const v = new Vector(); f.appendChild(v);
-      const col = (k) => { const m = new RegExp(`<g[^>]*\\s${k}="(#[0-9a-f]{6})"`).exec(svg); if (!m) return []; const x = parseInt(m[1].slice(1), 16); return [{ type: 'SOLID', color: { r: (x >> 16 & 255) / 255, g: (x >> 8 & 255) / 255, b: (x & 255) / 255 } }]; };
-      v.fills = col('fill'); v.strokes = col('stroke');
+      const paint = (h) => { const x = parseInt(h.slice(1), 16); return [{ type: 'SOLID', color: { r: (x >> 16 & 255) / 255, g: (x >> 8 & 255) / 255, b: (x & 255) / 255 } }]; };
+      // one vector per <path>; a path's own fill / stroke wins over the one inherited from the <g>
+      const own = (tag, k) => { const m = new RegExp('\\s' + k + '="(#[0-9a-fA-F]{6})"', 'i').exec(tag); return m ? paint(m[1]) : null; };
+      const g = /<g\b[^>]*>/.exec(svg);
+      for (const pt of svg.match(/<path\b[^>]*>/g) || ['<path>']) {
+        const v = new Vector(); f.appendChild(v);
+        v.fills = own(pt, 'fill') || (g && own(g[0], 'fill')) || []; v.strokes = own(pt, 'stroke') || (g && own(g[0], 'stroke')) || [];
+      }
       return f;
     },
     async getNodeByIdAsync(id) {

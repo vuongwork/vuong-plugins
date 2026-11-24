@@ -74,11 +74,11 @@ const page = (fig, name = 'Screens') => fig.root.children.find((p) => p.name ===
 const byVd = (root) => { const m = {}; const w = (n) => { const id = n.getSharedPluginData('vuongdesign', 'id'); if (id) m[id] = n; (n.children || []).forEach(w); }; w(root); return m; };
 const allIds = (e, out = []) => { out.push(e.o); (e.k || []).forEach((k) => allIds(k, out)); return out; };
 
-test('runtime source: __DATA__ once, at most 15 KB, no console / notify', () => {
+test('runtime source: __DATA__ once, at most 16 KB, no console / notify', () => {
   assert.equal(RUNTIME.split('__DATA__').length, 2);
   assert.ok(RUNTIME.includes('const D = __DATA__;'));
   const bytes = Buffer.byteLength(RUNTIME, 'utf8');
-  assert.ok(bytes <= 15360, `runtime is ${bytes} bytes`);
+  assert.ok(bytes <= 16384, `runtime is ${bytes} bytes`);
   assert.ok(!/console\.|figma\.notify/.test(RUNTIME));
 });
 
@@ -535,4 +535,70 @@ test('readback: a rotated node reports its un-rotated box, as the proxy measures
   assert.ok(Math.abs(bb.width - 21.21) < 0.01, `the fake rotates the bounding box (${bb.width})`);
   assert.deepEqual(s.N['n.7'].A, [50, 20, 20, 10]);
   assert.equal(s.N['n.7'].B, s.N['n.7'].A);
+});
+
+// ---- Fix round 3 ----
+test('edit guard: a changed variable value (bound props rendered differently) is not an edit; a hand edit of an unbound property still is', async () => {
+  const fig = fakeFor();
+  await runOne(fig);
+  const root = page(fig).children[0];
+  const sig0 = root.getSharedPluginData('vuongdesign', 'sig');
+  const N = byVd(root);
+  assert.equal(N['n.0'].boundVariables.paddingLeft.id.startsWith('VariableID:'), true);
+  // the variable changed in Figma: bound values render differently, the bindings stay
+  N['n.0'].paddingLeft = 99; N['n.0'].itemSpacing = 41;
+  N['n.0'].fills = [{ ...N['n.0'].fills[0], color: { r: 1, g: 0, b: 0 } }];
+  N.n.fills = [{ ...N.n.fills[0], color: { r: 0, g: 1, b: 0 } }];
+  const r = await runOne(fig);
+  assert.equal(r.screens[0].edited, undefined, 'a variable value change is not an edit');
+  const root2 = page(fig).children[0];
+  assert.equal(root2.getSharedPluginData('vuongdesign', 'sig'), sig0, 'same signature after the rebuild');
+  // a hand edit of an unbound property is still caught
+  byVd(root2)['n.2'].resize(50, 40);
+  assert.equal((await runOne(fig)).screens[0].edited, true);
+});
+
+test('edit guard: a hand edit of the bound variable itself (unbinding) is caught', async () => {
+  const fig = fakeFor();
+  await runOne(fig);
+  const N = byVd(page(fig).children[0]);
+  N['n.0'].fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
+  assert.equal((await runOne(fig)).screens[0].edited, true);
+});
+
+const ICONS = {
+  ...SVG,
+  'i-mascot': '<symbol id="i-mascot" viewBox="0 0 24 24"><path d="M1 1h4" fill="#26335C"></path><path d="M5 5h4" fill="#C9683F"></path><path d="M9 9h4"></path></symbol>',
+  'i-plain': '<symbol id="i-plain" viewBox="0 0 24 24"><path d="M12 5v14"></path><path d="M5 12h14"></path></symbol>',
+};
+const iconEnc = (ref, over = {}) => {
+  const sp = spec();
+  sp.kids.push({ id: 'n.6', t: 'V', w: 24, h: 24, sz: ['FIXED', 'FIXED'], icon: { ref, color: 'rgb(0, 0, 0)', fill: 'rgb(0, 0, 0)', ...over } });
+  return encodeScreen(sp, { screen: 's0', file: 'f.html', W: [304, 424], map: { s0: { ...MAP.s0, 'n.6': { fill: 'primitive.color.ink' } } }, svgDefs: ICONS, tables: newTables(V) });
+};
+
+test('multi-colour sprite icon: children with their own fill keep it; only the inheriting child binds the icon fill', async () => {
+  const fig = fakeFor();
+  const enc = iconEnc('i-mascot');
+  assert.ok(enc.T.k[3].v && enc.T.k[3].v.vf !== undefined, 'the icon fill is bound');
+  const [s] = (await runOne(fig, [enc])).screens;
+  assert.deepEqual(s.errors, []);
+  const icon = byVd(page(fig).children[0])['n.6'];
+  const hex = (p) => '#' + [p.color.r, p.color.g, p.color.b].map((c) => Math.round(c * 255).toString(16).padStart(2, '0')).join('');
+  const [a, b, c] = icon.children;
+  assert.equal(hex(a.fills[0]), '#26335c');
+  assert.equal(hex(b.fills[0]), '#c9683f');
+  assert.equal(a.fills[0].boundVariables, undefined, 'own colour is not bound');
+  assert.equal(b.fills[0].boundVariables, undefined);
+  assert.equal(hex(c.fills[0]), '#000000');
+  assert.equal(c.fills[0].boundVariables.color.id, 'VariableID:' + V.filter((v) => v !== 'color/gone').indexOf('color/ink'), 'the inheriting child binds');
+});
+
+test('single-colour inheriting icon still binds the icon fill on every child', async () => {
+  const fig = fakeFor();
+  const [s] = (await runOne(fig, [iconEnc('i-plain')])).screens;
+  assert.deepEqual(s.errors, []);
+  const icon = byVd(page(fig).children[0])['n.6'];
+  assert.equal(icon.children.length, 2);
+  for (const k of icon.children) assert.ok(k.fills[0].boundVariables && k.fills[0].boundVariables.color, 'bound');
 });

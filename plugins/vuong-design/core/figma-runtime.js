@@ -81,8 +81,8 @@ if(!T){n.fills=[];n.clipsContent=false;n.name=e.y?e.y+' '+o:o}
 pd(n,'id',o);
 if(!par){pd(n,'screen',sc.screen);pd(n,'file',sc.file)}
 await(T?txt:paint)(n,e,o);
-if(e.t=='V'&&!gl){const b={fills:gv(o,'vf',v.vf),strokes:gv(o,'vs',v.vs)};
-if(b.fills||b.strokes)for(const x of n.findAll(()=>1))for(const k in b)if(b[k]&&x[k]&&x[k]!=MX&&x[k][0])x[k]=x[k].map(p=>p.type=='SOLID'?bv(o,k=='fills'?'vf':'vs',b[k],p):p)}
+if(e.t=='V'&&!gl){const b={fills:gv(o,'vf',v.vf),strokes:gv(o,'vs',v.vs)},q={fills:e.ic.f,strokes:e.ic.s},H=p=>'#'+x2(p.color.r)+x2(p.color.g)+x2(p.color.b);// only a paint that inherits the icon colour is bound; a child's own colour stays
+if(b.fills||b.strokes)for(const x of n.findAll(()=>1))for(const k in b)if(b[k]&&x[k]&&x[k]!=MX&&x[k][0])x[k]=x[k].map(p=>p.type=='SOLID'&&H(p)==D.C[q[k]].slice(0,7).toLowerCase()?bv(o,k=='fills'?'vf':'vs',b[k],p):p)}
 if(e.op!=U)n.opacity=e.op;
 bn(o,'op',v.op,n,'opacity');
 if(T&&(e.ar||gl))rs();
@@ -116,9 +116,13 @@ if(e.tf){const[A,B,C,E,tx,ty,ox,oy]=e.tf;n.relativeTransform=[[A,C,x+ox+tx-A*ox-
 if(a)n.constraints={horizontal:K[a[2]]||'MIN',vertical:K[a[3]]||'MIN'}},
 SK=['characters','fontSize','opacity','layoutMode','paddingTop','paddingRight','paddingBottom','paddingLeft','itemSpacing'],
 fn=f=>f.family+' '+f.style,
-sig=root=>{let h=0x811c9dc5;const q=v=>v==MX?'M':typeof v=='number'?r2(v):v,
-w=(n,t)=>{const f=n.fontName,c=n.cornerRadius,s=JSON.stringify([gd(n,'id'),n.type,t?0:r2(n.x),t?0:r2(n.y),r2(n.width),r2(n.height),pl(n.fills),pl(n.strokes),
-f&&f!=MX?fn(f):q(f),c==MX?CO.map(k=>n[k]):c,...SK.map(k=>q(n[k]))]);
+// sig: a bound property / paint contributes its variable id, a styled text its text style id (a variable or style
+// value change is not an edit); raw = the walk before that rule (sigs stored by earlier builds)
+sig=(root,raw)=>{let h=0x811c9dc5;const q=v=>v==MX?'M':typeof v=='number'?r2(v):v,
+w=(n,t)=>{const f=n.fontName,c=n.cornerRadius,bv=n.boundVariables||{},B=k=>{const a=!raw&&bv[k]&&(bv[k].length?bv[k][0]:bv[k]);return a&&a.id&&'V'+a.id},
+y=n.textStyleId,st=!raw&&y&&y!=MX&&'S'+y,P=ps=>raw||ps==MX||!ps?pl(ps):ps.map(p=>p.boundVariables&&p.boundVariables.color?'V'+p.boundVariables.color.id:pl([p])),
+s=JSON.stringify([gd(n,'id'),n.type,t?0:r2(n.x),t?0:r2(n.y),B('width')||r2(n.width),B('height')||r2(n.height),P(n.fills),P(n.strokes),
+st||(f&&f!=MX?fn(f):q(f)),CO.some(B)?CO.map(k=>B(k)||r2(n[k])):c==MX?CO.map(k=>n[k]):c,...SK.map(k=>k=='fontSize'&&st||B(k)||q(n[k])),...raw?[]:[q(y)||'',n.effectStyleId||'']]);
 for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619)>>>0;
 for(const c of n.children||[])w(c)};
 w(root,1);return('0000000'+h.toString(16)).slice(-8)},
@@ -160,7 +164,7 @@ CO.forEach((f,i)=>{VF['r'+i]=f;VF['b'+i]=SI[i]});
 const screen=async sc=>{
 const res={screen:sc.screen},M0=pg.children.filter(c=>gd(c,'screen')==sc.screen&&gd(c,'file')==sc.file),t=M0[0];
 if(M0[1])res.extra=M0.slice(1).map(c=>c.id);
-if(t&&gd(t,'sig')&&gd(t,'sig')!=sig(t)&&(D.force||[]).indexOf(sc.screen)<0)return{...res,root:t.id,edited:true,sig:gd(t,'sig')};// no sig = interrupted build
+if(t&&gd(t,'sig')&&gd(t,'sig')!=sig(t)&&gd(t,'sig')!=sig(t,1)&&(D.force||[]).indexOf(sc.screen)<0)return{...res,root:t.id,edited:true,sig:gd(t,'sig')};// no sig = interrupted build
 const x=t?t.x:pg.children.reduce((m,c)=>Math.max(m,c.x+c.width+80),0),y=t?t.y:0,root=S.root=await mk(sc.T,null,sc);
 if(root){root.name=sc.screen;
 const L=S.late.reverse();for(const f of[ab,place])for(const l of L)try{f(l)}catch(z){fail(gd(l[0],'id'),z)}

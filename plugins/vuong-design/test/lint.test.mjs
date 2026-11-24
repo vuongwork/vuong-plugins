@@ -68,6 +68,15 @@ test('lint-pct: W12 on an in-flow % width, not on the absolute fill or width:100
   assert.match(w[0].msg, /width: 65%/);
 });
 
+test('lint-zorder: W13 on a dropdown covered by a later row, not on the same dropdown placed last or a badge inside its parent', { skip }, async () => {
+  const r = await lint('lint-zorder.html');
+  assert.deepEqual(codes(r), ['W13']);
+  const w = r.findings.filter((f) => f.code === 'W13');
+  assert.equal(w.length, 1);
+  assert.equal(w[0].screen, 'A1');
+  assert.match(w[0].sel, /menu/);
+});
+
 test('lint-shrink: W3 on the row that relies on flex-shrink, not on the min-width:0 / flex:1 rows', { skip }, async () => {
   const r = await lint('lint-shrink.html');
   assert.deepEqual(codes(r), ['W3']);

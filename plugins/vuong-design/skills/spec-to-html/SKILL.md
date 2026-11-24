@@ -33,6 +33,8 @@ Sonnet, because lint checks the result mechanically. Do not read `lint.json` int
    - a wrapping row must break at the same items at width A and A + 120 px
    - size containers with token padding, not a fixed `height` + centring; where a fixed height is the design (app bar,
      nav, button, input), make `(height - content) / 2` a multiple of 4
+   - an overlay that spills out of its parent (dropdown, popover, snackbar) is the last child of the screen with
+     explicit offsets, never nested in the field it belongs to (Figma has no z-index)
    - no `%` width/height except 100% on in-flow elements; a progress fill or chart bar is `position:absolute; left:0;
      top:0; bottom:0; width:NN%` inside a `position:relative` track
 4. Lint loop (at most 3 rounds):

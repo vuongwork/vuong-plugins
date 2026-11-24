@@ -376,6 +376,44 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
       for (const [k, v] of bad) add('W12', f.si, `${k}: ${v} on an in-flow element (Figma has no % size; use position:absolute inside a relative parent)`, f.el, f.root);
     });
   }
+  // W13: Figma has no z-index; a later layer always draws on top. CSS paints an absolute/fixed element above later
+  // in-flow siblings, Figma below them. Report an overlay whose box overlaps a later, non-positioned element that paints.
+  {
+    const paints = (el) => {
+      const cs = getComputedStyle(el);
+      if (cs.visibility === 'hidden' || parseFloat(cs.opacity) === 0) return false;
+      if (el.tagName.toLowerCase() === 'svg' || el.tagName.toLowerCase() === 'img') return true;
+      if (!/^(transparent|rgba\(.*,\s*0\))$/.test(cs.backgroundColor) || cs.backgroundImage !== 'none' || cs.boxShadow !== 'none') return true;
+      if (['Top', 'Right', 'Bottom', 'Left'].some((k) => parseFloat(cs['border' + k + 'Width']) > 0 && cs['border' + k + 'Style'] !== 'none')) return true;
+      for (const n of el.childNodes) if (n.nodeType === 3 && n.textContent.trim()) return true;
+      return false;
+    };
+    const positioned = (el) => { const p = getComputedStyle(el).position; return p === 'absolute' || p === 'fixed'; };
+    roots.forEach((root, si) => {
+      const all = [...root.querySelectorAll('*')].filter((e) => !isSvgInner(e) && visible(e));
+      all.forEach((ov, i) => {
+        if (!positioned(ov)) return;
+        const r = ov.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1) return;
+        for (let j = i + 1; j < all.length; j++) {
+          const e = all[j];
+          // only content outside the overlay's parent: an overlay inside its own box (badge on an icon, ring around a
+          // label) rarely overlaps ink; one that escapes its parent (dropdown, popover) covers the next rows
+          if (ov.contains(e) || e.contains(ov) || (ov.parentElement && ov.parentElement.contains(e))) continue;
+          // e or one of its ancestors below the overlay's parent is positioned: it is an overlay itself, drawn in order
+          let p = e, pos = false;
+          while (p && p !== root && !p.contains(ov)) { if (positioned(p)) { pos = true; break; } p = p.parentElement; }
+          if (pos || !paints(e)) continue;
+          const q = e.getBoundingClientRect();
+          const ix = Math.min(r.right, q.right) - Math.max(r.left, q.left), iy = Math.min(r.bottom, q.bottom) - Math.max(r.top, q.top);
+          if (ix > 2 && iy > 2) {
+            add('W13', si, 'overlay is covered in Figma by later content (no z-index: layer order = document order); move it after that content, e.g. last in the screen', ov, root);
+            break;
+          }
+        }
+      });
+    });
+  }
   w3();
   const wrapA = wraps.map(lines);
   const A = snap();

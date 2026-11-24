@@ -23,7 +23,7 @@ Input HTML should follow [PROFILE.md](PROFILE.md) (`vd-html v1`); `core/lint.mjs
 ## Layout CLI
 
 ```
-node plugins/vuong-design/core/layout.mjs --html <file> --root <selector> --out <dir> \
+node plugins/vuong-design/core/layout.mjs --html <file> --out <dir> [--root <selector>] [--no-lint] \
   [--widen <selector>] [--name <selector>] [--widen-by <px>] [--viewport <px>] \
   [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>] [--no-webfonts] \
   [--allowlist <json>] [--mutate [--mutate-sample <n>]]
@@ -31,7 +31,9 @@ node plugins/vuong-design/core/layout.mjs --html <file> --root <selector> --out 
 node plugins/vuong-design/core/layout.mjs --corpus plugins/vuong-design/test/corpus.json --out <dir> [same options]
 ```
 
-- `--root`: selector of the screens (one screen per match). `--widen`: the element to widen for width B (the screen or an ancestor). `--name`: selector inside a screen whose text names it.
+- `--root`: selector of the screens (one screen per match). Optional: without it the file is taken to follow the input profile, screens are `[data-vd-screen]` and, when the file has a `data-vd-widen` element, `--widen` defaults to `[data-vd-widen]`. `--name` does not read `data-vd-name` yet (screens are named from the `--name` selector, else `s<index>`).
+- Lint gate: in `--html` mode the file is linted first (`core/lint.mjs`, one page load on the shared browser): its summary goes to the log and `lint.json` to `<out>`; any error stops the run with exit 1 (`lint: N errors, fix them or pass --no-lint`), warnings do not. `--no-lint` skips the gate. `--corpus` mode never lints. A selector that matches nothing is left to the pipeline (usage error, exit 2). `ds.mjs` shares this CLI and gate.
+- `--widen`: the element to widen for width B (the screen or an ancestor). `--name`: selector inside a screen whose text names it.
 - Tolerances default to 0.5px (frames), 1px (text), 2px (Figma model deltas before they need approval).
 - Fonts: before measuring, the source page is re-rendered with the face Figma will use: a Google Fonts face when Figma has the family (reason `version`), otherwise a substitute such as Inter for system-ui or Times New Roman (reasons `not-in-figma`, `system`); `line-height: normal` is written as explicit px (Figma has no "normal"). Google Fonts are fetched even when the page does not reference them; only the family name is sent. `--no-webfonts` stops that extra fetching only: the page's own font links and `@font-face` rules still load during capture and are copied into the proxy. Families that do not render are reported (`font-face` data finding when a used face is missing in the proxy).
 - `--mutate`: also plants known errors to check the checker (≈30 s per screen); `--mutate-sample <n>` limits it to n screens per file. A missed mutation makes the run exit 1 (R53); a kind with no candidate node is `skipped`, not missed.

@@ -1,0 +1,27 @@
+<!doctype html><html><head><meta charset="utf-8"><title>lint</title><style>
+:root{--color-bg:#ffffff;--color-ink:#1a1a1a;--color-line:#dddddd;--color-accent:#3d6b5c;--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--radius-md:12px;--radius-full:999px;--font-sans:"Be Vietnam Pro",sans-serif;--size-body:14px;--size-title:20px}
+body{margin:0;background:var(--color-bg);color:var(--color-ink);font-family:var(--font-sans);font-size:var(--size-body)}
+.frame{width:360px;margin:var(--space-4)}
+.screen{display:flex;flex-direction:column;gap:var(--space-3);padding:var(--space-4);background:var(--color-bg);border:1px solid var(--color-line);border-radius:var(--radius-md)}
+.title{font-size:var(--size-title);margin:0}
+.row{display:flex;align-items:center;gap:var(--space-3)}
+.avatar{flex-shrink:0;color:var(--color-accent)}
+.text{flex:1;min-width:0}
+.trail{color:var(--color-accent)}
+.btn{align-self:stretch;padding:var(--space-3);border-radius:var(--radius-full);background:var(--color-accent);color:var(--color-bg);text-align:center}
+</style></head><body>
+<svg width="0" height="0" style="position:absolute"><symbol id="ic-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" fill="currentColor"/></symbol></svg>
+<div class="frame" data-vd-widen>
+<div class="screen" data-vd-screen="A1" data-vd-name="Home">
+  <h1 class="title">Today</h1>
+  <div class="row"><svg class="avatar" width="32" height="32"><use href="#ic-user"/></svg><div class="text">A fairly long task title that wraps over lines when the screen is narrow</div><span class="trail">9:00</span></div>
+  <div class="btn">Add</div>
+</div>
+</div>
+<div class="frame" data-vd-widen>
+<div class="screen" data-vd-screen="A2" data-vd-name="Detail">
+  <h1 class="title">Detail</h1>
+  <div class="row"><svg class="avatar" width="32" height="32"><use href="#ic-user"/></svg><div class="text">Second screen row</div></div>
+</div>
+</div>
+</body></html>

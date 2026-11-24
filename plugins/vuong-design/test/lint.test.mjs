@@ -64,7 +64,7 @@ test('lint-pct: W12 on an in-flow % width, not on the absolute fill or width:100
   assert.deepEqual(codes(r), ['W12']);
   const w = r.findings.filter((f) => f.code === 'W12');
   assert.equal(w.length, 1);
-  assert.match(w[0].sel, /^div.bar:nth-of-type(1) > div.fill$/);
+  assert.equal(w[0].sel, 'div.bar:nth-of-type(1) > div.fill');
   assert.match(w[0].msg, /width: 65%/);
 });
 

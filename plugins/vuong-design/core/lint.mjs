@@ -15,6 +15,8 @@ import { basename, join, resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { defaultFontMap, isAvailable, isSystemFont } from './font-map.mjs';
 
+const BROWSER_DEFAULT = /^(times new roman|times|courier new|courier|georgia|verdana|tahoma|trebuchet ms)$/i;
+
 export const PROFILE = 'vd-html/1';
 export const DEFAULT_ROOT = '[data-vd-screen]';
 export const DEFAULT_WIDEN = '[data-vd-widen]';
@@ -381,7 +383,8 @@ export async function lintFile(htmlPath, { root, widen, widenBy = 120, browser, 
     const fs = [...raw.findings];
     for (const f of raw.families) {
       if (isAvailable(fm, f.family)) continue;
-      const system = isSystemFont(f.family);
+      // browser default faces (no font-family set, or a core web font) are substituted by the pipeline like system fonts
+      const system = isSystemFont(f.family) || BROWSER_DEFAULT.test(f.family.trim());
       fs.push({ code: system ? 'W8' : 'E6', si: f.si, sel: f.sel, n: f.n,
         msg: system ? `system font "${f.family}" (Figma substitutes Inter)` : `font "${f.family}" is not in Figma and not a system font (Figma substitutes Inter)` });
     }

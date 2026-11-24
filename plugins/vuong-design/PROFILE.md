@@ -36,6 +36,10 @@ lowers accuracy is a warning (`W`).
 - Flex. A stretching element uses `flex: 1` / `align-self: stretch` / `width: 100%`; a hugging element stays natural.
   Do not rely on flex-shrink: give a text block `min-width: 0; flex: 1` instead of letting it shrink.
 - A wrapping row (`flex-wrap`) must break at the same items at the checked widths (A and A + 120 px); a row that gains or loses a line when widened is not reproduced by the Figma model. Keep chip rows to one line, or few enough chips. Checked by W11.
+- Size containers by padding on the token scale, not by a fixed `height` with centred content: the pipeline turns
+  `height` + centring into derived paddings (a 56 px bar around a 36 px avatar becomes 10 px), which land off the 4 px
+  grid and become normalisation questions. Keep a fixed height only where the height itself is the design (app bar,
+  bottom nav, button, input), and then pick a content size that leaves an on-grid remainder (56 - 32 = 2 x 12).
 - No `%` width or height on an in-flow element other than `100%`: Figma auto layout has no % sizes, so it keeps the px
   size when widened. A proportional part (progress fill, chart bar) is `position: absolute` with % insets/size inside a
   `position: relative` parent (it becomes a scale constraint). Checked by W12.

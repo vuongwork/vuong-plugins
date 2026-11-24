@@ -31,6 +31,8 @@ Sonnet, because lint checks the result mechanically. Do not read `lint.json` int
    - none of: outline, filter, backdrop-filter, blend modes, mask, text-shadow, line-clamp, per-side border colors,
      transform (except rotating an icon), `vw`/`vh`, scripts, iframes
    - a wrapping row must break at the same items at width A and A + 120 px
+   - size containers with token padding, not a fixed `height` + centring; where a fixed height is the design (app bar,
+     nav, button, input), make `(height - content) / 2` a multiple of 4
    - no `%` width/height except 100% on in-flow elements; a progress fill or chart bar is `position:absolute; left:0;
      top:0; bottom:0; width:NN%` inside a `position:relative` track
 4. Lint loop (at most 3 rounds):

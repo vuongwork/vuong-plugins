@@ -1,0 +1,140 @@
+# vuong-design kế hoạch 3b: component, biến thể, trạng thái, instance swap
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Từ kết quả của kế hoạch 2–3 (spec đích từng màn, `tokens.json`, `token-map.json`, Figma có biến, style và màn), tìm các cấu trúc lặp lại thành component có biến thể, thuộc tính (text, boolean, instance swap cho icon) và đủ trạng thái; dựng chúng trên trang Component của Figma; dựng lại màn bằng instance. Kiểm tra trên Figma thật bằng bộ kiểm tra hiện có: màn dựng bằng instance phải đạt như màn dựng bằng layer rời (Planora 18/18 với allowlist hiện có), lỗi cài vẫn bị bắt hết.
+
+**Architecture:** Không thêm bộ kiểm tra thứ hai. Thêm một bước thuần (không trình duyệt, không model) `components.mjs` sau `ds.mjs`: đọc spec đích của mọi màn → `components.json` (component, biến thể, thuộc tính, trạng thái, instance ở đâu). Encoder thay cây con của mỗi instance bằng tham chiếu component + giá trị thuộc tính + phần ghi đè còn lại. Figma có thêm một module runtime riêng (`figma-runtime-cmp.js`, cài một lần như runtime hiện tại) dựng component và component set; runtime màn chỉ thêm phần tạo instance. Readback giữ nguyên định dạng: mỗi node của spec vẫn có một mục (node trong instance đọc theo ID), nên `figma.mjs check` và `--mutate` chạy như cũ.
+
+**Tech Stack:** như kế hoạch 1–3 (Node ≥ 18, ESM `.mjs`, `node:test`, không thêm thư viện). Gửi qua bridge (`figma.mjs serve`), courier là đường dự phòng.
+
+**Spec:** `docs/superpowers/specs/2026-11-21-vuong-design-plugin-design.md` mục 10 (component, trạng thái, duyệt một lượt, instance swap), 13 (chạy lại không trùng, trang Component), 16, 18 (giả định 6), 20. Kế hoạch 3 và README plugin (mục Figma encoding / runtime / CLI / bridge).
+
+**Tách phạm vi.** Kế hoạch 3b (bản này) lo component. Để sang **kế hoạch 3c**: sổ ID theo quy ước dự án (mục 11), cập nhật theo phần khác chỉ gửi thuộc tính đổi (mục 13), `design-data.json` và hình màn đánh số (mục 12), các trang Bìa / Mẫu / Tham chiếu. 3c dùng lại ID component của 3b. Kế hoạch 4 (đóng gói) giữ nguyên.
+
+## Global Constraints
+
+- Mã ở `plugins/vuong-design/core/`, test ở `plugins/vuong-design/test/`, nhánh `feat/vuong-design-components` tách từ `main` sau khi kế hoạch 3 đã merge. Không có phụ thuộc npm.
+- **Ghi Figma chỉ trong phạm vi người dùng nêu.** Mỗi lần gửi: báo file, trang, lô, ước tính thời gian (tính tổng thời gian, không chỉ bước cuối) và chờ duyệt. Probe chỉ ghi trang `_vd-probe` và xoá node tạm sau khi đo.
+- **Mỗi lần gọi ≤ 50 000 byte** (`PAYLOAD_LIMIT`). Runtime màn giữ ≤ 16 384 B như đã cài (hiện 16 330 B): mọi phần component nằm ở `figma-runtime-cmp.js` (≤ 16 384 B, test như runtime màn); runtime màn chỉ được thêm phần tạo instance, nếu vượt thì chuyển code ít dùng sang module mới, không nới giới hạn.
+- **Không đổi kết quả khi tắt component** (`--no-components`, cũng là mặc định khi `components.json` không có): lô, readback và kết quả `check` giống từng byte với kế hoạch 3. Test so với fixture hiện có.
+- **Tất định:** `components.json` không phụ thuộc thứ tự màn hay thứ tự con; không đồng hồ.
+- **Không có model trong pipeline.** Tên component lấy theo luật (lớp CSS của gốc cây con, xem Task 2). Chỗ luật không đặt được tên thì để `ask` trong `vd-names.draft.json` như tên role của kế hoạch 2. AI chỉ được điền bản nháp; script kiểm tra (định dạng, không trùng, không đổi tên đã duyệt). Agent không bao giờ tự ghi `approved: true`.
+- **Trạng thái sinh theo luật là đề xuất.** Chỉ dựng lên Figma sau khi người dùng duyệt bộ luật (Task 5). Luật không áp được → ghi vào báo cáo độ phủ, không tự vẽ.
+- **Không đè phần sửa tay**, mở rộng cho component: component có `vuongdesign/sig` như frame màn; component đã sửa tay → giữ, báo `skippedEdited`, màn dùng nó vẫn dựng bằng instance của bản đang có. `--force cmp:<tên>` mới ghi đè.
+- **Chạy lại không tạo trùng:** component và component set tìm theo `vuongdesign/cmp` trước khi tạo.
+- Không làm hỏng kế hoạch 1–3: `layout.mjs`, `ds.mjs`, `figma.mjs` chạy như cũ; test cũ giữ nguyên; số nghiệm thu chỉ đổi ở Task 8 và phải ghi lý do.
+
+## Review Focus
+
+1. Hai cây con giống cấu trúc nhưng khác giá trị đo (gap 12 và 12,01, chữ dài làm cao khác) → cùng một component, khác biệt hình học đi qua sizing của instance, không sinh biến thể giả (Task 2, test `noise is not a variant`).
+2. Instance ghi đè một thuộc tính mà component không phơi ra → giữ dạng ghi đè trực tiếp và vẫn đọc ngược được; không lặng lẽ bỏ (Task 6, test `override kept`).
+3. Node trong instance phải đọc ngược theo đúng ID spec; thiếu → `unchecked`, màn không đạt (Task 6–7, test `instance readback`).
+4. Component bị sửa tay → giữ nguyên, màn dùng nó vẫn đạt hoặc báo rõ khác biệt; không bao giờ xoá component còn instance (Task 7, test `edited component is kept`).
+5. Tắt component → lô giống từng byte với kế hoạch 3 (Task 6, test `off is plan 3`).
+
+---
+
+### Task 1: Probe component API trên Figma thật
+
+**Files:** `core/figma-probe.mjs` (thêm ca), `test/figma-probe.test.mjs`, `core/figma-facts.json` (thêm khoá).
+
+Đo trước khi thiết kế định dạng (mỗi ca có số đo, giống probe kế hoạch 3):
+- `cmpData`: `setSharedPluginData` trên node con của instance có lưu và đọc lại được không; ID con instance có ổn định qua `createInstance` lần hai không.
+- `cmpProps`: `addComponentProperty` TEXT / BOOLEAN / INSTANCE_SWAP trên component trong component set; `setProperties` trên instance; giá trị đặt trực tiếp lên con instance (ghi đè không qua thuộc tính) còn sau khi `setProperties`.
+- `cmpLayout`: instance có auto layout trong khung auto layout cha, sizing FILL / HUG trên instance và con của nó cho cùng box như frame rời (so `absoluteBoundingBox`, ngưỡng 0,01 px).
+- `cmpBind`: biến gắn trên component còn gắn ở instance; ghi đè màu trên instance bằng biến khác.
+- `cmpTime`: thời gian dựng 20 instance so với 20 cây frame rời cùng nội dung.
+
+- [ ] **Step 1: Viết test** `probePayload()` có các ca mới, ≤ 20 000 byte, đúng cú pháp; `readFacts` ra đủ hai nhánh mỗi khoá mới; thiếu file → mặc định an toàn (`cmpData: 'no'`, `cmpLayout: 'no'`: khi đó Task 6 đọc ngược con instance theo thứ tự cây thay vì plugin data).
+- [ ] **Step 2: Chạy** → FAIL. **Step 3: Viết.** **Step 4: Chạy** → PASS.
+- [ ] **Step 5: Chạy thật qua bridge** (sau khi người dùng duyệt phạm vi `_vd-probe`). Ghi số đo vào `figma-facts.json` và README mục "Figma facts". Một ca cho kết quả bất lợi (ví dụ instance không giữ plugin data) → dừng, báo người dùng, sửa thiết kế Task 6 trước khi làm tiếp.
+- [ ] **Step 6: Commit** `feat(vuong-design): probe Figma component API (plugin data, properties, layout, bindings)`.
+
+### Task 2: Tìm ứng viên component
+
+**Files:** tạo `core/components.mjs`, `test/components.test.mjs`.
+
+`findComponents(screens: [{ screen, spec }], { min = 3 })`:
+- **Chữ ký cấu trúc** của một cây con: `roleSig` của gốc (inventory.mjs, đã bỏ lớp trạng thái qua `STATE`) + loại node, layoutMode, số con và chữ ký con theo thứ tự, đệ quy. Không gồm: nội dung chữ, icon cụ thể, kích thước, màu. Cây con có ≥ `min` lần xuất hiện trên toàn file (mọi màn) và ≥ 2 node → ứng viên. Cây con nằm trong một ứng viên lớn hơn có cùng số lần xuất hiện thì không tách riêng (task row chứa checkbox: checkbox chỉ thành component riêng khi nó cũng xuất hiện ngoài task row).
+- **Biến thể:** các lần xuất hiện có cùng chữ ký nhưng khác lớp trạng thái (`is-*`, `data-state`, các lớp `STATE`), hoặc khác paint/type theo role, gộp thành một component set; trục biến thể lấy từ tên lớp (`state=selected`). Khác biệt chỉ do đo (≤ 0,5 px, R67) không tạo biến thể.
+- **Thuộc tính:** chữ khác nhau giữa các lần xuất hiện → TEXT; con có ở lần này, không có ở lần khác (cùng chữ ký phần còn lại) → BOOLEAN; icon khác nhau ở cùng vị trí → INSTANCE_SWAP (mỗi icon khác nhau thành một component icon trong set `icon/*`).
+- **Tên:** lớp CSS đặc trưng nhất của gốc (lớp không phải trạng thái, xuất hiện ở mọi lần): `.task-row` → `task-row`. Không có lớp (thẻ trần) → tên `ask` trong `vd-names.draft.json` (khoá `cmp:<chữ ký rút gọn>`), tạm `cmp-<n>`.
+- Ra `components.json`: `{ v: 1, components: [{ name, sig, variants: [{ props, nodes: [{ screen, node }] }], props: [{ name, type, default }], icons? }], skipped: [{ sig, count, reason }] }`.
+
+- [ ] **Step 1: Viết test** trên spec dựng tay: 3 hàng giống nhau khác chữ → 1 component, 1 thuộc tính TEXT; 2 hàng thường + 1 hàng `is-done` → 1 set, 2 biến thể; con thiếu ở 1 lần → BOOLEAN; icon khác → INSTANCE_SWAP; `noise is not a variant` (gap 12 / 12,01); đảo thứ tự màn → `components.json` giống từng byte; 2 lần xuất hiện (< min) → `skipped` có lý do.
+- [ ] **Step 2: Chạy** → FAIL. **Step 3: Viết.** **Step 4: Chạy** → PASS.
+- [ ] **Step 5: Đo trên Planora và corpus** (không ghi Figma): số component, biến thể, thuộc tính, tỉ lệ node của màn nằm trong instance, các ứng viên bị bỏ và lý do. Ghi vào README mục mới "Components". Đối chiếu danh sách component của `figma-plan.md` Planora (task row, checkbox, hũ 1-3-5, nút, chip, nav, sheet): mục nào không được tìm ra → ghi lý do; người dùng quyết có cần luật bổ sung không trước Task 3.
+- [ ] **Step 6: Commit** `feat(vuong-design): component candidates, variants and properties from repeated structures`.
+
+### Task 3: Loại component và bảng trạng thái
+
+**Files:** `core/components.mjs`, `core/states.mjs` (mới), test tương ứng.
+
+- Loại theo thẻ / role / thuộc tính của gốc trong IR: `button` (thẻ button, `role=button`, `a` có lớp btn), `input` (input/textarea/select), `checkbox` (input checkbox, `role=checkbox`), `tab` (`role=tab`, con của `role=tablist`), `other`.
+- Bảng trạng thái theo loại (mục 10; mobile không có hover): nút: thường, nhấn, tắt, đang tải, focus; ô nhập: trống, focus, đã nhập, lỗi, tắt; ô tích: chưa tích, đã tích, tắt; tab: chọn, chưa chọn.
+- Nguồn từng trạng thái, theo thứ tự: biến thể đã có từ HTML (Task 2) → `html`; không có → sinh theo luật trong `vd-rules.json` mục `states` (mặc định của spec: nhấn = lớp phủ màu chữ 10%; tắt = nội dung 38%, nền 12%; focus = viền 2 px token focus; lỗi = token lỗi; đang tải = thay nhãn bằng vòng quay) → `proposed`; luật cần token chưa có (không có token focus / lỗi) → `missing`, ghi vào `coverage.json`, không vẽ.
+- Mặc định của luật vào `vd-rules.draft.json` mục `states` với `approved` trống.
+
+- [ ] **Step 1: Viết test**: nút chỉ có trạng thái thường trong HTML → 4 trạng thái `proposed` đúng giá trị; nút có `is-disabled` trong HTML → trạng thái tắt là `html`, không sinh; không có token lỗi → ô nhập lỗi `missing` và có trong coverage; luật chưa duyệt → không có trạng thái `proposed` nào trong dữ liệu gửi Figma.
+- [ ] **Step 2–4:** FAIL → viết → PASS.
+- [ ] **Step 5: Commit** `feat(vuong-design): component kinds and state table (html, proposed by rules, missing)`.
+
+### Task 4: Trang xem trước component (trên máy)
+
+**Files:** `core/components-report.mjs` (mới), thêm mục vào `design-system.html`.
+
+Dựng trang HTML từ spec component (dùng renderer của norm proxy, `proxy.mjs`, không viết renderer thứ hai): mỗi component một hàng, mỗi biến thể / trạng thái một ô, nhãn nguồn (`html` / `proposed` / `missing`), số instance và màn dùng. Không tốn lượt gọi Figma. Mục "Component" trong báo cáo dùng tiếng Anh, có đơn vị (theo quy ước báo cáo hiện có).
+
+- [ ] **Step 1: Viết test**: trang có đủ ô cho mọi biến thể và trạng thái; ô `proposed` có nhãn; ô `missing` có lý do; trang tất định.
+- [ ] **Step 2–4:** FAIL → viết → PASS.
+- [ ] **Step 5: Chạy trên Planora**, đưa người dùng duyệt bộ luật trạng thái và tên `ask`. Người dùng tự ghi câu trả lời vào `vd-rules.json` / `vd-names.json`.
+- [ ] **Step 6: Commit** `feat(vuong-design): component preview page with states and sources`.
+
+### Task 5: Kiểm tra component trước khi ghi Figma
+
+**Files:** `core/components.mjs`, `core/verify.mjs` (chỉ thêm, không đổi luật cũ), test.
+
+Component được dựng từ spec của lần xuất hiện đầu tiên (theo thứ tự màn rồi `cmpNodeId`). Mỗi lần xuất hiện khác phải tái tạo đúng từ component + thuộc tính + ghi đè: `expandInstance(cmp, inst)` dựng lại spec của cây con, so với spec đích bằng phép so của kế hoạch 1 (khung ≤ 0,5 px, chữ ≤ 1 px, paint / type đúng). Lệch → lần xuất hiện đó không thành instance (ghi `detached` + lý do), màn vẫn dựng bằng layer rời. Trạng thái `proposed` kiểm tra tương phản WCAG như coverage.
+
+- [ ] **Step 1: Viết test**: mọi lần xuất hiện của fixture tái tạo đúng; ghi đè thiếu một màu → `detached` có lý do, không phải instance sai; trạng thái tắt có tương phản thấp vẫn được (WCAG miễn cho control tắt), trạng thái lỗi tương phản thấp → cảnh báo.
+- [ ] **Step 2–4:** FAIL → viết → PASS.
+- [ ] **Step 5: Commit** `feat(vuong-design): instances must rebuild the target spec, else detached`.
+
+### Task 6: Mã hoá và runtime component
+
+**Files:** `core/figma-encode.mjs`, `core/figma-runtime.js` (chỉ phần tạo instance), `core/figma-runtime-cmp.js` (mới), `core/figma.mjs` (`plan`: lô `cmp-NN` sau `vars`, trước màn), `test/fake-figma.mjs` (thêm component, component set, instance, property), test.
+
+- Lô `cmp-NN`: trang `--cmp-page` (mặc định `Components`), component icon trước, rồi component theo thứ tự phụ thuộc (nguyên tử → ghép), rồi `combineAsVariants`, rồi thuộc tính. Mỗi component có `vuongdesign/cmp` (tên), `vuongdesign/id` của node, `vuongdesign/sig`. Readback như màn (hộp, `d`), để kiểm tra component trên Figma thật như một màn.
+- Màn: node instance mã hoá `{ i: <chỉ số bảng K>, p: { thuộc tính }, ov: [ghi đè theo đường dẫn con] }`; bảng `K` mang tên component như `V`, `S`. Runtime màn: `importComponent` theo `vuongdesign/cmp` (tìm một lần mỗi lô), `createInstance`, `setProperties`, ghi đè, đặt ID cho con instance (theo `figma-facts.cmpData`; nếu `no` thì readback theo thứ tự cây và encoder ghi thứ tự đó).
+- `--no-components` (và không có `components.json`) → không có lô `cmp`, encoder không thay cây con.
+
+- [ ] **Step 1: Viết test** trên fake: lô cmp dựng đủ component / set / thuộc tính, chạy lại → không trùng; màn dùng instance có readback đủ mục theo ID spec (`instance readback`); `override kept`; component có node lỗi → instance của nó `detached` và màn vẫn dựng; `off is plan 3`: tắt → mọi lô Planora giống từng byte fixture kế hoạch 3; kích thước hai runtime ≤ 16 384 B mỗi file.
+- [ ] **Step 2–4:** FAIL → viết → PASS.
+- [ ] **Step 5: Commit** `feat(vuong-design): Figma components, variants, properties and screen instances`.
+
+### Task 7: Sửa tay component, `check` và lỗi cài
+
+**Files:** `core/figma.mjs`, `core/figma-check.mjs`, `core/mutate.mjs`, test.
+
+- `check` kiểm tra component như màn (trang Component) và màn dùng instance như cũ. Lỗi cài thêm: `figCmp` (đổi một thuộc tính trong component chính → mọi instance phải lệch và bị bắt), `figSwap` (đổi icon instance sang icon khác). Kind không có ứng viên → `skipped` như hiện tại.
+- Component bị sửa tay (`sig` khác) → `skippedEdited`, không ghi đè, báo cáo liệt kê màn dùng nó. `--force cmp:<tên>` ghi đè.
+
+- [ ] **Step 1: Viết test**: `edited component is kept`; `figCmp` và `figSwap` bị bắt trên fixture; component thiếu readback → mọi instance của nó `unchecked`, màn không đạt.
+- [ ] **Step 2–4:** FAIL → viết → PASS.
+- [ ] **Step 5: Commit** `feat(vuong-design): check components on Figma, edit guard and component mutations`.
+
+### Task 8: Nghiệm thu trên Figma thật (Planora)
+
+- [ ] **Step 1: Hỏi người dùng** phạm vi ghi (file "Planora Design", trang Components, các màn dựng lại bằng instance) và báo ước tính tổng thời gian từ `figma.mjs plan` (lô cmp, lô màn, ảnh, check). Chỉ làm tiếp khi được duyệt.
+- [ ] **Step 2: Chạy** `ds.mjs` → `components.mjs` → `figma.mjs plan` → `serve --send pending --shots` → `check --mutate`.
+- [ ] **Step 3: Ghi số** vào README: số component / biến thể / thuộc tính / instance, tỉ lệ node trong instance, số `detached` theo lý do, màn đạt (mục tiêu 18/18 với allowlist hiện có, không thêm mục allowlist mới nếu người dùng chưa duyệt), lỗi cài bắt / sót (mục tiêu 0 sót), thời gian trong Figma và KB gửi so với kế hoạch 3 (25,8 s, 167,5 KB).
+- [ ] **Step 4: Chạy lại không đổi gì** → không component, frame, biến trùng; sửa tay một component → `skippedEdited`, rồi `--force` đưa về.
+- [ ] **Step 5: Cập nhật** `figma-plan.md` của Planora (dòng kế hoạch 3b, danh sách component thật so với danh sách dự kiến). Không ghi thông tin cá nhân.
+- [ ] **Step 6: Commit** plugin `docs(vuong-design): plan 3b acceptance on real Figma` và Planora `docs(design): Planora components on Figma (plan 3b)`.
+
+## Câu hỏi mở cho người dùng (trả lời trước Task 2 Step 5)
+
+1. Ngưỡng ứng viên `min = 3` lần xuất hiện (theo bản thử) hay 2?
+2. Component chỉ dùng trong một màn có tách ra không (mặc định có, nếu đủ `min`)?
+3. Giá trị luật trạng thái mặc định ở Task 3 (lấy từ mục 10 của spec) có giữ nguyên cho Planora không?

@@ -16,9 +16,17 @@ Work in progress: this is the layout-engine skeleton.
 VD_PLAYWRIGHT_FROM=/path/to/dir node --test plugins/vuong-design/test/
 ```
 
-## Input profile
+## Input profile and lint
 
-Input HTML should follow [PROFILE.md](PROFILE.md) (`vd-html v1`); `core/lint.mjs` checks it.
+Input HTML should follow [PROFILE.md](PROFILE.md) (`vd-html v1`): screens marked `data-vd-screen`, tokens as CSS variables, flex layout, no scripts, `data:` images. Every rule has a code (`E1..E8` break the pipeline, `W1..W10` lower accuracy).
+
+```
+node plugins/vuong-design/core/lint.mjs --html <file> [--root <sel>] [--widen <sel>] [--out <dir>] [--strict] [--log <runs.jsonl>] [--json]
+```
+
+One page load and one widening (A, A + 120 px), no model, a few seconds. stdout is at most 15 lines (summary, the 10 worst finding groups, a pointer to `lint.json` in `--out`). Exit code 0 no errors, 1 errors (or warnings with `--strict`), 2 usage or setup error. It never modifies the HTML. `--log` appends `{ ts, tool: 'lint', file, ms, screens, error, warn }` to a JSONL file.
+
+Flow for new designs: `skills/spec-to-html` (spec to HTML, lint loop of at most 3 rounds) starting from `templates/starter.html`, then `layout.mjs` / `ds.mjs`, which run the lint gate first and need no `--root` for a profile file.
 
 ## Layout CLI
 

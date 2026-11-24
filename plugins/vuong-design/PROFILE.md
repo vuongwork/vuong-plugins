@@ -83,3 +83,21 @@ node core/lint.mjs --html <file> [--root <sel>] [--widen <sel>] [--out <dir>] [-
 stdout is at most 15 lines (summary, the 10 worst findings, a pointer to `lint.json`). Exit code: 0 no errors,
 1 errors (or warnings with `--strict`), 2 usage or setup error. `layout.mjs` / `ds.mjs` run the same check first and stop
 on errors unless `--no-lint` is passed.
+
+## Measured
+
+`lint.mjs` on the acceptance corpus (root/widen from `test/corpus.json`; wall time includes starting Chromium; finding
+groups per code, merged by code + screen + message):
+
+| File | Screens | Time | E | W |
+|---|---|---|---|---|
+| planora-ui-screens.html | 18 | 1.5 s | 0 | 22: W1 x11, W3 x7, W7 x4 |
+| 2026-11-05-ui-redesign-entry-mockup.html | 2 | 1.0 s | 0 | 8: W1 x2, W6 x2, W7 x4 |
+| calendar-layout.html | 2 | 0.6 s | 2: E6 x2 (Times New Roman, the browser default) | 3: W7 x3 |
+| calendar-layout-v2.html | 2 | 0.6 s | 0 | 8: W1 x2, W7 x4, W8 x2 |
+| calendar-layout-v3.html | 1 | 0.6 s | 0 | 6: W1 x1, W7 x4, W8 x1 |
+| templates/starter.html | 3 | 1.2 s | 0 | 0 |
+
+Planora: no errors; W3 fires on the `.say` rows (the avatar svg and the bubble shrink; s3 and s4 by capture ids), W7 shows
+the token gap (color 73 % on `var()`, spacing, radius and font-size 0 %). `layout.mjs --html templates/starter.html`
+(no `--root`): 3 of 3 screens pass.

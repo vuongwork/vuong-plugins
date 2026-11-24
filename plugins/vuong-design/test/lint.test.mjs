@@ -110,3 +110,10 @@ test('main: --json prints the full result', { skip }, async () => {
   assert.equal(await main(['--html', join(FIX, 'lint-clean.html'), '--json'], { browser, out: (m) => lines.push(m), log: () => {} }), 0);
   assert.equal(JSON.parse(lines.join('\n')).version, 1);
 });
+
+test('templates/starter.html: 0 errors, 0 warnings, every token group fully on var()', { skip }, async () => {
+  const r = await lintFile(join(FIX, '..', '..', 'templates', 'starter.html'), { browser });
+  assert.deepEqual(r.findings, []);
+  assert.deepEqual(r.screens.map((s) => s.id), ['S1', 'S2', 'S3']);
+  for (const g of ['color', 'space', 'radius', 'fontSize']) assert.equal(r.tokens[g].ratio, 1, g);
+});

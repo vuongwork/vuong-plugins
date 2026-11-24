@@ -35,6 +35,7 @@ lowers accuracy is a warning (`W`).
 
 - Flex. A stretching element uses `flex: 1` / `align-self: stretch` / `width: 100%`; a hugging element stays natural.
   Do not rely on flex-shrink: give a text block `min-width: 0; flex: 1` instead of letting it shrink.
+- A wrapping row (`flex-wrap`) must break at the same items at the checked widths (A and A + 120 px); a row that gains or loses a line when widened is not reproduced by the Figma model. Keep chip rows to one line, or few enough chips.
 - `position: absolute` only for overlays (FAB, badge, bottom bar), not as the main layout. No grid, float or table for
   screen layout.
 

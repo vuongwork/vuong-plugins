@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>vd-html v1 starter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Tokens: replace this block with the project tokens.css when there is one. Everything below uses var(--...) only. */
+:root{
+  --color-bg:#f6f4ef;
+  --color-surface:#ffffff;
+  --color-ink:#1d2433;
+  --color-muted:#6b7385;
+  --color-line:#e3e0d8;
+  --color-primary:#3d6b5c;
+  --color-on-primary:#ffffff;
+  --color-primary-soft:#dfeae5;
+  --color-scrim:rgba(20,27,51,0.45);
+  --space-1:4px;
+  --space-2:8px;
+  --space-3:12px;
+  --space-4:16px;
+  --space-5:20px;
+  --space-6:24px;
+  --space-7:32px;
+  --radius-sm:8px;
+  --radius-md:12px;
+  --radius-lg:20px;
+  --radius-full:999px;
+  --font-sans:"Be Vietnam Pro",sans-serif;
+  --size-caption:12px;
+  --size-caption-lh:16px;
+  --size-body:14px;
+  --size-body-lh:20px;
+  --size-title:18px;
+  --size-title-lh:24px;
+  --size-headline:24px;
+  --size-headline-lh:32px;
+  --shadow-card:0 1px 3px rgba(29,36,51,0.12);
+  --shadow-fab:0 4px 12px rgba(29,36,51,0.24);
+}
+
+/* page chrome (outside the screens) */
+body{margin:0;padding:var(--space-6);background:var(--color-bg);color:var(--color-ink);font-family:var(--font-sans);font-size:var(--size-body);line-height:var(--size-body-lh)}
+.board{display:flex;flex-wrap:wrap;gap:var(--space-6);align-items:flex-start}
+.frame{width:360px}
+
+/* screen */
+.screen{position:relative;display:flex;flex-direction:column;height:800px;overflow:hidden;background:var(--color-bg)}
+.content{flex:1;min-height:0;display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-4)}
+h1,h2,p{margin:0}
+.headline{font-size:var(--size-headline);line-height:var(--size-headline-lh);font-weight:700}
+.title{font-size:var(--size-title);line-height:var(--size-title-lh);font-weight:600}
+.caption{font-size:var(--size-caption);line-height:var(--size-caption-lh);color:var(--color-muted)}
+.icon{flex-shrink:0;color:var(--color-ink)}
+
+/* vd:component status-bar */
+.status-bar{display:flex;align-items:center;justify-content:space-between;height:24px;padding:0 var(--space-4);font-size:var(--size-caption);line-height:var(--size-caption-lh);font-weight:600}
+/* vd:component app-bar */
+.app-bar{display:flex;align-items:center;gap:var(--space-3);height:56px;padding:0 var(--space-4)}
+.app-bar .title{flex:1;min-width:0}
+/* vd:component list-row */
+.list{display:flex;flex-direction:column;background:var(--color-surface);border-radius:var(--radius-md);box-shadow:var(--shadow-card)}
+.row{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--color-line)}
+.row:last-child{border-bottom:0}
+.row-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--space-1)}
+.row-trailing{flex-shrink:0;color:var(--color-muted);font-size:var(--size-caption);line-height:var(--size-caption-lh)}
+/* vd:component chip-row */
+.chips{display:flex;flex-wrap:wrap;gap:var(--space-2)}
+.chip{padding:var(--space-1) var(--space-3);border-radius:var(--radius-full);background:var(--color-primary-soft);color:var(--color-primary);font-size:var(--size-caption);line-height:var(--size-caption-lh);font-weight:500}
+/* vd:component card */
+.card{display:flex;flex-direction:column;gap:var(--space-2);padding:var(--space-4);background:var(--color-surface);border-radius:var(--radius-md);box-shadow:var(--shadow-card)}
+/* vd:component primary-button */
+.btn{align-self:stretch;display:flex;align-items:center;justify-content:center;gap:var(--space-2);height:48px;border-radius:var(--radius-full);background:var(--color-primary);color:var(--color-on-primary);font-weight:600}
+.btn .icon{color:var(--color-on-primary)}
+/* vd:component bottom-nav */
+.nav{position:absolute;left:0;right:0;bottom:0;display:flex;height:64px;background:var(--color-surface);border-top:1px solid var(--color-line)}
+.nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-1);font-size:var(--size-caption);line-height:var(--size-caption-lh);color:var(--color-muted)}
+.nav-item.on{color:var(--color-primary)}
+.nav-item.on .icon{color:var(--color-primary)}
+/* vd:component fab */
+.fab{position:absolute;right:var(--space-4);bottom:80px;display:flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:var(--radius-full);background:var(--color-primary);box-shadow:var(--shadow-fab)}
+.fab .icon{color:var(--color-on-primary)}
+/* vd:component bottom-sheet */
+.scrim{position:absolute;left:0;top:0;right:0;bottom:0;background:var(--color-scrim)}
+.sheet{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-5) var(--space-4) var(--space-6);background:var(--color-surface);border-radius:var(--radius-lg) var(--radius-lg) 0 0}
+.grab{align-self:center;width:40px;height:4px;border-radius:var(--radius-full);background:var(--color-line)}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="ic-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="ic-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="ic-calendar" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 10h16M9 3v4M15 3v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+</svg>
+
+<div class="board">
+
+<!-- Screen 1: list -->
+<div class="frame" data-vd-widen>
+<div class="screen" data-vd-screen="S1" data-vd-name="Today">
+  <!-- vd:component status-bar -->
+  <div class="status-bar"><span>9:41</span><span>100%</span></div>
+  <!-- vd:component app-bar -->
+  <div class="app-bar"><h1 class="title">Today</h1><svg class="icon" width="24" height="24"><use href="#ic-calendar"/></svg></div>
+  <div class="content">
+    <!-- vd:component chip-row (a wrapping row must break at the same chips at width A and B, else the Figma model differs: keep it to one line, or few enough chips) -->
+    <div class="chips"><span class="chip">All</span><span class="chip">Work</span><span class="chip">Home</span></div>
+    <!-- vd:component list-row -->
+    <div class="list">
+      <div class="row"><svg class="icon" width="24" height="24"><use href="#ic-check"/></svg><div class="row-text"><p class="title">Review the weekly plan</p><p class="caption">Work, 30 minutes</p></div><span class="row-trailing">9:00</span></div>
+      <div class="row"><svg class="icon" width="24" height="24"><use href="#ic-check"/></svg><div class="row-text"><p class="title">Call the dentist about the appointment next week</p><p class="caption">Health</p></div><span class="row-trailing">11:30</span></div>
+      <div class="row"><svg class="icon" width="24" height="24"><use href="#ic-check"/></svg><div class="row-text"><p class="title">Buy groceries</p><p class="caption">Errands</p></div><span class="row-trailing">17:00</span></div>
+    </div>
+  </div>
+  <!-- vd:component fab -->
+  <div class="fab"><svg class="icon" width="24" height="24"><use href="#ic-plus"/></svg></div>
+  <!-- vd:component bottom-nav -->
+  <div class="nav">
+    <div class="nav-item on"><svg class="icon" width="24" height="24"><use href="#ic-check"/></svg><span>Today</span></div>
+    <div class="nav-item"><svg class="icon" width="24" height="24"><use href="#ic-calendar"/></svg><span>Plan</span></div>
+    <div class="nav-item"><svg class="icon" width="24" height="24"><use href="#ic-plus"/></svg><span>Inbox</span></div>
+  </div>
+</div>
+</div>
+
+<!-- Screen 2: detail with a card and a primary button -->
+<div class="frame" data-vd-widen>
+<div class="screen" data-vd-screen="S2" data-vd-name="Task detail">
+  <div class="status-bar"><span>9:41</span><span>100%</span></div>
+  <div class="app-bar"><h1 class="title">Task</h1></div>
+  <div class="content">
+    <h2 class="headline">Review the weekly plan</h2>
+    <!-- vd:component card -->
+    <div class="card">
+      <p class="title">Notes</p>
+      <p>Check the open items, move what will not fit, and pick the three that matter most.</p>
+      <div class="chips"><span class="chip">Work</span><span class="chip">30 minutes</span></div>
+    </div>
+    <!-- vd:component primary-button -->
+    <div class="btn"><svg class="icon" width="24" height="24"><use href="#ic-check"/></svg><span>Mark done</span></div>
+  </div>
+</div>
+</div>
+
+<!-- Screen 3: the bottom sheet is its own screen -->
+<div class="frame" data-vd-widen>
+<div class="screen" data-vd-screen="S3" data-vd-name="Add task sheet">
+  <div class="status-bar"><span>9:41</span><span>100%</span></div>
+  <div class="app-bar"><h1 class="title">Today</h1></div>
+  <!-- vd:component bottom-sheet -->
+  <div class="scrim"></div>
+  <div class="sheet">
+    <div class="grab"></div>
+    <h2 class="title">New task</h2>
+    <div class="card"><p class="caption">Title</p><p>What needs doing?</p></div>
+    <div class="btn"><span>Add</span></div>
+  </div>
+</div>
+</div>
+
+</div>
+</body>
+</html>

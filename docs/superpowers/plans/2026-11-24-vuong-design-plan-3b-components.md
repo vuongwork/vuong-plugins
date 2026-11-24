@@ -116,8 +116,16 @@ Bối cảnh (đo 2026-11-24): corpus và profile vd-html không có `role`, `ar
 
 Dựng trang HTML từ spec component (dùng renderer của norm proxy, `proxy.mjs`, không viết renderer thứ hai): mỗi component một hàng, mỗi biến thể / trạng thái một ô, nhãn nguồn (`html` / `proposed` / `missing`), số instance và màn dùng. Không tốn lượt gọi Figma. Mục "Component" trong báo cáo dùng tiếng Anh, có đơn vị (theo quy ước báo cáo hiện có).
 
-- [ ] **Step 1: Viết test**: trang có đủ ô cho mọi biến thể và trạng thái; ô `proposed` có nhãn; ô `missing` có lý do; trang tất định.
-- [ ] **Step 2–4:** FAIL → viết → PASS.
+Đã làm (2026-11-24):
+- CLI `core/cmp.mjs --ds <thư mục ds>` ghi `components.json`, `states.json` và `vd-components.draft.json`, cùng `components.html`.
+- Lệnh này còn thêm vào đầu ra của ds:
+  - mục `states` trong `vd-rules.draft.json`, gỡ đi khi luật đã duyệt;
+  - mục `components` trong `coverage.json`;
+  - một mục tóm tắt kèm liên kết trong `design-system.html`, nằm giữa hai dấu `<!--vd:components-->`.
+- Trang xem trước là một file riêng (`components.html`) để `design-system.html` khỏi nặng thêm. Mỗi ô là một iframe chứa trang proxy.
+
+- [x] **Step 1: Viết test**: trang có đủ ô cho mọi biến thể và trạng thái; ô `proposed` có nhãn; ô `missing` có lý do; trang tất định.
+- [x] **Step 2–4:** FAIL → viết → PASS.
 - [ ] **Step 5: Chạy trên Planora**, đưa người dùng duyệt bộ luật trạng thái và tên `ask`. Người dùng tự ghi câu trả lời vào `vd-rules.json` / `vd-components.json`.
 - [ ] **Step 6: Commit** `feat(vuong-design): component preview page with states and sources`.
 

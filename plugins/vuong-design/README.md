@@ -240,6 +240,33 @@ Planora (the same draft declaration, `vd-rules.json` without `states`; 5 ms):
 
 `cmp-1` to `cmp-3` have kind `other`, so `on` stays an extra state. Planora has no focus or error token, so focus is missing on both buttons.
 
+### Component CLI and preview
+
+```
+node core/cmp.mjs --ds <ds output dir> [--components <vd-components.json>] [--rules <vd-rules.json>]
+```
+
+This step runs after `ds.mjs`. It uses no browser, no Figma and no model. Defaults: `vd-components.json` and `vd-rules.json` in the current folder, when they exist. Both files are only read.
+
+It writes these files into the ds folder:
+
+- `components.json`, `states.json`, `vd-components.draft.json`.
+- A `states` section added to `vd-rules.draft.json`. The section is removed once the rules file has `"approved": true`.
+- `components` in `coverage.json`: the missing states with their reasons, and counts.
+- `components.html`: the preview.
+- A short "Components" section with a link, added to `design-system.html` between `<!--vd:components-->` markers. A rerun replaces it.
+
+The preview has one section per component:
+
+- one cell per HTML variant;
+- the proposed states, each with its rule in words;
+- the missing states, each with its reason;
+- the bare proposals, each with the `keep` line to copy;
+- the groups that are not components, with the reason;
+- the two drafts.
+
+Each cell is an `<iframe srcdoc>` that holds the proxy page (`proxy.mjs`) of one subtree. It is drawn on the fill behind the component in its screen. `stateSpec()` draws a proposed state's patch on a copy of the template. Planora run: 0.26 s, `components.html` 142 KB.
+
 ## Figma encoding
 
 `core/figma-encode.mjs` (plan 3 Task 4) turns each target spec (`spec-norm-<s>.json`) into compact data for the Figma builder: one-letter keys, Figma defaults left out, shared tables (`C` colours, `F` fonts, `I` icons, `V` variable names, `S` style names, `M` image sources), variable bindings as indices into `V` from `token-map.json`, and the spec id `o` on every node. The full format is in the file's header comment. `planBatches` packs screens in order into `use_figma` calls of at most 50 000 bytes (UTF-8, builder + data). Each batch carries only the table entries it uses. A screen too big to fit on its own throws `OversizeError` (screen, bytes); it is never cut.

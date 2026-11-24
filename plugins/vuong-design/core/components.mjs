@@ -10,7 +10,7 @@
 //   proposed: [{ key, count, screens, nodes }], skipped: [{ key, count, reason, nodes? }], warnings: [string] }
 //
 // decl = readComponentsFile('vd-components.json'): what the user declared per base class (kind, extra state classes,
-// modifier classes as variant axes, name), bare groups to keep and component names to drop. Nothing is guessed: the
+// modifier classes as variant axes, name, shapes, stateMap: { class: state id } read by states.mjs), bare groups to keep and component names to drop. Nothing is guessed: the
 // corpus and the vd-html profile carry no role / aria / data-state / button / input (measured 2026-11-24), and
 // Planora marks controls and states with short classes (btn, ck, tog, on, off, done), so kinds, extra states and
 // modifiers only come from the declaration. componentsDraft() writes suggestions the user may copy.
@@ -96,11 +96,12 @@ function checkDecl(j, where) {
   if (j.classes !== undefined && !isObj(j.classes)) throw new Error(`${where}: "classes" must be an object`);
   for (const [c, d] of Object.entries(j.classes || {})) {
     if (!isObj(d)) throw new Error(`${where}: classes.${c} must be an object`);
-    for (const k of Object.keys(d)) if (!['kind', 'states', 'variants', 'name', 'shapes'].includes(k)) throw new Error(`${where}: classes.${c}: unknown key "${k}"`);
+    for (const k of Object.keys(d)) if (!['kind', 'states', 'variants', 'name', 'shapes', 'stateMap'].includes(k)) throw new Error(`${where}: classes.${c}: unknown key "${k}"`);
     if (d.kind !== undefined && !KINDS.includes(d.kind)) throw new Error(`${where}: classes.${c}.kind "${d.kind}" is not one of ${KINDS.join(', ')}`);
     if (d.states !== undefined && !strs(d.states)) throw new Error(`${where}: classes.${c}.states must be a list of class names`);
     if (d.variants !== undefined && (!isObj(d.variants) || !Object.values(d.variants).every(strs))) throw new Error(`${where}: classes.${c}.variants must map an axis to a list of class names`);
     if (d.shapes !== undefined && !SHAPES.includes(d.shapes)) throw new Error(`${where}: classes.${c}.shapes "${d.shapes}" is not one of ${SHAPES.join(', ')}`);
+    if (d.stateMap !== undefined && (!isObj(d.stateMap) || !Object.values(d.stateMap).every((v) => typeof v === 'string' && v))) throw new Error(`${where}: classes.${c}.stateMap must map a class to a state id (states.mjs STATE_TABLE)`);
     if (d.name !== undefined && (typeof d.name !== 'string' || !d.name)) throw new Error(`${where}: classes.${c}.name must be a non-empty string`);
     out.classes[c] = JSON.parse(JSON.stringify(d));
   }

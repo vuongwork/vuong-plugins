@@ -2,7 +2,8 @@
 // root by default (`--rules` to change). Scripts only read it; the answers are written by the user (or an AI on the
 // user's word). rulesTemplate() builds a draft the CLI writes under `--out`, never to the rules path.
 //
-//  - readRules(path) -> { version: 1, answers: { [question key]: option value }, notes? }. A missing file (or no path)
+//  - readRules(path) -> { version: 1, answers: { [question key]: option value }, notes?, states? }. `states` (plan 3b
+//    Task 3) holds the component state rules; only its type is checked here, its keys by states.mjs stateRules(). A missing file (or no path)
 //    is the empty rule set { version: 1, answers: {} }. Invalid JSON, a top-level value that is not an object, a
 //    missing or wrong `version`, an unknown top-level key, or `answers` / `notes` that are not objects throw an Error
 //    naming the file and the key. Whether an answer is one of its question's options is checked by normalize (it
@@ -14,7 +15,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 
 export const RULES_VERSION = 1;
-const TOP = new Set(['version', 'answers', 'notes']);
+const TOP = new Set(['version', 'answers', 'notes', 'states']);
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
 export function readRules(path) {
@@ -31,8 +32,10 @@ export function readRules(path) {
   if (j.version !== RULES_VERSION) throw new Error(`rules file ${path}: "version" is ${JSON.stringify(j.version)}, expected ${RULES_VERSION}`);
   if (j.answers !== undefined && !isObj(j.answers)) throw new Error(`rules file ${path}: "answers" must be an object`);
   if (j.notes !== undefined && !isObj(j.notes)) throw new Error(`rules file ${path}: "notes" must be an object`);
+  if (j.states !== undefined && !isObj(j.states)) throw new Error(`rules file ${path}: "states" must be an object`);
   const out = { version: RULES_VERSION, answers: { ...(j.answers || {}) } };
   if (j.notes) out.notes = { ...j.notes };
+  if (j.states) out.states = JSON.parse(JSON.stringify(j.states));
   return out;
 }
 

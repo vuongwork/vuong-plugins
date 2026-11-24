@@ -210,6 +210,36 @@ Planora (18 screens, 1155 spec nodes, ds run of 2026-11-24 with `vd-rules.json`;
 
 With the draft, `btn` is one button with 4 variants (33 uses on 12 screens), `ck` one checkbox with 6 variants (state x size / form, 18 uses), `chip` one chip with 4 variants (15 uses), `tog` a switch (3 uses), `fab` a button (6 uses). Structures per class: `card` 32 uses in 19 shapes (a generic container: different content each time), `li` 35 in 16, `set` 15 in 2 (13 text rows, 2 switch rows), `nav` 6 in 2. Part of `li`'s count comes from infer wrapping the checkbox in a synthetic frame on some rows and not on others; whether matching may look through synthetic frames is decided in Task 5, where `expandInstance` checks each rebuilt instance. Three bare state groups are components named `cmp-1` to `cmp-3`: two kinds of bottom-nav item (`a` under `.nav`, two structures, so two bare keys) and the segment item (`div` under `.seg`), each with `default` / `on`: a name comes with `keep` in the declaration. The draft also warns that `bottom btn p` carries two declared base classes (`bottom` is used).
 
+### States
+
+`core/states.mjs` (plan 3b Task 3) gives each component the states of its kind and says where each one comes from. Kinds and their states (mobile, so no hover): button: default, pressed, disabled, loading, focus. Input: empty, focus, filled, error, disabled. Checkbox: unchecked, checked, disabled. Radio, chip: unselected, selected, disabled. Switch: off, on, disabled. Tab: unselected, selected. `other` has no table, and its HTML state classes are kept as they are.
+
+- **html:** a variant from the HTML is in that state. The base state is a variant with no state class. State classes map by name: `on`, `checked`, `selected`, `active` and `current` map to the kind's "on" state, `is-disabled` to disabled, and so on. `stateMap` in `vd-components.json` maps a class the names do not cover, for example `done` to `checked`. An unmapped class is kept as an `extra` state, with a warning.
+- **proposed:** a rule draws the state on each variant that is in the base state. The rules, with the spec §10 defaults:
+
+  | State | Rule (default) |
+  |---|---|
+  | pressed | overlay in the content colour at 10 % |
+  | disabled | content at 38 % opacity; root fill and stroke at 12 % |
+  | focus | 2 px ring in the focus token |
+  | error | root stroke in the error token |
+  | loading | labels replaced by a spinner of the label's size and colour |
+
+  The values sit in `vd-rules.json` under `states`. `statesDraft()` writes them with `approved` empty. Proposed states go to Figma (`forFigma()`) only after the user sets `"approved": true`. Agents never write that.
+- **missing:** no rule exists for the state (checked, selected, on, filled, empty: draw them in the HTML), or the rule needs something the design system lacks: a focus or error token, a label, a content colour. Each entry has its reason and is listed for coverage.
+
+Planora (the same draft declaration, `vd-rules.json` without `states`; 5 ms):
+
+| Component | Kind | States |
+|---|---|---|
+| `btn` | button | default from HTML; pressed, disabled, loading proposed (12 proposed variants over 4 variants); focus missing (no focus token) |
+| `ck` | checkbox | unchecked and checked from HTML (`on`); disabled proposed |
+| `chip` | chip | unselected from HTML; disabled proposed; selected missing (no state class on any chip) |
+| `tog` | switch | off from HTML; disabled proposed; on missing |
+| `fab` | button | default from HTML; pressed, disabled proposed; loading missing (icon only, no label); focus missing |
+
+`cmp-1` to `cmp-3` have kind `other`, so `on` stays an extra state. Planora has no focus or error token, so focus is missing on both buttons.
+
 ## Figma encoding
 
 `core/figma-encode.mjs` (plan 3 Task 4) turns each target spec (`spec-norm-<s>.json`) into compact data for the Figma builder: one-letter keys, Figma defaults left out, shared tables (`C` colours, `F` fonts, `I` icons, `V` variable names, `S` style names, `M` image sources), variable bindings as indices into `V` from `token-map.json`, and the spec id `o` on every node. The full format is in the file's header comment. `planBatches` packs screens in order into `use_figma` calls of at most 50 000 bytes (UTF-8, builder + data). Each batch carries only the table entries it uses. A screen too big to fit on its own throws `OversizeError` (screen, bytes); it is never cut.

@@ -99,10 +99,16 @@ Bối cảnh (đo 2026-11-24): corpus và profile vd-html không có `role`, `ar
 - Bảng trạng thái theo loại (mục 10; mobile không có hover): nút: thường, nhấn, tắt, đang tải, focus; ô nhập: trống, focus, đã nhập, lỗi, tắt; ô tích: chưa tích, đã tích, tắt; radio: chọn, chưa chọn, tắt; công tắc: bật, không bật, tắt; chip: chọn, chưa chọn, tắt; tab: chọn, chưa chọn. "Tắt" = disabled.
 - Nguồn từng trạng thái, theo thứ tự: biến thể đã có từ HTML (Task 2) → `html`; không có → sinh theo luật trong `vd-rules.json` mục `states` (mặc định của spec: nhấn = lớp phủ màu chữ 10%; tắt = nội dung 38%, nền 12%; focus = viền 2 px token focus; lỗi = token lỗi; đang tải = thay nhãn bằng vòng quay) → `proposed`; luật cần token chưa có (không có token focus / lỗi) → `missing`, ghi vào `coverage.json`, không vẽ.
 - Mặc định của luật vào `vd-rules.draft.json` mục `states` với `approved` trống.
+- Đã làm (2026-11-24):
+  - `rules-file.mjs` nhận mục `states`. `stateRules()` kiểm từng khoá.
+  - Class trạng thái được ánh xạ sang tên trạng thái theo từ (`on` / `checked` / `selected` → trạng thái "bật" của loại).
+  - Class không ánh xạ được thì giữ là trạng thái `extra` và có cảnh báo. Người dùng ánh xạ bằng `classes.<gốc>.stateMap` trong `vd-components.json` (khoá mới).
+  - Token focus / lỗi: tìm theo tên role, hoặc người dùng ghi đường dẫn token trong luật.
+  - Ghi `vd-rules.draft.json` và `coverage.json` từ bước component: để ở lệnh CLI của Task 4. `ds.mjs` không đổi, nên bản nháp của kế hoạch 2–3 vẫn giống từng byte.
 
-- [ ] **Step 1: Viết test**: nút chỉ có trạng thái thường trong HTML → 4 trạng thái `proposed` đúng giá trị; nút có `is-disabled` trong HTML → trạng thái tắt là `html`, không sinh; không có token lỗi → ô nhập lỗi `missing` và có trong coverage; luật chưa duyệt → không có trạng thái `proposed` nào trong dữ liệu gửi Figma.
-- [ ] **Step 2–4:** FAIL → viết → PASS.
-- [ ] **Step 5: Commit** `feat(vuong-design): component kinds and state table (html, proposed by rules, missing)`.
+- [x] **Step 1: Viết test**: nút chỉ có trạng thái thường trong HTML → 4 trạng thái `proposed` đúng giá trị; nút có `is-disabled` trong HTML → trạng thái tắt là `html`, không sinh; không có token lỗi → ô nhập lỗi `missing` và có trong coverage; luật chưa duyệt → không có trạng thái `proposed` nào trong dữ liệu gửi Figma.
+- [x] **Step 2–4:** FAIL → viết → PASS.
+- [x] **Step 5: Commit** `feat(vuong-design): component kinds and state table (html, proposed by rules, missing)`.
 
 ### Task 4: Trang xem trước component (trên máy)
 

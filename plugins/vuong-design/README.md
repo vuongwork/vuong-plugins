@@ -178,6 +178,20 @@ They are used (plan 3 Task 2) by `inferScreen(screen, { facts })`, which handles
 
 Every fact matches the current assumptions, so nothing in the model changes; the numbers are recorded so a later Figma change shows up by re-running the probe.
 
+### Component facts (plan 3b)
+
+`cmpProbePayload()` (9.5 KB, one bridge job) probes the component API on `_vd-probe`. Everything it makes is named `cmp-*` and placed at y 3000 px or below, and its temporary variable collection is `vd-probe-tmp`. A `finally` block removes all of it; the result reports `cleaned`. `readCmpFacts` turns the result into the `cmp` key of `core/figma-facts.json`; each case falls back to the safe side (`no` / `false`) when a value is missing. Measured 2026-11-24 through the bridge: 3.4 s, no errors, `cleaned: true`.
+
+| Case | Measured | Fact |
+|---|---|---|
+| `data` (shared plugin data on an instance's child) | read through the instance before any set: `main.t` (inherited); set on the instance child: `inst.t`, while the main and another instance still read `main.t`; the child id has the form `I<instance id>;<child id>` | `data: own`, `idPattern: true` |
+| `props` (component set `state=default` / `state=selected`) | TEXT, BOOLEAN and INSTANCE_SWAP properties set and read back; variant switched; a direct fill override on the instance kept after `setProperties` | all `true` |
+| `layout` (row and chip components, 8 nodes, columns 300 px and 360 px) | largest box difference instance vs plain frames: 0 px at 300 px, 0 px at 360 px (row height 32 px) | `layout: ok`, `layoutMax: 0` |
+| `bind` (fill and paddingLeft bound to variables on the main) | both bindings inherited (paddingLeft 12 px); fill rebound on the instance | `bind: ok` |
+| `time` (20 rows) | instances 412 ms, plain frame trees 815 ms | `timeMs` |
+
+Every case is favourable, so plan 3b keeps its design: ids on instance children through plugin data, component properties for text, booleans and icons, and instances in screens.
+
 ## Figma encoding
 
 `core/figma-encode.mjs` (plan 3 Task 4) turns each target spec (`spec-norm-<s>.json`) into compact data for the Figma builder: one-letter keys, Figma defaults left out, shared tables (`C` colours, `F` fonts, `I` icons, `V` variable names, `S` style names, `M` image sources), variable bindings as indices into `V` from `token-map.json`, and the spec id `o` on every node. The full format is in the file's header comment. `planBatches` packs screens in order into `use_figma` calls of at most 50 000 bytes (UTF-8, builder + data). Each batch carries only the table entries it uses. A screen too big to fit on its own throws `OversizeError` (screen, bytes); it is never cut.

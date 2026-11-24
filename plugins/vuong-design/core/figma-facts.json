@@ -11,5 +11,24 @@
     "maxWidth": "ok",
     "growText": "ok"
   },
-  "baseline": "ok"
+  "baseline": "ok",
+  "cmp": {
+    "measured": "2026-11-24",
+    "data": "own",
+    "idPattern": true,
+    "props": {
+      "text": true,
+      "bool": true,
+      "swap": true,
+      "variant": true,
+      "override": true
+    },
+    "layout": "ok",
+    "layoutMax": 0,
+    "bind": "ok",
+    "timeMs": {
+      "inst": 412,
+      "plain": 815
+    }
+  }
 }

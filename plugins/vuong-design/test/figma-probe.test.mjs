@@ -125,3 +125,67 @@ test('loadFacts: missing file -> DEFAULT_FACTS; present file overrides', () => {
   assert.equal(g.scaleInHug, 'ok');
   assert.deepEqual(g.shrinkFill, { maxWidth: 'ok', growText: 'ok' });
 });
+
+// ---- plan 3b Task 1: component API probe ----
+const cmpBase = () => ({
+  errors: [], cleaned: true,
+  cases: {
+    data: { inherit: 'main.t', own: 'inst.t', ownErr: '', other: 'main.t', mainAfter: 'main.t', idPattern: true },
+    props: { text: true, bool: true, swap: true, variant: true, override: true, keys: ['label#1:0', 'showDot#1:1', 'icon#1:2'] },
+    layout: { d300: 0, d360: 0.004, n: 8, h300: 32 },
+    bind: { fillInherit: true, padInherit: true, padValue: 12, fillOverride: true },
+    time: { inst: 40, plain: 90 },
+  },
+});
+
+test('cmpProbePayload: <= 20 KB, valid async body, only touches its own cmp-* nodes and removes them', async () => {
+  const { cmpProbePayload } = await import('../core/figma-probe.mjs');
+  const src = cmpProbePayload();
+  assert.ok(Buffer.byteLength(src) <= 20000, 'payload size ' + Buffer.byteLength(src));
+  assert.doesNotThrow(() => new AsyncFunction('figma', src));
+  assert.match(src, /_vd-probe/);
+  assert.match(src, /if \(\/\^cmp-\/\.test\(n\.name\)\) n\.remove\(\)/, 'clears only its own leftovers');
+  assert.doesNotMatch(src, /for \(const n of \[\.\.\.page\.children\]\) n\.remove\(\)/, 'never clears the whole page');
+  assert.match(src, /finally \{/);
+  assert.match(src, /return \{ cases, errors, cleaned/);
+});
+
+test('readCmpFacts: a full good result gives own data, every property, ok layout and bindings', async () => {
+  const { readCmpFacts } = await import('../core/figma-probe.mjs');
+  assert.deepEqual(readCmpFacts(cmpBase(), '2026-11-24'), {
+    measured: '2026-11-24', data: 'own', idPattern: true,
+    props: { text: true, bool: true, swap: true, variant: true, override: true },
+    layout: 'ok', layoutMax: 0.004, bind: 'ok', timeMs: { inst: 40, plain: 90 },
+  });
+});
+
+test('readCmpFacts: each case falls to the safe side on its own', async () => {
+  const { readCmpFacts } = await import('../core/figma-probe.mjs');
+  const r = cmpBase();
+  r.cases.data = { inherit: 'main.t', own: '', ownErr: 'Cannot set plugin data on instance sublayer', other: 'main.t', mainAfter: 'main.t', idPattern: true };
+  assert.equal(readCmpFacts(r).data, 'inherit');
+  r.cases.data = { inherit: '', own: 'inst.t', other: 'inst.t', mainAfter: 'inst.t', idPattern: false };
+  assert.equal(readCmpFacts(r).data, 'no', 'an instance write that leaks to the main or another instance is not own');
+  assert.equal(readCmpFacts(r).idPattern, false);
+  const p = cmpBase(); p.cases.props.override = false; p.cases.props.swap = 'yes';
+  assert.deepEqual(readCmpFacts(p).props, { text: true, bool: true, swap: false, variant: true, override: false });
+  const l = cmpBase(); l.cases.layout = { d300: 0.3, d360: 0.01 };
+  assert.equal(readCmpFacts(l).layout, 'near');
+  l.cases.layout = { d300: 0, d360: 2 };
+  assert.equal(readCmpFacts(l).layout, 'no');
+  const b = cmpBase(); b.cases.bind.fillOverride = false;
+  assert.equal(readCmpFacts(b).bind, 'no');
+});
+
+test('readCmpFacts: missing cases keep the defaults; loadFacts merges a partial cmp over them', async () => {
+  const { readCmpFacts } = await import('../core/figma-probe.mjs');
+  assert.deepEqual(readCmpFacts({ cases: {}, errors: ['data: boom'] }), { ...DEFAULT_FACTS.cmp, props: { ...DEFAULT_FACTS.cmp.props } });
+  const d = mkdtempSync(join(tmpdir(), 'vdfacts-'));
+  const p = join(d, 'facts.json');
+  writeFileSync(p, JSON.stringify({ version: 1, measured: '2026-11-23', cmp: { data: 'own', props: { text: true } } }));
+  const g = loadFacts(p);
+  assert.equal(g.cmp.data, 'own');
+  assert.equal(g.cmp.layout, 'no');
+  assert.deepEqual(g.cmp.props, { text: true, bool: false, swap: false, variant: false, override: false });
+  assert.equal(g.lineHeightFrac, 'keep');
+});

@@ -25,6 +25,18 @@ export const DEFAULT_FACTS = Object.freeze({
   strokeOverlay: 'ok', // strokesIncludedInLayout=false + absolute overlay leaves the cell size unchanged
   shrinkFill: Object.freeze({ maxWidth: 'ok', growText: 'ok' }),
   baseline: 'ok', // counterAxisAlignItems BASELINE aligns text baselines within 0.5 px
+  // plan 3b Task 1 (cmpProbePayload / readCmpFacts): the component API. Defaults are the safe side (nothing assumed):
+  // plan 3b reads instance children in tree order and sets no property it has not measured.
+  cmp: Object.freeze({
+    measured: null,
+    data: 'no', // 'own': an instance child keeps its own shared plugin data; 'inherit': it only reads the main's; 'no'
+    idPattern: false, // instance child id = 'I' + instance id + ';' + main child id
+    props: Object.freeze({ text: false, bool: false, swap: false, variant: false, override: false }),
+    layout: 'no', // 'ok': instances lay out as the same plain frames (<= 0.01 px); 'near' (<= 0.5 px); 'no'
+    layoutMax: null, // the largest box difference measured (px)
+    bind: 'no', // 'ok': a variable bound on the main is bound on the instance, and an instance override binds another
+    timeMs: null, // { inst, plain }: 20 instances vs 20 plain trees of the same content
+  }),
 });
 
 const PROBE_SRC = `
@@ -175,6 +187,197 @@ return { cases, errors };
 
 export function probePayload() { return PROBE_SRC.trim() + '\n'; }
 
+// ---- plan 3b Task 1: component API probe ----
+// cmpProbePayload(): like probePayload, on page `_vd-probe`, but it only touches what it creates: it first removes
+// its own leftovers (top-level nodes named `cmp-*`, variable collections named `vd-probe-tmp`), and removes every node
+// and the variable collection it made before it returns (`cleaned: true`). It returns
+// { cases: { data, props, layout, bind, time }, errors, cleaned }.
+const CMP_PROBE_SRC = `
+const page = figma.root.children.find((p) => p.name === '_vd-probe') || figma.createPage();
+page.name = '_vd-probe';
+await figma.setCurrentPageAsync(page);
+for (const n of [...page.children]) if (/^cmp-/.test(n.name)) n.remove();
+for (const c of await figma.variables.getLocalVariableCollectionsAsync()) if (c.name === 'vd-probe-tmp') c.remove();
+await figma.loadFontAsync({ family: 'Inter', style: 'Regular' });
+const FONT = { family: 'Inter', style: 'Regular' };
+const solid = (r, g, b) => ({ type: 'SOLID', color: { r, g, b } });
+const cases = {}, errors = [], made = [], cols = [];
+let cy = 3000;
+const top = (n, name, h) => { n.name = name; page.appendChild(n); n.x = 0; n.y = cy; cy += (h || 200) + 60; made.push(n); return n; };
+const txt = (s, parent) => { const t = figma.createText(); t.fontName = FONT; t.fontSize = 13; parent.appendChild(t); t.characters = s; return t; };
+const box = (n) => n.absoluteBoundingBox;
+const run = async (k, fn) => { try { cases[k] = await fn(); } catch (e) { errors.push(k + ': ' + ((e && e.message) || e)); } };
+const LONG = 'A task title long enough to wrap onto a second line in this row';
+
+// a row: auto layout H, padding 8, gap 6, centred; a 16 x 16 icon frame and a FILL text (HEIGHT autosize)
+const row = (n) => {
+  n.layoutMode = 'HORIZONTAL'; n.counterAxisAlignItems = 'CENTER';
+  n.paddingLeft = n.paddingRight = n.paddingTop = n.paddingBottom = 8; n.itemSpacing = 6;
+  n.fills = [solid(0.93, 0.93, 0.93)]; n.clipsContent = false;
+  const ic = figma.createFrame(); ic.fills = [solid(0, 0, 0)]; n.appendChild(ic);
+  ic.layoutSizingHorizontal = 'FIXED'; ic.layoutSizingVertical = 'FIXED'; ic.resize(16, 16);
+  const t = txt('Task title', n); t.layoutSizingHorizontal = 'FILL'; t.textAutoResize = 'HEIGHT';
+  n.layoutSizingHorizontal = 'FIXED'; n.layoutSizingVertical = 'HUG'; n.resize(200, n.height);
+  return n;
+};
+// a chip: auto layout H, HUG both, padding 4 / 10, a WIDTH_AND_HEIGHT text
+const chip = (n) => {
+  n.layoutMode = 'HORIZONTAL'; n.paddingLeft = n.paddingRight = 10; n.paddingTop = n.paddingBottom = 4;
+  n.fills = [solid(0.85, 0.9, 1)]; n.clipsContent = false;
+  const t = txt('Chip', n); t.textAutoResize = 'WIDTH_AND_HEIGHT';
+  n.layoutSizingHorizontal = 'HUG'; n.layoutSizingVertical = 'HUG';
+  return n;
+};
+const column = (name, w) => {
+  const f = figma.createFrame(); top(f, name, 400);
+  f.layoutMode = 'VERTICAL'; f.itemSpacing = 4; f.fills = []; f.clipsContent = false;
+  f.layoutSizingHorizontal = 'FIXED'; f.layoutSizingVertical = 'HUG'; f.resize(w, f.height);
+  return f;
+};
+
+try {
+  await run('data', async () => {
+    const c = chip(figma.createComponent()); top(c, 'cmp-data', 40);
+    c.children[0].setSharedPluginData('vuongdesign', 'id', 'main.t');
+    const i1 = c.createInstance(); top(i1, 'cmp-data-i1', 40);
+    const i2 = c.createInstance(); top(i2, 'cmp-data-i2', 40);
+    const inherit = i1.children[0].getSharedPluginData('vuongdesign', 'id');
+    let own = '', ownErr = '';
+    try { i1.children[0].setSharedPluginData('vuongdesign', 'id', 'inst.t'); own = i1.children[0].getSharedPluginData('vuongdesign', 'id'); } catch (e) { ownErr = String((e && e.message) || e); }
+    const other = i2.children[0].getSharedPluginData('vuongdesign', 'id');
+    const pat = (i) => i.children[0].id === 'I' + i.id + ';' + c.children[0].id;
+    return { inherit, own, ownErr, other, mainAfter: c.children[0].getSharedPluginData('vuongdesign', 'id'), idPattern: pat(i1) && pat(i2) };
+  });
+
+  await run('props', async () => {
+    const ic1 = figma.createComponent(); top(ic1, 'cmp-icon-a', 16); ic1.resize(16, 16); ic1.fills = [solid(1, 0, 0)];
+    const ic2 = figma.createComponent(); top(ic2, 'cmp-icon-b', 16); ic2.resize(16, 16); ic2.fills = [solid(0, 0, 1)];
+    const mk = (name) => {
+      const c = chip(figma.createComponent()); c.name = name; page.appendChild(c);
+      const dot = figma.createFrame(); dot.name = 'dot'; dot.fills = [solid(0, 0.6, 0)]; c.appendChild(dot); dot.resize(6, 6);
+      const ii = ic1.createInstance(); ii.name = 'icon'; c.insertChild(0, ii);
+      return c;
+    };
+    const c1 = mk('state=default'), c2 = mk('state=selected');
+    c2.fills = [solid(0.2, 0.4, 1)];
+    const set = figma.combineAsVariants([c1, c2], page); top(set, 'cmp-set', 80);
+    const kT = set.addComponentProperty('label', 'TEXT', 'Chip');
+    const kB = set.addComponentProperty('showDot', 'BOOLEAN', true);
+    const kS = set.addComponentProperty('icon', 'INSTANCE_SWAP', ic1.id);
+    for (const c of [c1, c2]) {
+      c.findChild((n) => n.type === 'TEXT').componentPropertyReferences = { characters: kT };
+      c.findChild((n) => n.name === 'dot').componentPropertyReferences = { visible: kB };
+      c.findChild((n) => n.name === 'icon').componentPropertyReferences = { mainComponent: kS };
+    }
+    const inst = c1.createInstance(); top(inst, 'cmp-props-i', 40);
+    const tx = () => inst.findChild((n) => n.type === 'TEXT');
+    tx().fills = [solid(1, 0, 0)]; // a direct override, not through a property
+    inst.setProperties({ [kT]: 'Hello', [kB]: false, [kS]: ic2.id });
+    const r = {
+      text: tx().characters === 'Hello',
+      bool: inst.findChild((n) => n.name === 'dot').visible === false,
+      swap: !!inst.findChild((n) => n.name === 'icon') && (await inst.findChild((n) => n.name === 'icon').getMainComponentAsync()).id === ic2.id,
+    };
+    inst.setProperties({ state: 'selected' });
+    r.variant = (await inst.getMainComponentAsync()).id === c2.id;
+    inst.setProperties({ [kT]: 'Again' });
+    const f = tx().fills[0];
+    r.override = !!f && f.type === 'SOLID' && f.color.r === 1 && f.color.g === 0 && f.color.b === 0 && tx().characters === 'Again';
+    r.keys = [kT, kB, kS];
+    return r;
+  });
+
+  await run('layout', async () => {
+    const rc = row(figma.createComponent()); top(rc, 'cmp-row', 40);
+    const cc = chip(figma.createComponent()); top(cc, 'cmp-chip', 40);
+    const P1 = column('cmp-col-inst', 300), P2 = column('cmp-col-plain', 300);
+    const add = (P, inst) => {
+      const a = inst ? rc.createInstance() : row(figma.createFrame()); P.appendChild(a); a.layoutSizingHorizontal = 'FILL';
+      const b = inst ? rc.createInstance() : row(figma.createFrame()); P.appendChild(b); b.layoutSizingHorizontal = 'FILL';
+      b.children[1].characters = LONG;
+      const c = inst ? cc.createInstance() : chip(figma.createFrame()); P.appendChild(c);
+      c.children[0].characters = 'A longer chip label';
+      return [a, a.children[0], a.children[1], b, b.children[0], b.children[1], c, c.children[0]];
+    };
+    const A = add(P1, true), B = add(P2, false);
+    const diff = () => {
+      let m = 0;
+      A.forEach((n, i) => {
+        const a = box(n), b = box(B[i]), pa = box(P1), pb = box(P2);
+        m = Math.max(m, Math.abs((a.x - pa.x) - (b.x - pb.x)), Math.abs((a.y - pa.y) - (b.y - pb.y)), Math.abs(a.width - b.width), Math.abs(a.height - b.height));
+      });
+      return Math.round(m * 1000) / 1000;
+    };
+    const d300 = diff();
+    P1.resize(360, P1.height); P2.resize(360, P2.height);
+    return { d300, d360: diff(), n: A.length, h300: box(A[5]).height };
+  });
+
+  await run('bind', async () => {
+    const col = figma.variables.createVariableCollection('vd-probe-tmp'); cols.push(col);
+    const m = col.modes[0].modeId;
+    const v1 = figma.variables.createVariable('probe/c1', col, 'COLOR'); v1.setValueForMode(m, { r: 1, g: 0, b: 0, a: 1 });
+    const v2 = figma.variables.createVariable('probe/c2', col, 'COLOR'); v2.setValueForMode(m, { r: 0, g: 0, b: 1, a: 1 });
+    const vp = figma.variables.createVariable('probe/p', col, 'FLOAT'); vp.setValueForMode(m, 12);
+    const c = chip(figma.createComponent()); top(c, 'cmp-bind', 40);
+    c.fills = [figma.variables.setBoundVariableForPaint(solid(0, 0, 0), 'color', v1)];
+    c.setBoundVariable('paddingLeft', vp);
+    const inst = c.createInstance(); top(inst, 'cmp-bind-i', 40);
+    const fv = (n) => (n.fills[0] && n.fills[0].boundVariables && n.fills[0].boundVariables.color ? n.fills[0].boundVariables.color.id : '');
+    const pv = (n) => (n.boundVariables && n.boundVariables.paddingLeft ? n.boundVariables.paddingLeft.id : '');
+    const r = { fillInherit: fv(inst) === v1.id, padInherit: pv(inst) === vp.id, padValue: inst.paddingLeft };
+    inst.fills = [figma.variables.setBoundVariableForPaint(solid(0, 0, 0), 'color', v2)];
+    r.fillOverride = fv(inst) === v2.id && fv(c) === v1.id;
+    return r;
+  });
+
+  await run('time', async () => {
+    const rc = row(figma.createComponent()); top(rc, 'cmp-time-row', 40);
+    const P3 = column('cmp-time-inst', 300), P4 = column('cmp-time-plain', 300);
+    let t0 = Date.now();
+    for (let i = 0; i < 20; i++) { const a = rc.createInstance(); P3.appendChild(a); a.layoutSizingHorizontal = 'FILL'; a.children[1].characters = 'Task ' + i; }
+    const inst = Date.now() - t0;
+    t0 = Date.now();
+    for (let i = 0; i < 20; i++) { const a = row(figma.createFrame()); P4.appendChild(a); a.layoutSizingHorizontal = 'FILL'; a.children[1].characters = 'Task ' + i; }
+    return { inst, plain: Date.now() - t0 };
+  });
+} finally {
+  for (const n of made.reverse()) { try { if (!n.removed) n.remove(); } catch (e) { errors.push('cleanup: ' + ((e && e.message) || e)); } }
+  for (const c of cols) { try { c.remove(); } catch (e) { errors.push('cleanup: ' + ((e && e.message) || e)); } }
+}
+const left = page.children.filter((n) => /^cmp-|^state=/.test(n.name)).length;
+return { cases, errors, cleaned: left === 0 };
+`;
+
+export function cmpProbePayload() { return CMP_PROBE_SRC.trim() + '\n'; }
+
+// readCmpFacts(result, measured?) -> the `cmp` object of figma-facts.json. A missing case keeps the safe default.
+//  data: 'own' when an instance child stored its own id (and neither the main nor the other instance changed),
+//        'inherit' when it only reads the main's, else 'no'
+//  props: each of text, bool, swap, variant, override must read back exactly
+//  layout: the largest difference of 8 boxes (instance vs plain frames, relative to their column, at 300 and 360 px):
+//        <= 0.01 'ok', <= 0.5 'near', else 'no'
+//  bind: the main's fill and padding variables are bound on the instance, and an instance fill override binds another
+export function readCmpFacts(result, measured = null) {
+  const c = (result && result.cases) || {};
+  const f = { ...DEFAULT_FACTS.cmp, props: { ...DEFAULT_FACTS.cmp.props }, measured };
+  const d = c.data;
+  if (d && typeof d === 'object') {
+    if (d.own === 'inst.t' && d.mainAfter === 'main.t' && d.other === 'main.t') f.data = 'own';
+    else if (d.inherit === 'main.t') f.data = 'inherit';
+    f.idPattern = d.idPattern === true;
+  }
+  if (c.props && typeof c.props === 'object') for (const k of Object.keys(f.props)) f.props[k] = c.props[k] === true;
+  if (has(c.layout, 'd300', 'd360')) {
+    const m = Math.max(c.layout.d300, c.layout.d360);
+    f.layoutMax = m;
+    f.layout = m <= 0.01 ? 'ok' : m <= 0.5 ? 'near' : 'no';
+  }
+  if (c.bind && typeof c.bind === 'object') f.bind = c.bind.fillInherit === true && c.bind.padInherit === true && c.bind.fillOverride === true ? 'ok' : 'no';
+  if (has(c.time, 'inst', 'plain')) f.timeMs = { inst: c.time.inst, plain: c.time.plain };
+  return f;
+}
+
 const near = (a, b, tol) => Math.abs(a - b) <= tol;
 const has = (o, ...ks) => !!o && ks.every((k) => typeof o[k] === 'number' && Number.isFinite(o[k]));
 
@@ -245,8 +448,10 @@ export function readFacts(result, measured = null) {
 
 const FACTS_PATH = fileURLToPath(new URL('./figma-facts.json', import.meta.url));
 
+const cmpOf = (c) => ({ ...DEFAULT_FACTS.cmp, ...(c || {}), props: { ...DEFAULT_FACTS.cmp.props, ...((c && c.props) || {}) } });
+
 export function loadFacts(path = FACTS_PATH) {
   let raw;
-  try { raw = JSON.parse(readFileSync(path, 'utf8')); } catch { return { ...DEFAULT_FACTS, shrinkFill: { ...DEFAULT_FACTS.shrinkFill } }; }
-  return { ...DEFAULT_FACTS, ...raw, shrinkFill: { ...DEFAULT_FACTS.shrinkFill, ...(raw.shrinkFill || {}) } };
+  try { raw = JSON.parse(readFileSync(path, 'utf8')); } catch { return { ...DEFAULT_FACTS, shrinkFill: { ...DEFAULT_FACTS.shrinkFill }, cmp: cmpOf() }; }
+  return { ...DEFAULT_FACTS, ...raw, shrinkFill: { ...DEFAULT_FACTS.shrinkFill, ...(raw.shrinkFill || {}) }, cmp: cmpOf(raw.cmp) };
 }

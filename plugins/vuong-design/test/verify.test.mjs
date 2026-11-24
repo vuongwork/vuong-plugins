@@ -2198,3 +2198,68 @@ test('figma-real proxy: corner radii compare by their effective (clamped) value;
   assert.deepEqual(make(true, [16, 20, 14, 8], [15, 15, 15, 6]), [['bottom-right', '14px', '15px'], ['bottom-left', '8px', '6px']]);
   assert.deepEqual(make(false, [999, 999, 99, 15], [9999, 9999, 9999, 15]).map((d) => d[0]), ['top-left', 'top-right', 'bottom-right']);
 });
+
+// Crops on a real Figma screenshot (measured 2026-11-24): a text crop is reference only once every run property is
+// read back, a dashed / dotted frame once the dash pattern is; an icon fails above ratio 0.25 or at peak 100
+test('figma-real crops: text / dashed frames reference only when read back; icons by their own threshold; other proxies as before', () => {
+  const run = (real, unread, crops, dashed = false) => {
+    const inp = fixture();
+    if (dashed) inp.screen.tree.kids[1].paint = { border: [0, 1, 2, 3].map(() => ({ w: 1, style: 'dashed', color: 'rgb(0, 0, 0)' })) };
+    if (real) for (const M of ['A', 'B']) Object.assign(inp.proxy[M], { mark: 'figma-real', unread });
+    inp.crops = crops;
+    return verifyScreen(inp);
+  };
+  const text = { id: 'n.0.0', width: 'A', ratio: 0.4, diff: 80, peak: 150 };
+  let r = run(true, [], [text]);
+  assert.deepEqual(r.crop, []);
+  assert.deepEqual(r.cropReference.map((c) => c.id), ['n.0.0']);
+  // decoration / case not read back (an older batch): the text crop gates
+  r = run(true, ['text-transform', 'text-decoration'], [text]);
+  assert.deepEqual(r.crop.map((c) => c.id), ['n.0.0']);
+  assert.deepEqual(r.cropReference, []);
+  // not a Figma readback: as before, and no cropReference field
+  r = run(false, [], [text]);
+  assert.deepEqual(r.crop.map((c) => c.id), ['n.0.0']);
+  assert.equal(r.cropReference, undefined);
+  // icon: 0.066 / 51 (Figma raster noise) passes on Figma only; another icon (0.49 / 122) fails everywhere
+  const iconNoise = { id: 'n.0.1', width: 'A', ratio: 0.066, diff: 20, peak: 51 }, iconSwap = { id: 'n.0.1', width: 'A', ratio: 0.49, diff: 300, peak: 122 };
+  assert.deepEqual(run(true, [], [iconNoise]).crop, []);
+  assert.deepEqual(run(false, [], [iconNoise]).crop.map((c) => c.id), ['n.0.1']);
+  assert.deepEqual(run(true, [], [iconSwap]).crop.map((c) => c.id), ['n.0.1']);
+  assert.deepEqual(run(true, [], [{ ...iconNoise, ratio: 0.1, peak: 100 }]).crop.map((c) => c.id), ['n.0.1'], 'peak 100 fails');
+  // a dashed frame: reference only when the dash pattern is read back; a solid frame keeps the plain threshold
+  const frame = { id: 'n.1', width: 'A', ratio: 0.3, diff: 40, peak: 10 };
+  assert.deepEqual(run(true, [], [frame], true).cropReference.map((c) => c.id), ['n.1']);
+  assert.deepEqual(run(true, ['stroke-style'], [frame], true).crop.map((c) => c.id), ['n.1']);
+  assert.deepEqual(run(true, [], [frame], false).crop.map((c) => c.id), ['n.1']);
+});
+
+// R77 (iii), t8 s3 2026-11-24: on real Figma a record explains a crop only when the norm proxy matches the shot there;
+// otherwise a wrong icon in a norm-resized icon slot was excused by the resize record
+test('R77 (iii) figma-real: a SRC_SQUASH record explains the icon crop only when the norm proxy matches the Figma shot', () => {
+  const bad = { id: 'n.0.0', width: 'A', ratio: 0.47, diff: 300, peak: 165 };
+  const run = (rf) => {
+    const inp = sayFixture();
+    for (const M of ['A', 'B']) Object.assign(inp.norm.proxy[M], { mark: 'figma-real', unread: [] });
+    inp.crops = [bad];
+    inp.cropsLayout = [{ ...bad, ratio: 0, diff: 0, peak: 0 }]; inp.cropsNormVsLayout = [bad];
+    if (rf !== undefined) inp.cropsRefVsFigma = rf;
+    return verifyScreen(inp);
+  };
+  // the norm proxy draws what Figma drew (0 / 0, the measured t8 value): explained as before
+  let r = run([{ ...bad, ratio: 0, diff: 0, peak: 0 }]);
+  assert.deepEqual(r.cropExplained.map((c) => [c.id, c.explainedBy]), [['n.0.0', 'norm']]);
+  assert.deepEqual(r.crop, []);
+  // icon raster noise under the icon thresholds still explains
+  r = run([{ ...bad, ratio: 0.066, diff: 20, peak: 51 }]);
+  assert.deepEqual(r.crop, []);
+  // another icon in the slot (0.83 / 256, the measured swap): open, with the reason
+  r = run([{ ...bad, ratio: 0.83, diff: 500, peak: 256 }]);
+  assert.deepEqual(r.cropExplained, []);
+  assert.deepEqual(r.crop.map((c) => c.id), ['n.0.0']);
+  assert.match(r.crop[0].normWhy, /norm proxy differs from the Figma screenshot/);
+  // no measurement: explains nothing
+  r = run(undefined);
+  assert.deepEqual(r.crop.map((c) => c.id), ['n.0.0']);
+  assert.match(r.crop[0].normWhy, /no crop of the norm proxy/);
+});

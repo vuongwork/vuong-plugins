@@ -20,6 +20,14 @@
 //   (primitive.color.c01 -> color/c01; role tokens keep their tier: role.text-muted -> role/text-muted); text style =
 //   `type/<name>` of primitive.typography.<name>; effect style = `shadow/<name>` of primitive.shadow.<name> (a role
 //   path is resolved through its alias first).
+// Style variants: a Figma text style sets the decoration and case of the text it styles (setting the style resets
+//   them; setting a decoration / case the style does not carry detaches the style: measured on Figma Desktop
+//   2026-11-24). A text run with a style whose case differs from the style's, or with a decoration, is bound to a variant
+//   style `<style>/<suffix>` (suffix: strike | underline, then upper | lower | title | original when the case differs,
+//   joined by '-'), e.g. type/t14-600/strike; enc.variants lists them as [name, base style, decoration ('' | UNDERLINE
+//   | STRIKETHROUGH), case (ORIGINAL | UPPER | LOWER | TITLE)] and figma-vars.mjs creates them as copies of the base
+//   style. A run with a decoration / case of its own and a style gets an explicit range style (the runtime sets range
+//   decoration before the range style). Styles not in the tokens' typography (ctx.styleTc) are left as they are.
 // planBatches(encs, { limit = PAYLOAD_LIMIT, runtime, page?, force? }) -> [{ n, screens, bytes, code, data (= D) }]
 //   force (plan 3 Task 7, figma.mjs --force): screen ids the runtime rebuilds even when edited; D.force = the ones in
 //   that batch (absent when none).
@@ -88,6 +96,7 @@ import { parseShadow, PILL_PX } from './tokens.mjs';
 import { isPillRadius } from './inventory.mjs';
 import { firstFamily } from './font-map.mjs';
 import { PAYLOAD_LIMIT } from './pipeline.mjs';
+import { varsPlan } from './figma-vars.mjs';
 
 const r2 = (v) => Math.round(v * 100) / 100 + 0; // + 0: no -0
 const r4 = (v) => Math.round(v * 10000) / 10000 + 0;
@@ -274,6 +283,7 @@ const fontTuple = (ff, fw, fst) => {
 };
 const TD = { underline: 'U', 'line-through': 'S' };
 const TT = { uppercase: 'U', lowercase: 'L', capitalize: 'T' };
+const TCASE = { U: 'UPPER', L: 'LOWER', T: 'TITLE' }, TDECO = { U: 'UNDERLINE', S: 'STRIKETHROUGH' }, VSUF = { UNDERLINE: 'underline', STRIKETHROUGH: 'strike' };
 const TA = (ta) => (/center/.test(ta || '') ? 'C' : /right|end/.test(ta || '') ? 'R' : /justify/.test(ta || '') ? 'J' : null);
 const VCODE = {
   bg: 'bg', paddingT: 'pt', paddingR: 'pr', paddingB: 'pb', paddingL: 'pl', gap: 'g', counterGap: 'cg', width: 'w', height: 'h',
@@ -312,6 +322,9 @@ export function encodeScreen(spec, ctx = {}) {
   const svgDefs = ctx.svgDefs || {};
   const nodeMap = (ctx.map && ctx.map[ctx.screen]) || {};
   const tokens = ctx.tokens || null;
+  // text style name -> its case ('' = ORIGINAL), for the style variants
+  const styleTc = ctx.styleTc || new Map(tokens ? varsPlan(tokens).textStyles.map((t) => [t.name, t.tc]) : []);
+  const variants = new Map();
   const vIndex = new Map(tables.V.map((n, i) => [n, i]));
   const unbound = {}, unboundList = [];
   let raw = 0;
@@ -532,6 +545,7 @@ export function encodeScreen(spec, ctx = {}) {
     }
 
     bind(n, e);
+    if (n.t === 'T') styleVariants(e);
     if (rawOut.runs && rawOut.runs.length === 0) delete rawOut.runs;
     if (Object.keys(rawOut).length) { e.raw = rawOut; raw++; }
     if (e.rn && !e.rn.some(Array.isArray)) delete e.rn;
@@ -623,6 +637,29 @@ export function encodeScreen(spec, ctx = {}) {
       });
     }
   }
+  // see "Style variants" in the header
+  function variantOf(ts, td, tt) {
+    if (!ts || !styleTc.has(ts)) return ts;
+    const tc = TCASE[tt] || 'ORIGINAL', deco = TDECO[td] || '';
+    const parts = [deco ? VSUF[deco] : null, tc !== (styleTc.get(ts) || 'ORIGINAL') ? tc.toLowerCase() : null].filter(Boolean);
+    if (!parts.length) return ts;
+    const name = `${ts}/${parts.join('-')}`;
+    variants.set(name, [name, ts, deco, tc]);
+    return name;
+  }
+  function styleVariants(e) {
+    if (Array.isArray(e.rn)) {
+      e.rn = e.rn.map((r) => {
+        if (!Array.isArray(r)) return r;
+        const [len, o] = r;
+        if (o.ts === undefined && o.td === undefined && o.tt === undefined) return r;
+        const ts = o.ts !== undefined ? o.ts : e.ts;
+        if (!ts) return r;
+        return [len, { ...o, ts: variantOf(ts, o.td !== undefined ? o.td : e.td, o.tt !== undefined ? o.tt : e.tt) }];
+      });
+    }
+    if (e.ts) e.ts = variantOf(e.ts, e.td, e.tt);
+  }
   const p0 = (s) => (s && s.w > 0 && s.style !== 'none' && s.style !== 'hidden' ? s : null);
 
   const T = enc(spec);
@@ -630,7 +667,7 @@ export function encodeScreen(spec, ctx = {}) {
     if (Tn === 'V') return vIndex.get(val);
     return intern(tables, Tn, val);
   });
-  return { screen: ctx.screen, file: ctx.file, W: ctx.W, T, tables, raw, unbound, unboundList };
+  return { screen: ctx.screen, file: ctx.file, W: ctx.W, T, tables, raw, unbound, unboundList, variants: [...variants.values()].sort((a, b) => cmpStr(a[0], b[0])) };
 }
 
 // ---------------- batches ----------------
@@ -641,7 +678,7 @@ export function batchData(encs, n, page, force, prof) {
     mapRefs(T, (Tn, i) => intern(tb, Tn, enc.tables[Tn][i]));
     return { screen: enc.screen, file: enc.file, W: enc.W, T };
   });
-  const D = { batch: n };
+  const D = { batch: n, rd: 1 }; // rd: the runtime reads text decoration / case and the dash pattern back (figma-check)
   if (page !== undefined) D.page = page;
   const f = (force || []).filter((x) => encs.some((enc) => enc.screen === x));
   if (f.length) D.force = f;

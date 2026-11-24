@@ -479,11 +479,19 @@ export async function runMutations(browser, screen, inferred, fontMap, opts = {}
 //  - figFill: the first frame / image source node with a solid fill gets that colour inverted (each channel 255 - c;
 //    magenta when that is too close); no such node: the root gets a magenta fill.
 //  - figDrop: the last source leaf is removed from `nodes` (entry 0, as a node the runtime could not read back).
+//  - figCase (batch data D.rd only, else 'not read back'): the first text node with a lower-case letter reads back
+//    with textCase UPPER on every run (text-transform is not otherwise visible: its crop is reference only on Figma).
+//  - figDash (D.rd only): the first node with a dashed / dotted stroke reads back without a dash pattern (solid); for a
+//    stroke drawn by an overlay (bd.o) the overlay's entry `<o>#stroke` is the one changed (the node itself has no stroke).
+//  - figIconPx: a pixel fault, the readback unchanged: the first icon leaf (another icon identity on the screen) is
+//    drawn as that other icon in a proxy of the target spec, and its crop is measured against the Figma screenshot in
+//    place of the real one (run(screen, { kind, o }) does the measuring; the icon identity itself is not read back).
 // runFigMutations({ id, base (report on the real readback), screen (the screen result), D (batch data), tree (source
 //   tree), spec (spec-norm tree), run: async (screen result) -> report }) -> { id, baseline, results, allCaught } as
 //   runMutations: caught = a failure the baseline does not have (same keys) on the target, its spec ancestors or
 //   descendants.
-export const FIG_KINDS = ['figMove', 'figText', 'figFill', 'figDrop'];
+export const FIG_KINDS = ['figMove', 'figText', 'figFill', 'figDrop', 'figCase', 'figDash', 'figIconPx'];
+const FIG_WN = ['Thin', 'ExtraLight', 'Light', 'Regular', 'Medium', 'SemiBold', 'Bold', 'ExtraBold', 'Black'];
 const invertHex = (h) => {
   const m = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(h);
   if (!m) return '#ff00ff';
@@ -494,7 +502,19 @@ const invertHex = (h) => {
 };
 const figActual = (sres, D) => actualNodes(decode({ screens: [clone(sres)] }, D).screens[0], D);
 
-export function chooseFig(kind, sres, D, tree) {
+// swapIconSpec(spec, id) -> a copy of spec whose icon leaf id shows the first other icon identity of the spec, or null
+export function swapIconSpec(spec, id) {
+  const sp = clone(spec), e = find(sp, id);
+  if (!e || e.n.t !== 'V' || !iconKey(e.n.icon) || e.n.icon.glyph != null) return null;
+  const o = walk(sp).find((x) => x.n.t === 'V' && iconKey(x.n.icon) && x.n.icon.glyph == null && iconKey(x.n.icon) !== iconKey(e.n.icon));
+  if (!o) return null;
+  const icon = { ...e.n.icon }; delete icon.ref; delete icon.glyph; delete icon.svg;
+  for (const k of ['ref', 'svg']) if (o.n.icon[k] != null) icon[k] = o.n.icon[k];
+  e.n.icon = icon;
+  return sp;
+}
+
+export function chooseFig(kind, sres, D, tree, spec) {
   const T = D.screens.find((x) => x.screen === sres.screen).T;
   const src = new Map();
   const idx = (n) => { src.set(n.id, n); (n.kids || []).forEach(idx); };
@@ -509,11 +529,15 @@ export function chooseFig(kind, sres, D, tree) {
     const o = cands.find((x) => { const n = act.get(x); return n.fills && n.e.t !== 'V' && n.fills.some((f) => /^#/.test(f)); });
     return o || (act.has(T.o) ? T.o : null);
   }
+  if (kind === 'figCase') return cands.find((o) => { const n = act.get(o); return n.e.t === 'T' && n.text !== String(n.text).toUpperCase() && (n.runs || []).length; }) || null;
+  if (kind === 'figDash') return cands.find((o) => /^(dashed|dotted)$/.test(act.get(o).dash || '') && (act.get(o).strokes || act.has(`${o}#stroke`))) || null;
+  if (kind === 'figIconPx') return spec ? leaves.find((o) => src.get(o).kind === 'icon' && swapIconSpec(spec, o)) || null : null;
   return null;
 }
 
-export function mutateFig(kind, sres, D, o) {
+export function mutateFig(kind, sres, D, o0) {
   const T = D.screens.find((x) => x.screen === sres.screen).T;
+  const o = kind === 'figDash' && figActual(sres, D).has(`${o0}#stroke`) ? `${o0}#stroke` : o0;
   const i = ordOf(T).indexOf(o);
   const out = clone(sres);
   delete out.N;
@@ -531,6 +555,13 @@ export function mutateFig(kind, sres, D, o) {
     const j = n.fills.findIndex((f) => /^#/.test(f));
     d.fills = j >= 0 ? n.fills.map((f, x) => (x === j ? invertHex(f) : f)) : ['#ff00ff', ...n.fills];
   }
+  if (kind === 'figCase') {
+    d.runs = n.runs.map((r) => {
+      const w = Number(r.weight), st = (FIG_WN[w / 100 - 1] || String(r.weight)) + (r.italic ? ' Italic' : '');
+      return [r.len, r.fs, `${r.family} ${st}`, r.fill, r.ts, r.fv, r.td || '', 'U'];
+    });
+  }
+  if (kind === 'figDash') { const st = { ...n.strokes }; delete st.d; d.strokes = st; }
   out.nodes[i] = [fid, A, dB || 0, d];
   return out;
 }
@@ -539,9 +570,11 @@ export async function runFigMutations({ id, base, screen: sres, D, tree, spec, r
   const before = new Set(failures(base).map((f) => f.key));
   const results = [];
   for (const kind of kinds) {
-    const o = sres && sres.nodes ? chooseFig(kind, sres, D, tree) : null;
+    if ((kind === 'figCase' || kind === 'figDash') && !(D && D.rd)) { results.push({ kind, target: null, caught: null, by: [], skipped: 'not read back (batch without D.rd)' }); continue; }
+    const o = sres && sres.nodes ? chooseFig(kind, sres, D, tree, spec) : null;
     if (!o) { results.push({ kind, target: null, caught: null, by: [], skipped: sres && sres.nodes ? 'no candidate' : 'no readback' }); continue; }
-    const rep = await run(mutateFig(kind, sres, D, o));
+    const rep = kind === 'figIconPx' ? await run(clone(sres), { kind, o }) : await run(mutateFig(kind, sres, D, o));
+    if (!rep) { results.push({ kind, target: o, caught: null, by: [], skipped: 'no screenshot crop' }); continue; }
     const hit = new Set([o]);
     const e = find(spec, o);
     if (e) {

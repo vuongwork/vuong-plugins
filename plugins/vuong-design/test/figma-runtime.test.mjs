@@ -5,6 +5,7 @@ import { gunzipSync } from 'node:zlib';
 import { encodeScreen, planBatches, newTables } from '../core/figma-encode.mjs';
 import { makeFakeFigma, DEFAULT_FONTS } from './fake-figma.mjs';
 import { ordOf, decode } from '../core/figma-check.mjs';
+import { varsPlan } from '../core/figma-vars.mjs';
 
 const RUNTIME = readFileSync(new URL('../core/figma-runtime.js', import.meta.url), 'utf8');
 const AsyncFunction = (async () => {}).constructor;
@@ -127,7 +128,7 @@ test('a variable missing in the file is not bound and is listed per node', async
   const [s] = (await runOne(fig)).screens;
   assert.deepEqual(s.unbound, [{ o: 'n.1', prop: 'c', name: 'color/gone', reason: 'missing-in-file' }]);
   // the actual run has no variable on its fill where the encoding asked for color/gone: d.runs carries the actual runs
-  assert.deepEqual(s.N['n.1'].d, { runs: [[5, 12, 'Be Vietnam Pro Regular', '#000000', 'type/t12-400', '']] });
+  assert.deepEqual(s.N['n.1'].d, { runs: [[5, 12, 'Be Vietnam Pro Regular', '#000000', 'type/t12-400', '', '', '']] });
   // a text style missing in the file
   const fig2 = fakeFor({ textStyles: ['type/t14-600'] });
   const [s2] = (await runOne(fig2)).screens;
@@ -451,7 +452,11 @@ test('Planora: the first batch builds on the fake with no errors and every encod
   const batches = planBatches(encs, { runtime: RUNTIME });
   for (const b of batches) assert.ok(b.bytes <= 50000, `batch ${b.n} ${b.bytes} B`);
   const D = dataOf(batches[0]);
-  const fig = makeFakeFigma({ idPrefix: '2077', idStart: 31000, variables: D.V, textStyles: D.S.filter((x) => x.startsWith('type/')), effectStyles: D.S.filter((x) => x.startsWith('shadow/')),
+  // the text styles as figma-vars.mjs makes them (token styles and the variants the screens use), with decoration and case
+  const plan = varsPlan(planora.tokens, encs.flatMap((e) => e.variants));
+  const textStyles = plan.textStyles.filter((x) => D.S.includes(x.name)).map((x) => ({ name: x.name, textDecoration: x.td || 'NONE', textCase: x.tc || 'ORIGINAL' }));
+  assert.ok(textStyles.some((x) => x.textDecoration === 'STRIKETHROUGH'), 'Planora batch 1 has a struck-through styled text (a done item)');
+  const fig = makeFakeFigma({ idPrefix: '2077', idStart: 31000, variables: D.V, textStyles, effectStyles: D.S.filter((x) => x.startsWith('shadow/')),
     fonts: [...DEFAULT_FONTS, 'Be Vietnam Pro|Light'] });
   const res = decode(await run(batches[0].code, fig), D);
   assert.equal(res.screens.length, D.screens.length);
@@ -629,4 +634,29 @@ test('D.prof only adds prof (ms per phase): the screens, nodes and sig are the s
     assert.equal(typeof P[k], 'number', `prof.${k}`);
   }
   assert.ok(Object.values(P).every((v) => Number.isInteger(v) && v >= 0));
+});
+
+// measured on Figma Desktop 2026-11-24 (the fake mimics it): a text style resets decoration and case, and a decoration
+// the style does not carry detaches it; style variants (figma-encode.mjs) keep both the style and the decoration
+test('style variants: struck-through styled text keeps its style and its decoration, a run too', async () => {
+  const font = (o = {}) => ({ ff: 'Be Vietnam Pro', fs: '14px', fw: '600', fst: 'normal', lh: 18, ls: 'normal', c: 'rgb(0, 0, 0)', ta: 'start', td: 'none', tt: 'none', ...o });
+  const T = (id, f, runs = [{ t: 'Giấy ăn' }]) => ({ id, t: 'T', w: 100, h: 18, sz: ['HUG', 'HUG'], font: font(f), runs });
+  const spec = { id: 'n', t: 'F', w: 304, h: 400, sz: ['FIXED', 'HUG'], lay: { d: 'V', p: [0, 0, 0, 0], g: 0, pa: 'S', ca: 'S' }, kids: [
+    T('n.0', { td: 'line-through' }), T('n.1', {}, [{ t: 'Mua ' }, { t: 'xong', s: { td: 'line-through' } }])] };
+  const ty = 'primitive.typography.t14-600';
+  const enc = encodeScreen(spec, { screen: 's0', file: 'f.html', W: [304, 424], map: { s0: { 'n.0': { type: ty }, 'n.1': { type: ty } } }, svgDefs: {}, tables: newTables([]),
+    styleTc: new Map([['type/t14-600', '']]) });
+  const [b] = planBatches([enc], { runtime: RUNTIME });
+  const D = dataOf(b);
+  const textStyles = [{ name: 'type/t14-600' }, ...enc.variants.map(([name, , td, tc]) => ({ name, textDecoration: td || 'NONE', textCase: tc }))];
+  const fig = makeFakeFigma({ textStyles });
+  const res = decode(await run(b.code, fig), D);
+  const s = res.screens[0];
+  assert.deepEqual(s.errors, []);
+  assert.equal(s.unbound, undefined);
+  for (const [o, r] of Object.entries(s.N)) assert.equal(r.d, undefined, `${o}: ${JSON.stringify(r.d)}`);
+  const texts = fig.currentPage.findAll((n) => n.type === 'TEXT');
+  const segs = texts.map((n) => n.getStyledTextSegments(['textStyleId', 'textDecoration']).map((g) => [g.characters, g.textStyleId, g.textDecoration]));
+  assert.deepEqual(segs.map((x) => x.map((g) => [g[0], g[2]])), [[['Giấy ăn', 'STRIKETHROUGH']], [['Mua ', 'NONE'], ['xong', 'STRIKETHROUGH']]]);
+  assert.ok(segs.flat().every((g) => g[1]), 'every character keeps a text style');
 });

@@ -55,7 +55,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { UsageError, readAllowlist, runVerdict } from './layout.mjs';
 import { encodeScreen, planBatches, newTables, OversizeError, batchData, compactIds, jsLiteral, fnv } from './figma-encode.mjs';
-import { varsPayload, varNames } from './figma-vars.mjs';
+import { varsPayload, varNames, varsPlan } from './figma-vars.mjs';
 import { ordOf, decode, expandNodes, figmaProxy, shotAtDsf, proxyVsFigma, effectNodes, pngSize } from './figma-check.mjs';
 import { startBridge, BRIDGE_PORT } from './figma-bridge.mjs';
 
@@ -136,7 +136,8 @@ function readDs(dsDir) {
 export function encodeAll(dsData, { page = 'Screens', force = [] } = {}) {
   const { ir, tokens, map, screens } = dsData;
   const tables = newTables(varNames(tokens));
-  const encs = screens.map((s) => encodeScreen(s.spec, { screen: s.id, file: ir.file, W: s.W, map, svgDefs: s.svgDefs, tables, tokens }));
+  const styleTc = new Map(varsPlan(tokens).textStyles.map((t) => [t.name, t.tc]));
+  const encs = screens.map((s) => encodeScreen(s.spec, { screen: s.id, file: ir.file, W: s.W, map, svgDefs: s.svgDefs, tables, tokens, styleTc }));
   const hashes = Object.fromEntries(encs.map((e) => [e.screen, sha(JSON.stringify(batchData([e], 0, page, force)))]));
   return { encs, hashes };
 }
@@ -145,7 +146,8 @@ export function encodeAll(dsData, { page = 'Screens', force = [] } = {}) {
 export function planAll(dsData, { page = 'Screens', force = [], keep = new Set(), first = 1, encoded, prof = false } = {}) {
   const { encs } = encoded || encodeAll(dsData, { page, force });
   const batches = planBatches(encs.filter((e) => !keep.has(e.screen)), { wrap: loaderCode, page, force, first, prof });
-  const vars = varsPayload(dsData.tokens);
+  // the text style variants of every screen (kept ones too: the vars batches are sent whole)
+  const vars = varsPayload(dsData.tokens, { variants: [...new Map(encs.flatMap((e) => e.variants || []).map((v) => [v[0], v])).values()] });
   const rt = runtimeInstallCode();
   return [
     ...vars.map((code, i) => ({ key: `vars-${pad(i + 1)}`, kind: 'vars', code, bytes: Buffer.byteLength(code, 'utf8'), screens: [] })),
@@ -636,7 +638,8 @@ async function check(argv, log, deps) {
   const { pixelDiff } = await import('./imgdiff.mjs');
   const { gate, summarize, specJson, allowlistEntry } = await import('./pipeline.mjs');
   const { defaultFontMap } = await import('./font-map.mjs');
-  const { runFigMutations } = await import('./mutate.mjs');
+  const { runFigMutations, swapIconSpec } = await import('./mutate.mjs');
+  const { buildProxyHtml, renderProxy } = await import('./proxy.mjs');
   const fontMap = deps.fontMap || defaultFontMap();
   const t0 = Date.now();
   let browser = deps.browser, own = false;
@@ -672,15 +675,32 @@ async function check(argv, log, deps) {
         const ids = [...new Set(crops.filter((c) => c.ratio > ratio || (c.peak ?? 0) >= peak).map((c) => c.id))];
         extra.cropsLayout = ids.length ? await measureCrops(browser, sc, layout, { ...verifyOpts, ids, widths: ['A'] }) : [];
         extra.cropsNormVsLayout = ids.length ? await measureCrops(browser, sc, normLayout, { ...verifyOpts, ids, base: layout, widths: ['A'] }) : [];
+        // R77 (iii) on real Figma: a record explains a crop only when the norm proxy matches the shot there
+        extra.cropsRefVsFigma = ids.length && normP ? await measureCrops(browser, sc, fig, { ...verifyOpts, ids, base: normP, widths: ['A'] }) : [];
       }
-      const input = (figP) => (normOn
-        ? { screen: sc, spec: modelled.spec, proxy: modP, layout, flags, norm: { spec: target.spec, applied: target.applied, proxy: figP, entries: inp.entries }, normLayout, crops, pixel, ...extra }
-        : { screen: sc, spec: modelled.spec, proxy: figP, layout, flags, crops, pixel });
+      const input = (figP, cr = crops, rf = null) => (normOn
+        ? { screen: sc, spec: modelled.spec, proxy: modP, layout, flags, norm: { spec: target.spec, applied: target.applied, proxy: figP, entries: inp.entries }, normLayout, crops: cr, pixel, ...extra, ...(rf ? { cropsRefVsFigma: rf } : {}) }
+        : { screen: sc, spec: modelled.spec, proxy: figP, layout, flags, crops: cr, pixel });
       const report = verifyScreen(input(fig), verifyOpts);
       if (normLayoutError) report.normLayoutError = normLayoutError;
       let mutations = null;
       if (o.mutate) {
-        mutations = await runFigMutations({ id: x.id, base: report, screen: sres, D: x.D, tree: sc.tree, spec: target.spec, run: async (m) => verifyScreen(input(build(m)), verifyOpts) });
+        // figIconPx: the icon drawn as another one (proxy of the target spec) replaces the node's crop against the shot,
+        // and its norm-proxy-vs-shot crop (R77 iii) too: the shot shows the right icon, the proxy the wrong one
+        const fc = sc.fontCss || {}, po = { fontLinks: fc.links || [], fontFaces: fc.faces || [], ...(webFonts ? {} : { webFonts: false }) };
+        const pixelCrops = async (o) => {
+          const sp = swapIconSpec(target.spec, o);
+          if (!sp || !shot || !crops || !crops.some((c) => c.id === o)) return null;
+          const P = { A: await renderProxy(browser, buildProxyHtml(sp, sc.svgDefs || {}, fontMap, po), sc.W[0], { origin: sc.origin[0] }) };
+          const m = await measureCrops(browser, sc, fig, { ...verifyOpts, widths: ['A'], base: P, ids: [o] });
+          if (!m.length) return null;
+          const rf = (extra.cropsRefVsFigma || []).filter((c) => c.id !== o);
+          return { cr: crops.map((c) => (c.id === o && c.width === 'A' ? m[0] : c)), rf: extra.cropsRefVsFigma ? [...rf, m[0]] : null };
+        };
+        mutations = await runFigMutations({
+          id: x.id, base: report, screen: sres, D: x.D, tree: sc.tree, spec: target.spec,
+          run: async (m, px) => { if (!px) return verifyScreen(input(build(m)), verifyOpts); const pc = await pixelCrops(px.o); return pc ? verifyScreen(input(build(m), pc.cr, pc.rf), verifyOpts) : null; },
+        });
       }
       const ids = [];
       const walk = (n) => { ids.push(n.id); (n.kids || []).forEach(walk); };

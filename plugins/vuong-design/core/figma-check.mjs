@@ -7,7 +7,7 @@
 // decode(res, D) -> res   adds s.N = { [vd id]: { fid, A, B, d } } to every built screen of a BatchResult (B = A + dB)
 // actualNodes(s, D) -> Map(vd id -> Actual)   s = one decoded screen of the result (decode first). Actual = { o, e (the
 //   encoded node; for an overlay the cell's), ov (overlay), fid, A, B, text?, runs?: [{ len, fs, family, weight, italic,
-//   fill, ts, fv }], fills?, strokes, radius?, es?, op, vars?, iconEmpty? }; text / runs on TEXT nodes (and glyph icons),
+//   fill, ts, fv, td?, tt? }], fills?, strokes, dash?, radius?, es?, op, vars?, iconEmpty? }; text / runs on TEXT nodes (and glyph icons),
 //   fills / radius / es on the others.
 // figmaDom(n, ctx) -> DomRecord   one Actual as renderProxy's dom record (proxy.mjs): text, runs, color, bg, ff, op,
 //   vis, disp, stroke [t r b l], outline, radius [4], icon, img. ctx = { opEff (effective opacity, undefined when an
@@ -18,8 +18,9 @@
 //    - svg markup of an inline svg icon (only "has vectors" is read back)         -> unread 'svg'
 //    - which sprite icon (ref) a vector frame shows (only "has vectors")           -> iconUnread, unread 'icon'
 //    - img fit / position / source of an image fill (only the IMAGE paint is read) -> unread 'image'
-//    - text-decoration / text-transform of runs (runtime M5: not compared)        -> unread 'text-decoration' / 'text-transform'
-//    - the dash style of a stroke (dashPattern is not read back; the encoded style is used) -> unread 'stroke-style'
+//    - text-decoration / text-transform of runs and the dash style of a stroke: read back only by a batch built with
+//      D.rd (runtime compares textDecoration / textCase per run and dashPattern); older batches -> unread
+//      'text-decoration' / 'text-transform' / 'stroke-style'
 //    - width B has no screenshot (get_screenshot shows the frame at width A)      -> unread 'crop-B'
 //   verifyScreen records each unread name as skipped 'figma-<name>': listed in the report, never failing the screen.
 //   outline is 'none': Figma has no outline (the encoder reports a source outline as raw / unsupported), so a source
@@ -127,7 +128,7 @@ const solid = (x) => typeof x === 'string' && /^#[0-9a-f]{6}([0-9a-f]{2})?$/i.te
 // ---- intent of a text node, expanded like the runtime's run(): [{ len, fs, f: [family, weight, italic?], fill, ts, fv }]
 function intentRuns(e, D, text) {
   const v = e.v || {};
-  const base = { fs: e.fs ?? 12, f: D.F[e.f], fill: e.c != null ? D.C[e.c] : '#000000', ts: e.ts != null ? D.S[e.ts] || '' : '', fv: v.c != null ? D.V[v.c] || '' : '' };
+  const base = { fs: e.fs ?? 12, f: D.F[e.f], fill: e.c != null ? D.C[e.c] : '#000000', ts: e.ts != null ? D.S[e.ts] || '' : '', fv: v.c != null ? D.V[v.c] || '' : '', td: e.td || '', tt: e.tt || '' };
   const out = [];
   for (const r of e.rn || [text.length]) {
     const [len, x] = Array.isArray(r) ? r : [r, null];
@@ -135,15 +136,26 @@ function intentRuns(e, D, text) {
     const s = !x ? base : {
       fs: x.fs ?? base.fs, f: x.f != null ? D.F[x.f] : base.f, fill: x.c != null ? D.C[x.c] : base.fill,
       ts: x.ts != null ? D.S[x.ts] || '' : base.ts, fv: x.c != null || xv.c != null ? (xv.c != null ? D.V[xv.c] || '' : '') : base.fv,
+      td: x.td != null ? x.td : base.td, tt: x.tt != null ? x.tt : base.tt,
     };
     const p = out[out.length - 1];
-    const key = (q) => JSON.stringify([q.fs, q.f, q.fill, q.ts, q.fv]);
+    const key = (q) => JSON.stringify([q.fs, q.f, q.fill, q.ts, q.fv, q.td, q.tt]);
     if (p && key(p) === key(s)) p.len += len; else out.push({ len, ...s });
   }
-  return out.map((q) => ({ len: q.len, fs: q.fs, family: q.f ? q.f[0] : '', weight: q.f ? q.f[1] : 400, italic: !!(q.f && q.f[2]), fill: q.fill, ts: q.ts, fv: q.fv }));
+  return out.map((q) => ({ len: q.len, fs: q.fs, family: q.f ? q.f[0] : '', weight: q.f ? q.f[1] : 400, italic: !!(q.f && q.f[2]), fill: q.fill, ts: q.ts, fv: q.fv,
+    ...(D.rd ? { td: q.td, tt: q.tt } : {}) }));
 }
 
 const fourOf = (w) => (Array.isArray(w) ? w : [w, w, w, w]);
+// the CSS style of a read-back stroke: no dashPattern = solid; the runtime draws dashed as [3m, 3m] and dotted as [m, m]
+// (m = the largest side weight)
+const dashOf = (st) => {
+  if (!st || !Array.isArray(st.d) || !st.d.length) return 'solid';
+  const m = Math.max(...(st.w || [0]));
+  return st.d[0] >= 2 * m ? 'dashed' : 'dotted';
+};
+const TD_CSS = { '': 'none', U: 'underline', S: 'line-through' }, TT_CSS = { '': 'none', U: 'uppercase', L: 'lowercase', T: 'capitalize' };
+const cssOf = (map, v) => (v === undefined ? undefined : map[v] ?? `figma-${v}`);
 
 export function actualNodes(s, D) {
   const out = new Map();
@@ -165,7 +177,7 @@ export function actualNodes(s, D) {
       const intentText = gl ? e.ic.g : e.tx ?? '';
       n.text = d.text !== undefined ? d.text : intentText;
       n.runs = d.runs !== undefined
-        ? d.runs.map(([len, fs, font, fill, ts, fv]) => { const [family, style] = splitFont(font, fams); const [w, it] = styleWeight(style); return { len, fs, family, weight: w ?? style, italic: it, fill, ts, fv }; })
+        ? d.runs.map(([len, fs, font, fill, ts, fv, td, tt]) => { const [family, style] = splitFont(font, fams); const [w, it] = styleWeight(style); return { len, fs, family, weight: w ?? style, italic: it, fill, ts, fv, ...(D.rd ? { td, tt } : {}) }; })
         : intentRuns(e, D, intentText);
     } else {
       n.fills = d.fills !== undefined ? d.fills : ov ? [] : [...(e.bg != null ? [D.C[e.bg]] : []), ...(e.gr || []).map((g) => `GRADIENT_${g.k === 'R' ? 'RADIAL' : 'LINEAR'}`), ...(e.im ? ['IMAGE'] : [])];
@@ -176,6 +188,7 @@ export function actualNodes(s, D) {
     }
     const b = e.bd;
     n.strokes = d.strokes !== undefined ? d.strokes : b && (ov || !b.o) && !T_ ? { c: [D.C[b.c]], w: fourOf(b.w) } : null;
+    if (D.rd && b && !T_) n.dash = d.strokes !== undefined ? dashOf(d.strokes) : b.d || 'solid';
     if (d.vars !== undefined) n.vars = d.vars;
     return n;
   };
@@ -210,14 +223,14 @@ export function figmaDom(n, ctx = {}) {
     let i = 0;
     dom.runs = runs.map((r) => {
       const t = String(n.text).slice(i, i + r.len); i += r.len;
-      return [t, `${r.fs}px`, String(r.weight), r.italic ? 'italic' : 'normal', undefined, undefined, r.family, rgbOf(r.fill)];
+      return [t, `${r.fs}px`, String(r.weight), r.italic ? 'italic' : 'normal', cssOf(TD_CSS, r.td), cssOf(TT_CSS, r.tt), r.family, rgbOf(r.fill)];
     });
     return dom;
   }
   const f = (n.fills || []).find(solid);
   dom.bg = f ? rgbOf(f) : 'transparent';
-  const style = e.bd && e.bd.d ? e.bd.d : 'solid';
-  if (e.bd && e.bd.o) dom.stroke = overlay ? sides(overlay.strokes, style) : undefined; // overlay not read back: unknown
+  const style = n.dash ?? (e.bd && e.bd.d ? e.bd.d : 'solid');
+  if (e.bd && e.bd.o) dom.stroke = overlay ? sides(overlay.strokes, overlay.dash ?? style) : undefined; // overlay not read back: unknown
   else dom.stroke = sides(n.strokes, style);
   const sr = spec && spec.paint && Array.isArray(spec.paint.radius) && spec.paint.radius.length === 4 ? spec.paint.radius : null;
   dom.radius = n.radiusIntent && sr ? sr.map((x) => (typeof x === 'number' ? `${x}px` : String(x))) : (n.radius || [0, 0, 0, 0]).map((x) => `${r2(x)}px`);
@@ -231,7 +244,7 @@ export function figmaDom(n, ctx = {}) {
   return dom;
 }
 
-const BASE_UNREAD = ['crop-B', 'effect', 'text-decoration', 'text-transform'];
+const BASE_UNREAD = ['crop-B', 'effect'];
 
 export function figmaProxy(s, D, spec, opts = {}) {
   const T = D && s ? (D.screens.find((x) => x.screen === s.screen) || {}).T : null;
@@ -241,6 +254,7 @@ export function figmaProxy(s, D, spec, opts = {}) {
   if (spec) idx(spec);
   const boxes = { A: {}, B: {} }, dom = {};
   const unread = new Set(BASE_UNREAD);
+  if (!(D && D.rd)) { unread.add('text-decoration'); unread.add('text-transform'); }
   const walk = (e, opParent) => {
     const n = act.get(e.o);
     const opEff = n && opParent !== undefined ? opParent * n.op : undefined;
@@ -251,7 +265,7 @@ export function figmaProxy(s, D, spec, opts = {}) {
       if (e.t === 'V' && !(e.ic && e.ic.g != null) && dom[e.o].icon === 'svg') unread.add('svg');
       if (dom[e.o].iconUnread) unread.add('icon');
       if ((e.t === 'I' || e.im) && dom[e.o].img === undefined) unread.add('image');
-      if (e.bd && e.bd.d) unread.add('stroke-style');
+      if (e.bd && e.bd.d && !D.rd) unread.add('stroke-style');
     }
     for (const k of e.k || []) walk(k, opEff);
     const so = act.get(`${e.o}#stroke`);

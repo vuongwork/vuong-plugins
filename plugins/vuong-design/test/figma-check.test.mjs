@@ -171,7 +171,10 @@ test('colours, fonts, png size, proxy vs Figma', () => {
 
 test('readback mutations: deterministic targets and the planted change', () => {
   const D = Dof(), s = screenRes();
-  assert.deepEqual(FIG_KINDS.map((k) => chooseFig(k, s, D, TREE)), ['n.0.0', 'n.0.0', 'n.0', 'n.2']);
+  // figDash: no dashed stroke here; figIconPx: needs the spec (and another icon)
+  assert.deepEqual(FIG_KINDS.map((k) => chooseFig(k, s, D, TREE)), ['n.0.0', 'n.0.0', 'n.0', 'n.2', 'n.0.0', null, null]);
+  // figCase: every run reads back UPPER
+  assert.ok(mutateFig('figCase', s, D, 'n.0.0').nodes[2][3].runs.every((r) => r.length === 8 && r[7] === 'U'));
   const mv = mutateFig('figMove', s, D, 'n.0.0');
   assert.deepEqual(mv.nodes[2], [3, [19, 10, 120, 18]]);
   assert.deepEqual(s.nodes[2], [3, [16, 10, 120, 18]], 'the input is not changed');
@@ -231,4 +234,49 @@ test('expandNodes: compact nodes (z: 1) back to the plain form; decode accepts b
   assert.deepEqual(expandNodes({ z: 1, screens: [s] }, D).screens[0].nodes[2], [2, [21, 17, 120, 18]]);
   const plain = { screens: [screenRes()] };
   assert.deepEqual(expandNodes(plain, Dof()), { screens: [screenRes()] }, 'no z: unchanged');
+});
+
+test('D.rd: decoration, case and the dash pattern come from the readback; without it they stay unread', () => {
+  const Dd = () => {
+    const D = Dof();
+    D.screens[0].T.k[0].k[0].td = 'U';
+    D.screens[0].T.k[1].bd = { w: 2, c: 2, d: 'dashed' };
+    return D;
+  };
+  // no rd: unread as before, the intent's dash style is drawn
+  let D = Dd(), P = figmaProxy(dec(screenRes(), D), D, SPEC);
+  assert.deepEqual(P.unread.filter((u) => /text|stroke/.test(u)).sort(), ['stroke-style', 'text-decoration', 'text-transform']);
+  assert.equal(P.A.dom['n.0.0'].runs[0][4], undefined);
+  assert.equal(P.A.dom['n.2'].stroke[0], '2px dashed rgb(220, 230, 224)');
+  // rd, readback as intended (no d): runs carry the intent's decoration / case, the dash style is the intent's
+  D = { ...Dd(), rd: 1 };
+  P = figmaProxy(dec(screenRes(), D), D, SPEC);
+  assert.deepEqual(P.unread.filter((u) => /text|stroke/.test(u)), []);
+  assert.deepEqual(P.A.dom['n.0.0'].runs.map((r) => [r[4], r[5]]), [['underline', 'none'], ['underline', 'none'], ['underline', 'none']]);
+  assert.equal(P.A.dom['n.2'].stroke[0], '2px dashed rgb(220, 230, 224)');
+  // rd, readback differs: a stroke without a dash pattern is solid, [m, m] is dotted; runs with td '' / tt 'U'
+  const s = screenRes();
+  s.nodes[5] = [6, [250, 300, 40, 40], [120, 0, 0, 0], { radius: [0, 20, 20, 20], strokes: { c: ['#dce6e0'], w: [2, 2, 2, 2] } }];
+  s.nodes[2] = [3, [16, 10, 120, 18], 0, { runs: [[9, 14, 'Be Vietnam Pro SemiBold', '#26335c', '', '', '', 'U']] }];
+  P = figmaProxy(dec(s, D), D, SPEC);
+  assert.equal(P.A.dom['n.2'].stroke[0], '2px solid rgb(220, 230, 224)');
+  assert.deepEqual(P.A.dom['n.0.0'].runs.map((r) => [r[4], r[5]]), [['none', 'uppercase']]);
+  s.nodes[5][3].strokes.d = [2, 2];
+  assert.equal(figmaProxy(dec(s, D), D, SPEC).A.dom['n.2'].stroke[0], '2px dotted rgb(220, 230, 224)');
+  // mutations on it: figDash removes the dash pattern
+  const o = chooseFig('figDash', screenRes(), D, TREE);
+  assert.equal(o, 'n.2');
+  assert.equal(figmaProxy(dec(mutateFig('figDash', screenRes(), D, 'n.2'), D), D, SPEC).A.dom['n.2'].stroke[0], '2px solid rgb(220, 230, 224)');
+  // a dashed stroke drawn by an overlay (bd.o, t8 s8 / s10): the node has no stroke of its own, the overlay entry is
+  // the one changed (changing the node drew nothing different and the planted error was missed)
+  const Do = { ...Dof(), rd: 1 };
+  Do.screens[0].T.k[0].bd.d = 'dashed';
+  const so = screenRes();
+  so.nodes[4] = [5, [0, 0, 304, 60], [0, 0, 120, 0], { strokes: { c: ['#dce6e0'], w: [1, 0, 1, 0], d: [3, 3] } }];
+  assert.equal(figmaProxy(dec(so, Do), Do, SPEC).A.dom['n.0'].stroke[0], '1px dashed rgb(220, 230, 224)');
+  assert.equal(chooseFig('figDash', so, Do, TREE), 'n.0');
+  const mo = mutateFig('figDash', so, Do, 'n.0');
+  assert.deepEqual(mo.nodes[1], so.nodes[1], 'the node entry is unchanged');
+  assert.equal(mo.nodes[4][3].strokes.d, undefined);
+  assert.equal(figmaProxy(dec(mo, Do), Do, SPEC).A.dom['n.0'].stroke[0], '1px solid rgb(220, 230, 224)');
 });

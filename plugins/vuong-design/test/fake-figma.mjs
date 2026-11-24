@@ -10,7 +10,10 @@
 //  - loadFontAsync of a font that listAvailableFontsAsync does not list; setTextStyleIdAsync / setEffectStyleIdAsync
 //    with an unknown id; any use of a removed node; figma.notify (throws inside use_figma);
 //  - a shared plugin data namespace that is not at least 3 alphanumeric characters (e.g. 'vd').
-// Real-Figma behaviours mimicked: created nodes start on the current page; createFrame starts white and clipping;
+// Real-Figma behaviours mimicked (text styles measured on Figma Desktop 2026-11-24): setTextStyleIdAsync /
+// setRangeTextStyleIdAsync also set the characters' textDecoration and textCase to the style's; textDecoration / textCase
+// (node or range) set to a value other than the characters' style's detaches that style (textStyleId '').
+// textStyles entries are names or { name, textDecoration, textCase }. Created nodes start on the current page; createFrame starts white and clipping;
 // resize() on an auto-layout frame sets its layoutSizing to FIXED; fills / strokes getters return frozen copies.
 // makeFakeFigma({ fonts, variables, textStyles, effectStyles, throwIf, ignore, idPrefix, idStart }) -> figma, plus figma._log (ops in call order:
 // ['append', parentId, childId, child width, child height], ['constraints', id], ['layoutPositioning', id, value],
@@ -62,7 +65,7 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
   const log = [], loads = {}, loaded = new Set();
   const avail = new Set(fonts);
   const VARS = variables.map((name, i) => ({ id: 'VariableID:' + i, name }));
-  const styles = (names, p) => names.map((name, i) => ({ id: `S:${p}${i},`, name }));
+  const styles = (names, p) => names.map((x, i) => (typeof x === 'string' ? { id: `S:${p}${i},`, name: x } : { id: `S:${p}${i},`, ...x }));
   const TS = styles(textStyles, 't'), ES = styles(effectStyles, 'e');
   const alias = (v) => ({ type: 'VARIABLE_ALIAS', id: v.id });
 
@@ -284,12 +287,15 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
     async setEffectStyleIdAsync(id) { this._ok(); if (!ES.find((s) => s.id === id)) throw new Error('unknown effect style'); this.effectStyleId = id; }
   }
 
+  const TDEF = { textDecoration: 'NONE', textCase: 'ORIGINAL' };
+  const okTD = (v) => { if (!['NONE', 'UNDERLINE', 'STRIKETHROUGH'].includes(v)) throw new Error('bad textDecoration ' + v); return v; };
+  const okTC = (v) => { if (!['ORIGINAL', 'UPPER', 'LOWER', 'TITLE', 'SMALL_CAPS', 'SMALL_CAPS_FORCED'].includes(v)) throw new Error('bad textCase ' + v); return v; };
   class Text extends Node {
     constructor() {
       super('TEXT');
-      this._chars = ''; this._st = []; this._base = { fontName: { family: 'Inter', style: 'Regular' }, fontSize: 12, fills: checkPaints([{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }]), textStyleId: '' };
+      this._chars = ''; this._st = []; this._base = { fontName: { family: 'Inter', style: 'Regular' }, fontSize: 12, fills: checkPaints([{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }]), textStyleId: '', textDecoration: 'NONE', textCase: 'ORIGINAL' };
       this.textAutoResize = 'WIDTH_AND_HEIGHT'; this.textAlignHorizontal = 'LEFT'; this.textAlignVertical = 'TOP';
-      this.lineHeight = { unit: 'AUTO' }; this.letterSpacing = { unit: 'PERCENT', value: 0 }; this.textDecoration = 'NONE'; this.textCase = 'ORIGINAL';
+      this.lineHeight = { unit: 'AUTO' }; this.letterSpacing = { unit: 'PERCENT', value: 0 };
       this._ranges = []; this._born = true;
     }
     _get(k) {
@@ -319,15 +325,34 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
     get fills() { return this._get('fills'); }
     set fills(v) { this._set('fills', checkPaints(v)); }
     get textStyleId() { return this._get('textStyleId'); }
-    async setTextStyleIdAsync(id) { if (!TS.find((s) => s.id === id)) throw new Error('unknown text style'); this._set('textStyleId', id); }
-    async setRangeTextStyleIdAsync(s, e, id) { if (!TS.find((x) => x.id === id)) throw new Error('unknown text style'); this._set('textStyleId', id, s, e); }
+    async setTextStyleIdAsync(id) { this._sty(id); }
+    async setRangeTextStyleIdAsync(s, e, id) { this._sty(id, s, e); }
+    // a text style carries decoration and case; setting one the style does not carry detaches the style
+    _sty(id, ...r) {
+      const S = TS.find((x) => x.id === id);
+      if (!S) throw new Error('unknown text style');
+      this._set('textStyleId', id, ...r);
+      for (const k of ['textDecoration', 'textCase']) this._set(k, S[k] || TDEF[k], ...r);
+    }
+    _deco(k, v, s = 0, e = this._st.length) {
+      for (const st of this._st.length ? this._st.slice(s, e) : [this._base]) {
+        const S = st.textStyleId && TS.find((x) => x.id === st.textStyleId);
+        if (S && (S[k] || TDEF[k]) !== v) st.textStyleId = '';
+      }
+      this._set(k, v, s, e);
+    }
     setRangeFontName(s, e, f) { this._font(f); this._set('fontName', { ...f }, s, e); }
     setRangeFontSize(s, e, v) { this._set('fontSize', v, s, e); }
     setRangeFills(s, e, v) { this._set('fills', checkPaints(v), s, e); }
     setRangeLineHeight(s, e, v) { this._rng('lineHeight', s, e, v); }
     setRangeLetterSpacing(s, e, v) { this._rng('letterSpacing', s, e, v); }
-    setRangeTextDecoration(s, e, v) { this._rng('textDecoration', s, e, v); }
-    setRangeTextCase(s, e, v) { this._rng('textCase', s, e, v); }
+    // per character, as real Figma (getStyledTextSegments reports them)
+    get textDecoration() { return this._get('textDecoration'); }
+    set textDecoration(v) { this._ok(); this._deco('textDecoration', okTD(v)); }
+    get textCase() { return this._get('textCase'); }
+    set textCase(v) { this._ok(); this._deco('textCase', okTC(v)); }
+    setRangeTextDecoration(s, e, v) { this._rng('textDecoration', s, e, v); this._deco('textDecoration', okTD(v), s, e); }
+    setRangeTextCase(s, e, v) { this._rng('textCase', s, e, v); this._deco('textCase', okTC(v), s, e); }
     _rng(k, s, e, v) { this._ok(); if (s < 0 || e > this._chars.length || s >= e) throw new Error('bad range'); this._ranges.push([k, s, e, v]); }
     getStyledTextSegments(fields) {
       const out = [];

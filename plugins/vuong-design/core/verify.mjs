@@ -188,6 +188,10 @@
 //    An icon / image leaf's own ICON_FRAME / SRC_SQUASH record replaces (i) (the plain layout proxy cannot draw such a
 //    leaf as the source does: that is why the record exists) by: the norm layout proxy draws the node at every such
 //    record's `to` (within tolFrame) and the source size differs from `to` beyond the crop search on one of them.
+//    On real Figma (figma-real), also (iii): the node's crop of the norm proxy (the target spec, which draws the
+//    record's change) against the Figma screenshot passes (input.cropsRefVsFigma, figma.mjs check; icon thresholds
+//    on an icon leaf). Without (iii) a wrong icon in a norm-resized icon slot was excused by the resize record (t8 s3,
+//    2026-11-24: src crop 0.47 explained, the reference crop 0 / 0, a swapped icon 0.83 explained as well).
 //  - R74 (SRC_SQUASH restoring a FIXED size, the Planora `.say` avatar): a size / icon record with szFrom (apply-norm
 //    turned a FILL / HUG axis into FIXED at `to`) predicts the node's own size as `to` minus its modelled proxy size
 //    (not to - from: the modelled FILL box was never `from` wide); the node no longer counts as a FILL item of its
@@ -236,6 +240,16 @@ const TOL_TEXT = 1;
 const CROP_RATIO = 0.05;
 const TOL_MODEL = 2;
 const CROP_PEAK = 40;
+// Crops on a real Figma screenshot (mark 'figma-real'; measured 2026-11-24 on 18 Planora screens, Chromium source vs
+// Figma raster): identical text differs by up to ratio 0.77 / peak 220 (p90 0.19 / 124), so a text crop cannot gate
+// there; icons stay within 0.076 / 57 while another icon gives at least 0.49 / 122, hence their own threshold.
+//  - a text leaf: reference only (cropReference) once the readback covers every run property (text, size, family,
+//    weight, style, fill, and with D.rd decoration and case; P.unread has no 'text-decoration' / 'text-transform')
+//  - a frame with a dashed / dotted border: reference only once the dash pattern is read back (no 'stroke-style')
+//  - an icon leaf: fails above FIG_ICON_RATIO or at FIG_ICON_PEAK
+//  - anything else: CROP_RATIO / CROP_PEAK as everywhere
+const FIG_ICON_RATIO = 0.25;
+const FIG_ICON_PEAK = 100;
 const CROP_MAX_AREA = 4000;
 const EPS = 1e-6;
 const W = ['A', 'B'];
@@ -1378,7 +1392,18 @@ export function verifyScreen(input, opts = {}) {
   // record that may change the node's pixels is not in norm.unused and its change shows: the node's crop of the norm
   // layout proxy against the layout proxy fails too (input.cropsNormVsLayout). Missing measurements explain nothing.
   const failing = (c) => !!c && (c.ratio > cropRatio || (c.peak ?? 0) >= cropPeak);
+  const figUnread = new Set(figReal ? P3.A.unread || [] : []);
+  const figRef = (e) => {
+    if (!figReal || !e) return false;
+    if (isTextSrc(e.n) && !(e.n.kids && e.n.kids.length)) return !figUnread.has('text-decoration') && !figUnread.has('text-transform');
+    const b = e.n.paint && e.n.paint.border;
+    return Array.isArray(b) && b.some((x) => x && x.w > 0 && /^(dashed|dotted)$/.test(x.style)) && !figUnread.has('stroke-style');
+  };
+  const figIcon = (e) => figReal && !!e && e.n.kind === 'icon' && !(e.n.kids && e.n.kids.length);
+  const cropFails = (c, e) => (figIcon(e) ? c.ratio > (opts.figIconRatio ?? FIG_ICON_RATIO) || (c.peak ?? 0) >= (opts.figIconPeak ?? FIG_ICON_PEAK) : failing(c));
+  const cropReference = [];
   const cropsL = Array.isArray(input.cropsLayout) ? input.cropsLayout : null, cropsNL = Array.isArray(input.cropsNormVsLayout) ? input.cropsNormVsLayout : null;
+  const cropsRF = Array.isArray(input.cropsRefVsFigma) ? input.cropsRefVsFigma : null;
   // R77 for a resize record: an icon / image leaf's own ICON_FRAME / SRC_SQUASH record exists because the plain layout
   // proxy cannot draw the leaf as the source does (Planora's squashed avatar is a 135.5 px FILL box there, the R61
   // open crop), so (i) cannot hold. Instead the crop difference must be the declared resize itself: the norm layout
@@ -1403,14 +1428,21 @@ export function verifyScreen(input, opts = {}) {
     if (!l || !d) return { rs: [], why: 'no crops of the layout and norm layout proxies to tell what the records changed' };
     if (failing(l) && !resized(c, live)) return { rs: [], why: 'the crop fails against the plain layout proxy too (the fault is not the records\' doing)' };
     if (!failing(d)) return { rs: [], why: 'the records do not change this crop (norm layout vs layout passes)' };
+    if (figReal) {
+      const f = cropsRF && at(cropsRF);
+      if (!f) return { rs: [], why: 'no crop of the norm proxy against the Figma screenshot to tell that Figma draws what the records predict' };
+      if (cropFails(f, byId.get(c.id))) return { rs: [], why: 'the norm proxy differs from the Figma screenshot here too (Figma does not draw what the records predict)' };
+    }
     return { rs: live };
   };
   if (norm && input.cropsOn === 'layout') skipped.push('norm-crop');
   if (!Array.isArray(crops)) skipped.push('crop');
   else {
     for (const c of crops) {
-      if (!failing(c)) continue;
-      const e = byId.get(c.id), r = sizeRoot.get(`${c.id}|${c.width}`);
+      const e = byId.get(c.id);
+      if (!cropFails(c, e)) continue;
+      if (figRef(e)) { cropReference.push(c); continue; }
+      const r = sizeRoot.get(`${c.id}|${c.width}`);
       const leafIcon = !!e && (e.n.kind === 'icon' || e.n.kind === 'image');
       // R66: the node's own records that may change its pixels
       const own = norm ? recsOf(c.id) : [];
@@ -1472,7 +1504,7 @@ export function verifyScreen(input, opts = {}) {
     crop.length === 0 && cropLinked.length === 0 && data.length === 0 && needsApproval.length === 0;
   return {
     id: screen.id, checked, total: list.length, unchecked, uncheckedReasons, nodes, roots, modelDeltas, modelFollowers, modelDrift, needsApproval,
-    crop, cropExplained, cropLinked, cropChecked: Array.isArray(crops) ? crops.length : 0, cropWidths: Array.isArray(crops) ? [...new Set(crops.map((c) => c.width))] : [],
+    crop, cropExplained, cropLinked, ...(figReal ? { cropReference } : {}), cropChecked: Array.isArray(crops) ? crops.length : 0, cropWidths: Array.isArray(crops) ? [...new Set(crops.map((c) => c.width))] : [],
     data, pixel, strict, skipped, pass, flags, tol: { frame: tolFrame, text: tolText, model: tolModel },
     ...(normOut ? { norm: normOut } : {}),
   };

@@ -430,3 +430,35 @@ test('compactIds: four equal corner / side bindings become v.r / v.b; different 
   assert.deepEqual(C.screens[0].T.k[0], { v: { b: 5 } });
   assert.equal(D.screens[0].T.v.r0, 1, 'the input is not changed');
 });
+
+test('style variants: a styled run with a decoration, or a case other than its style\'s, binds to a variant style', () => {
+  const font = (o = {}) => ({ ff: 'Be Vietnam Pro', fs: '14px', fw: '600', fst: 'normal', lh: 18, ls: 'normal', c: 'rgb(0, 0, 0)', ta: 'start', td: 'none', tt: 'none', ...o });
+  const T = (id, f, runs = [{ t: 'Giấy ăn' }]) => ({ id, t: 'T', w: 100, h: 18, sz: ['HUG', 'HUG'], font: font(f), runs });
+  const spec = { id: 'n', t: 'F', w: 304, h: 400, sz: ['FIXED', 'HUG'], lay: { d: 'V', p: [0, 0, 0, 0], g: 0, pa: 'S', ca: 'S' }, kids: [
+    T('n.0', { td: 'line-through' }),
+    T('n.1', { tt: 'uppercase' }),
+    T('n.2', { tt: 'lowercase', td: 'underline' }),
+    T('n.3', {}, [{ t: 'Mua ' }, { t: 'xong', s: { td: 'line-through' } }]),
+    T('n.4', { td: 'line-through' }),
+    T('n.5', {}),
+  ] };
+  const ty = 'primitive.typography.';
+  const map = { s0: { 'n.0': { type: ty + 't14-600' }, 'n.1': { type: ty + 't10-600' }, 'n.2': { type: ty + 't10-600' }, 'n.3': { type: ty + 't14-600' },
+    'n.4': { type: ty + 'other' }, 'n.5': { type: ty + 't14-600' } } };
+  const styleTc = new Map([['type/t14-600', ''], ['type/t10-600', 'UPPER']]);
+  const enc = encodeScreen(spec, ctxFor({ map, styleTc }));
+  const S = enc.tables.S, k = Object.fromEntries(enc.T.k.map((e) => [e.o, e]));
+  assert.equal(S[k['n.0'].ts], 'type/t14-600/strike');
+  assert.equal(S[k['n.1'].ts], 'type/t10-600', 'the case is the style\'s: no variant');
+  assert.equal(S[k['n.2'].ts], 'type/t10-600/underline-lower');
+  // a run with its own decoration gets an explicit range style (the runtime sets range decoration before it)
+  assert.equal(S[k['n.3'].ts], 'type/t14-600');
+  assert.equal(S[k['n.3'].rn[1][1].ts], 'type/t14-600/strike');
+  assert.equal(k['n.3'].rn[1][1].td, 'S');
+  assert.equal(S[k['n.4'].ts], 'type/other', 'a style not in the tokens is left as it is');
+  assert.equal(S[k['n.5'].ts], 'type/t14-600');
+  assert.deepEqual(enc.variants, [
+    ['type/t10-600/underline-lower', 'type/t10-600', 'UNDERLINE', 'LOWER'],
+    ['type/t14-600/strike', 'type/t14-600', 'STRIKETHROUGH', 'ORIGINAL'],
+  ]);
+});

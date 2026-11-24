@@ -1,9 +1,12 @@
 // Figma variables and styles from tokens.json (plan 3, Task 6). Pure and deterministic: same tokens -> same bytes.
 //
-// varsPayload(tokens, { limit = PAYLOAD_LIMIT, collections = { primitive: 'Primitive', role: 'Role' } }) -> string[]
+// varsPayload(tokens, { limit = PAYLOAD_LIMIT, collections = { primitive: 'Primitive', role: 'Role' }, variants = [] }) -> string[]
 //   One use_figma code string per batch (UTF-8 bytes <= limit; one self-contained call each: aliases to Primitive
 //   variables made in an earlier batch are found by name). Run them in order. Each returns BatchResult (below).
-// varsPlan(tokens) -> { vars, textStyles, effectStyles, skipped }   the data of the payload, for tests and tools.
+// varsPlan(tokens, variants = []) -> { vars, textStyles, effectStyles, skipped }   the data of the payload, for tests and tools.
+//   variants: figma-encode.mjs enc.variants ([name, base style, decoration, case], see "Style variants" there): each is
+//   a text style copied from its base with that textDecoration ('' = NONE) and textCase, listed after the token styles;
+//   one whose base is not a token style is skipped (reason 'variant-base-missing').
 // varNames(tokens) -> string[]   names of the Figma variables the payload creates: the table `V` of figma-encode.mjs
 //   (tokens order: primitive groups in order, then role tokens). Font family / weight, shadow and typography have no
 //   variable (they are styles, or values inside a style); a role token that aliases a typography or shadow has none.
@@ -23,7 +26,8 @@
 //   border, opacity (x 100, as above), else WIDTH_HEIGHT). Colours: components 0..1 and alpha in the COLOR value {r, g, b, a}.
 // Text styles: fontName (the runtime's face resolution: exact face, else the nearest weight of the family, else
 //   Inter; every substitution is in fontMissing), fontSize, lineHeight (PIXELS from $extensions.lineHeightPx, else
-//   PERCENT = ratio x 100), letterSpacing PIXELS, textCase from $extensions.textTransform, italic from fontStyle.
+//   PERCENT = ratio x 100), letterSpacing PIXELS, textCase from $extensions.textTransform, italic from fontStyle,
+//   textDecoration NONE (a variant: its own decoration and case).
 //   Effect styles: one DROP_SHADOW / INNER_SHADOW per layer, same order as the encoder's `sh` (first = top).
 // Skipped (never silently): a token the payload cannot express (colour space other than srgb, unit other than px, an
 //   alias that resolves nowhere, a shadow without $type): varsPlan().skipped, and in the first batch's result.
@@ -84,7 +88,7 @@ const roleScope = (name) => (/radius/.test(name) ? 3 : /padding|gap/.test(name) 
 // T8 item E: Figma reads a FLOAT variable bound to opacity as a percentage (0..100), so the token's 0..1 is x 100
 const stored = (val, sc) => (sc === 5 ? r4(val * 100) : val);
 
-export function varsPlan(tokens) {
+export function varsPlan(tokens, variants = []) {
   const skipped = [], vars = [];
   const desc = (t) => (typeof t.$description === 'string' ? t.$description : '');
   const known = new Set();
@@ -147,6 +151,14 @@ export function varsPlan(tokens) {
     });
     if (!fx.length || fx.some((f) => f === null)) { skipped.push({ path, reason: 'shadow-layer-unresolved' }); continue; }
     effectStyles.push({ name: 'shadow/' + key, fx, desc: desc(t) });
+  }
+  const own = new Set(textStyles.map((t) => t.name));
+  for (const [name, base, td, tc] of [...variants].sort((a, b) => cmp(a[0], b[0]))) {
+    const b = textStyles.find((t) => t.name === base);
+    if (!b || own.has(name)) { skipped.push({ path: name, reason: b ? 'variant-name-taken' : 'variant-base-missing' }); continue; }
+    own.add(name);
+    const what = [td && td.toLowerCase(), tc !== (b.tc || 'ORIGINAL') && `case ${tc.toLowerCase()}`].filter(Boolean).join(', ');
+    textStyles.push({ ...b, name, tc: tc === 'ORIGINAL' ? '' : tc, td: td || '', desc: [b.desc, `vuong-design variant of ${base}: ${what}`].filter(Boolean).join(' | ') });
   }
   skipped.sort((a, b) => cmp(a.path, b.path) || cmp(a.reason, b.reason));
   return { vars, textStyles, effectStyles, skipped };
@@ -217,7 +229,7 @@ const load = async (f) => { const k = f.family + ' ' + f.style; if (!LD.has(k)) 
 const TS = new Map, ES = new Map;
 for (const s of await F.getLocalTextStylesAsync()) if (!TS.has(s.name)) TS.set(s.name, s);
 for (const s of await F.getLocalEffectStylesAsync()) if (!ES.has(s.name)) ES.set(s.name, s);
-for (const [name, ff, fw, it, fs, lh, ls, tc, desc] of D.t) {
+for (const [name, ff, fw, it, fs, lh, ls, tc, desc, td] of D.t) {
   try {
     const fm = AV.has(ff) ? ff : 'Inter', want = !!it;
     const p = (AV.get(fm) || []).slice().sort((a, b) => (a.it !== want) - (b.it !== want) || Math.abs(a.w - fw) - Math.abs(b.w - fw))[0] || { s: 'Regular' };
@@ -228,12 +240,13 @@ for (const [name, ff, fw, it, fs, lh, ls, tc, desc] of D.t) {
     if (made) { s = F.createTextStyle(); s.name = name; TS.set(name, s); }
     else { try { await load(s.fontName); } catch (x) {} }
     const lhv = lh ? { unit: lh[0] === 'p' ? 'PIXELS' : 'PERCENT', value: lh[1] } : { unit: 'AUTO' };
-    const lsv = { unit: 'PIXELS', value: ls }, tcv = tc || 'ORIGINAL';
+    const lsv = { unit: 'PIXELS', value: ls }, tcv = tc || 'ORIGINAL', tdv = td || 'NONE';
     if (made || s.fontName.family !== face.family || s.fontName.style !== face.style) { s.fontName = face; changed = true; }
     if (made || s.fontSize !== fs) { s.fontSize = fs; changed = true; }
     if (made || s.lineHeight.unit !== lhv.unit || (lhv.unit !== 'AUTO' && !near(s.lineHeight.value, lhv.value))) { s.lineHeight = lhv; changed = true; }
     if (made || s.letterSpacing.unit !== 'PIXELS' || !near(s.letterSpacing.value, ls)) { s.letterSpacing = lsv; changed = true; }
     if (made || s.textCase !== tcv) { s.textCase = tcv; changed = true; }
+    if (made || s.textDecoration !== tdv) { s.textDecoration = tdv; changed = true; }
     if (made || s.description !== desc) { s.description = desc; changed = true; }
     tally('textStyles', name, made, changed, s);
   } catch (x) { err('textStyle', name, x); }
@@ -255,12 +268,12 @@ for (const [name, fx, desc] of D.e) {
 return R;
 `;
 
-export function varsPayload(tokens, { limit = PAYLOAD_LIMIT, collections = {} } = {}) {
+export function varsPayload(tokens, { limit = PAYLOAD_LIMIT, collections = {}, variants = [] } = {}) {
   const cn = [collections.primitive || 'Primitive', collections.role || 'Role'];
-  const plan = varsPlan(tokens);
+  const plan = varsPlan(tokens, variants);
   const items = [
     ...plan.vars.map((v) => ['v', JSON.stringify([v.name, v.coll, v.ty, v.val, v.sc, v.desc])]),
-    ...plan.textStyles.map((t) => ['t', JSON.stringify([t.name, t.ff, t.fw, t.it, t.fs, t.lh, t.ls, t.tc, t.desc])]),
+    ...plan.textStyles.map((t) => ['t', JSON.stringify([t.name, t.ff, t.fw, t.it, t.fs, t.lh, t.ls, t.tc, t.desc, ...(t.td ? [t.td] : [])])]),
     ...plan.effectStyles.map((e) => ['e', JSON.stringify([e.name, e.fx, e.desc])]),
   ];
   const [pre, post] = RUNTIME.split('__DATA__');

@@ -20,12 +20,12 @@ if(r.m&&!S.fm.some(m=>m.o==o&&m.style==r.m.style&&m.family==r.m.family))S.fm.pus
 return r.f},
 rgb=h=>{const v=parseInt(h.slice(1,7),16);return{r:(v>>16&255)/255,g:(v>>8&255)/255,b:(v&255)/255}},al=h=>h[7]?parseInt(h.slice(7),16)/255:1,
 ra=h=>({...rgb(h),a:al(h)}),P=h=>al(h)<1?{type:'SOLID',color:rgb(h),opacity:al(h)}:{type:'SOLID',color:rgb(h)},PC=i=>P(i==U?BK:D.C[i]),
-x2=v=>Math.round(v*255).toString(16).padStart(2,'0'),
-pl=ps=>{if(ps==MX||!ps)return;const a=ps.filter(p=>p.visible!==false).map(p=>p.type=='SOLID'?'#'+x2(p.color.r)+x2(p.color.g)+x2(p.color.b)+(p.opacity<1?x2(p.opacity):''):p.type);return a[0]?a:U},
+x2=v=>Math.round(v*255).toString(16).padStart(2,'0'),HX=c=>'#'+x2(c.r)+x2(c.g)+x2(c.b),
+pl=ps=>{if(ps==MX||!ps)return;const a=ps.filter(p=>p.visible!==false).map(p=>p.type=='SOLID'?HX(p.color)+(p.opacity<1?x2(p.opacity):''):p.type);return a[0]?a:U},
 NI=o=>S.i[o]||(S.i[o]={}),ub=(o,prop,name,reason)=>(NI(o).u=NI(o).u||[]).push({prop,name,reason}),
 gv=(o,k,i)=>{if(i==U)return;const v=VM.get(D.V[i]);v||ub(o,k,D.V[i],'missing-in-file');return v},
 bn=(o,k,i,n,f)=>{const v=gv(o,k,i);if(v)try{n.setBoundVariable(f,v)}catch(x){ub(o,k,v.name,BF)}},
-bv=(o,k,v,p)=>{if(v)try{return F.variables.setBoundVariableForPaint(p,'color',v)}catch(x){ub(o,k,v.name,BF)}return p},
+BC=p=>p.boundVariables&&p.boundVariables.color,BA=(m,k)=>m[k]&&(m[k].length?m[k][0]:m[k]),bv=(o,k,v,p)=>{if(v)try{return F.variables.setBoundVariableForPaint(p,'color',v)}catch(x){ub(o,k,v.name,BF)}return p},
 bp=(o,k,i,p)=>bv(o,k,gv(o,k,i),p),
 sty=async(o,k,i,f)=>{const s=SM.get(D.S[i]);if(!s)return ub(o,k,D.S[i],'missing-in-file');const t=NOW();try{await f(s.id)}catch(x){ub(o,k,D.S[i],BF)}pt('style',t)},
 isAL=n=>!!n&&n.type=='FRAME'&&n.layoutMode!='NONE',SZ={F:'FILL',H:'HUG',X:'FIXED'},AX={C:'CENTER',E:'MAX',B:'BASELINE'},
@@ -55,14 +55,16 @@ if(c.w!=U)a+=` stroke-width="${c.w}"`;
 return vb===null?mk:`<svg xmlns="http://www.w3.org/2000/svg" width="${e.w}" height="${e.h}" viewBox="${vb}"><g color="${cc}"${a}>${mk}</g></svg>`},
 inv=([[a,b,e],[c,d,f]],t=a*d-b*c)=>[[d/t,-b/t,(b*f-d*e)/t],[-c/t,a/t,(c*e-a*f)/t]],
 // gradientTransform: inverse of (gradient space -> node fractions)
+GT=g=>'GRADIENT_'+(g.k=='R'?'RADIAL':'LINEAR'),
 grad=(g,e)=>{const[a,b,c,d]=g.p,R=g.k=='R',x=c-a,y=d-b,nx=-y*e.h/e.w,ny=x*e.w/e.h;
-return{type:'GRADIENT_'+(R?'RADIAL':'LINEAR'),gradientStops:g.s.map(([position,i])=>({position,color:ra(D.C[i])})),
+return{type:GT(g),gradientStops:g.s.map(([position,i])=>({position,color:ra(D.C[i])})),
 gradientTransform:inv(R?[[2*c,0,a-c],[0,2*d,b-d]]:[[x,nx,a-nx/2],[y,ny,b-ny/2]])}},
 radius=(n,e,o,r=e.rd)=>{if(r>=0)n.cornerRadius=r;CO.forEach((f,i)=>{if(r&&r.length)n[f]=r[i];bn(o,'r'+i,(e.v||{})['r'+i],n,f)})},
-stroke=(n,e,o)=>{const b=e.bd,v=e.v||{},w=b.w.length?b.w:[b.w,b.w,b.w,b.w],m=Math.max(...w);
+X4=v=>[v,v,v,v],W4=b=>b.w.length?b.w:X4(b.w),DP=(b,m=Math.max(...W4(b)))=>(b.d=='dashed'?[3*m,3*m]:[m,m]).map(r2),
+stroke=(n,e,o)=>{const b=e.bd,v=e.v||{},w=W4(b);
 n.strokes=[bp(o,'sc',v.sc,PC(b.c))];n.strokeAlign='INSIDE';
 SI.forEach((f,i)=>{n[f]=w[i];bn(o,'b'+i,v['b'+i],n,f)});
-if(b.d)n.dashPattern=b.d=='dashed'?[3*m,3*m]:[m,m]},
+if(b.d)n.dashPattern=DP(b)},
 paint=async(n,e,o)=>{const v=e.v||{},fl=[],im=e.im;
 if(e.bg!=U)fl.push(bp(o,'bg',v.bg,PC(e.bg)));
 for(const g of e.gr||[])fl.push(grad(g,e));
@@ -85,8 +87,8 @@ if(!T){n.fills=[];n.clipsContent=false;n.name=e.y?e.y+' '+o:o}
 pd(n,'id',o);
 if(!par){pd(n,'screen',sc.screen);pd(n,'file',sc.file)}
 t=NOW();await(T?txt:paint)(n,e,o);pt(T?'text':'paint',t);
-if(e.t=='V'&&!gl){const b={fills:gv(o,'vf',v.vf),strokes:gv(o,'vs',v.vs)},q={fills:e.ic.f,strokes:e.ic.s},H=p=>'#'+x2(p.color.r)+x2(p.color.g)+x2(p.color.b);// only a paint that inherits the icon colour is bound; a child's own colour stays
-if(b.fills||b.strokes)for(const x of n.findAll(()=>1))for(const k in b)if(b[k]&&x[k]&&x[k]!=MX&&x[k][0])x[k]=x[k].map(p=>p.type=='SOLID'&&H(p)==D.C[q[k]].slice(0,7).toLowerCase()?bv(o,k=='fills'?'vf':'vs',b[k],p):p)}
+if(e.t=='V'&&!gl){const b={fills:gv(o,'vf',v.vf),strokes:gv(o,'vs',v.vs)},q={fills:e.ic.f,strokes:e.ic.s};// only a paint that inherits the icon colour is bound; a child's own colour stays
+if(b.fills||b.strokes)for(const x of n.findAll(()=>1))for(const k in b)if(b[k]&&x[k]&&x[k]!=MX&&x[k][0])x[k]=x[k].map(p=>p.type=='SOLID'&&HX(p.color)==D.C[q[k]].slice(0,7).toLowerCase()?bv(o,k=='fills'?'vf':'vs',b[k],p):p)}
 if(e.op!=U)n.opacity=e.op;
 bn(o,'op',v.op,n,'opacity');
 if(T&&(e.ar||gl))rs();
@@ -125,39 +127,39 @@ fn=f=>f.family+' '+f.style,
 // sig: a bound property / paint contributes its variable id, a styled text its text style id (a variable or style
 // value change is not an edit); raw = the walk before that rule (sigs stored by earlier builds)
 sig=(root,raw)=>{let h=0x811c9dc5;const q=v=>v==MX?'M':typeof v=='number'?r2(v):v,
-w=(n,t)=>{const f=n.fontName,c=n.cornerRadius,bv=n.boundVariables||{},B=k=>{const a=!raw&&bv[k]&&(bv[k].length?bv[k][0]:bv[k]);return a&&a.id&&'V'+a.id},
-y=n.textStyleId,st=!raw&&y&&y!=MX&&'S'+y,P=ps=>raw||ps==MX||!ps?pl(ps):ps.map(p=>p.boundVariables&&p.boundVariables.color?'V'+p.boundVariables.color.id:pl([p])),
+w=(n,t)=>{const f=n.fontName,c=n.cornerRadius,bv=n.boundVariables||{},B=k=>{const a=!raw&&BA(bv,k);return a&&a.id&&'V'+a.id},
+y=n.textStyleId,st=!raw&&y&&y!=MX&&'S'+y,P=ps=>raw||ps==MX||!ps?pl(ps):ps.map(p=>BC(p)?'V'+BC(p).id:pl([p])),
 s=JSON.stringify([gd(n,'id'),n.type,t?0:r2(n.x),t?0:r2(n.y),B('width')||r2(n.width),B('height')||r2(n.height),P(n.fills),P(n.strokes),
 st||(f&&f!=MX?fn(f):q(f)),CO.some(B)?CO.map(k=>B(k)||r2(n[k])):c==MX?CO.map(k=>n[k]):c,...SK.map(k=>k=='fontSize'&&st||B(k)||q(n[k])),...raw?[]:[q(y)||'',n.effectStyleId||'']]);
 for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619)>>>0;
 for(const c of n.children||[])w(c)};
 w(root,1);return('0000000'+h.toString(16)).slice(-8)},
-pv=ps=>{const p=ps!=MX&&ps&&ps.find(x=>x.boundVariables&&x.boundVariables.color);return p&&VN.get(p.boundVariables.color.id)},
+pv=ps=>{const p=ps!=MX&&ps&&ps.find(BC);return p&&VN.get(BC(p).id)},
 // d: fields whose actual value differs from the encoded intent
 VF={bg:'fills',sc:'strokes',w:'width',h:'height',op:'opacity',fs:'fontSize',vf:'vf',vs:'vs'},J=JSON.stringify,
 so=o=>J(Object.keys(o).sort().map(k=>[k,o[k]])),
 run=(e,t)=>{const v=e.v||{},fk=i=>{const[f,w,x]=D.F[i];return f+'|'+w+'|'+!!x},
-b=[e.fs==U?12:e.fs,fk(e.f),e.c==U?BK:D.C[e.c],D.S[e.ts]||'',D.V[v.c]||''],c=[],o=[];
+b=[e.fs==U?12:e.fs,fk(e.f),e.c==U?BK:D.C[e.c],D.S[e.ts]||'',D.V[v.c]||'',e.td||'',e.tt||''],c=[],o=[];
 for(const r of e.rn||[t.length]){const[l,x]=r.length?r:[r],xv=x&&x.v||{},
-s=x?[x.fs!=U?x.fs:b[0],x.f!=U?fk(x.f):b[1],x.c!=U?D.C[x.c]:b[2],x.ts!=U?D.S[x.ts]:b[3],x.c!=U||xv.c!=U?D.V[xv.c]||'':b[4]]:b;
+s=x?[x.fs!=U?x.fs:b[0],x.f!=U?fk(x.f):b[1],x.c!=U?D.C[x.c]:b[2],x.ts!=U?D.S[x.ts]:b[3],x.c!=U||xv.c!=U?D.V[xv.c]||'':b[4],x.td!=U?x.td:b[5],x.tt!=U?x.tt:b[6]]:b;
 for(let k=0;k<l;k++)c.push(s)}
 for(const s of c){const p=o[o.length-1];if(p&&J(p.slice(1))==J(s))p[0]++;else o.push([1,...s])}
 return o},
 read=(n,e,ov)=>{const T=n.type=='TEXT',v=e.v||{},d={},vw={},vg={},bv=n.boundVariables||{},o2=e.bd&&e.bd.o,
 ck=(k,w,g)=>{if(J(w)!=J(g))d[k]=g};
-if(T){const t=e.ic?e.ic.g:e.tx,sg=n.getStyledTextSegments(['fontSize','fontName','fills','textStyleId']),
-g=sg.map(s=>[s.characters.length,s.fontSize,s.fontName.family+'|'+wt(s.fontName.style).join('|'),(pl(s.fills)||[''])[0],SN.get(s.textStyleId)||'',pv(s.fills)||'']);
+if(T){const t=e.ic?e.ic.g:e.tx,sg=n.getStyledTextSegments(['fontSize','fontName','fills','textStyleId','textDecoration','textCase']),q=(v,z)=>v[0]==z?'':v[0],
+g=sg.map(s=>[s.characters.length,s.fontSize,s.fontName.family+'|'+wt(s.fontName.style).join('|'),(pl(s.fills)||[''])[0],SN.get(s.textStyleId)||'',pv(s.fills)||'',q(s.textDecoration,'N'),q(s.textCase,'O')]);
 ck('text',t,n.characters);
 if(J(g)!=J(run(e,t)))d.runs=g.map((x,i)=>(x[2]=fn(sg[i].fontName),x))}
 else{const b=e.bd,st=pl(n.strokes);
-ck('fills',ov?[]:[...e.bg!=U?[D.C[e.bg]]:[],...(e.gr||[]).map(g=>'GRADIENT_'+(g.k=='R'?'RADIAL':'LINEAR')),...e.im?['IMAGE']:[]],pl(n.fills)||[]);
-ck('strokes',b&&(ov||!b.o)?{c:[D.C[b.c]],w:b.w.length?b.w:[b.w,b.w,b.w,b.w]}:null,st?{c:st,w:SI.map(k=>r2(n[k]))}:null);
-const ri=e.rd>=0?[e.rd,e.rd,e.rd,e.rd]:e.rd||[0,0,0,0];ck('radius',ri,CO.map((k,i)=>bv[k]?ri[i]:r2(n[k])));// bound corner: vars checks it
+ck('fills',ov?[]:[...e.bg!=U?[D.C[e.bg]]:[],...(e.gr||[]).map(GT),...e.im?['IMAGE']:[]],pl(n.fills)||[]);
+ck('strokes',b&&(ov||!b.o)?{c:[D.C[b.c]],w:W4(b),...b.d&&{d:DP(b)}}:null,st?{c:st,w:SI.map(k=>r2(n[k])),...n.dashPattern[0]&&{d:n.dashPattern.map(r2)}}:null);
+const ri=e.rd>=0?X4(e.rd):e.rd||[0,0,0,0];ck('radius',ri,CO.map((k,i)=>bv[k]?ri[i]:r2(n[k])));// bound corner: vars checks it
 ck('es',ov?'':D.S[e.es]||'',SN.get(n.effectStyleId)||'');
 for(const k of['fills','strokes'])if(pv(n[k]))vg[k]=pv(n[k])}
 ck('op',ov||e.op==U?1:e.op,r2(n.opacity));
 for(const k in v)if(ov?/^(sc|b\d|r\d)$/.test(k):!(o2&&/^(sc|b\d)$/.test(k))&&!(T&&k=='c'))vw[VF[k]]=D.V[v[k]];
-for(const k in bv){const a=bv[k]&&(bv[k].length?bv[k][0]:bv[k]);if(a&&a.id&&k!='fills'&&k!='strokes')vg[k]=VN.get(a.id)||a.id}
+for(const k in bv){const a=BA(bv,k);if(a&&a.id&&k!='fills'&&k!='strokes')vg[k]=VN.get(a.id)||a.id}
 if(e.ic&&e.ic.i!=U&&!ov){const x=n.findAll(()=>1);if(!x[0])d.icon=0;for(const[k,c]of[['vf','fills'],['vs','strokes']]){const p=x.map(y=>pv(y[c])).find(z=>z);if(p)vg[k]=p}}
 const sw=vw[SI[0]];if(sw&&SI.every(k=>vw[k]==sw)&&SI.some(k=>vg[k]==sw)&&SI.every(k=>!vg[k]||vg[k]==sw))SI.forEach(k=>vg[k]=sw);
 if(so(vw)!=so(vg))d.vars=vg;

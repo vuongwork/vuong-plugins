@@ -148,6 +148,31 @@ test('text styles: font, size, line height px / percent, letter spacing px, case
   ]);
 });
 
+test('style variants: a copy of the base style with its decoration and case; rerun is a no-op; a missing base is skipped', async () => {
+  const variants = [['type/t12-400/strike', 'type/t12-400', 'STRIKETHROUGH', 'ORIGINAL'], ['type/t10_5-600/underline-original', 'type/t10_5-600', 'UNDERLINE', 'ORIGINAL'],
+    ['type/nope/strike', 'type/nope', 'STRIKETHROUGH', 'ORIGINAL']];
+  const p = varsPlan(small(), variants);
+  assert.deepEqual(p.textStyles.map((t) => t.name), ['type/t12-400', 'type/t10_5-600', 'type/t10_5-600/underline-original', 'type/t12-400/strike']);
+  assert.ok(p.skipped.some((x) => x.path === 'type/nope/strike' && x.reason === 'variant-base-missing'));
+  const f = makeFakeFigma({ fonts });
+  const codes = varsPayload(small(), { variants });
+  const [r] = await runAll(codes, f);
+  assert.deepEqual(r.errors, []);
+  const ts = Object.fromEntries((await f.getLocalTextStylesAsync()).map((s) => [s.name, s]));
+  const a = ts['type/t12-400'], v = ts['type/t12-400/strike'], u = ts['type/t10_5-600/underline-original'];
+  assert.equal(a.textDecoration, 'NONE');
+  for (const k of ['fontName', 'fontSize', 'lineHeight', 'letterSpacing', 'textCase']) assert.deepEqual(v[k], a[k], k);
+  assert.equal(v.textDecoration, 'STRIKETHROUGH');
+  assert.match(v.description, /^body \| vuong-design variant of type\/t12-400: strikethrough$/);
+  assert.equal(ts['type/t10_5-600'].textCase, 'UPPER');
+  assert.equal(u.textCase, 'ORIGINAL');
+  assert.equal(u.textDecoration, 'UNDERLINE');
+  const [r2] = await runAll(codes, f);
+  assert.deepEqual(r2.textStyles, { created: 0, updated: 0, unchanged: 4 });
+  // without variants the token styles' payload is unchanged apart from the runtime
+  assert.ok(!varsPayload(small())[0].includes('/strike'));
+});
+
 test('a font family that is not available falls back to Inter and is reported', async () => {
   const f = makeFakeFigma({ fonts: ['Inter|Regular', 'Inter|Bold'] });
   const [r] = await runAll(varsPayload(small()), f);
@@ -236,7 +261,12 @@ test('Planora: varNames equals the encoder table V, same order', () => {
 });
 
 test('Planora: payload batches <= 50 000 B, creates every variable and every style the encoder can emit, rerun is a no-op', async () => {
-  const codes = varsPayload(planora.tokens);
+  // every style name the encoder emits for the 18 screens, style variants included
+  const tables = newTables(planora.V);
+  const encs = planora.screens.map((s) => encodeScreen(s.spec, { screen: s.id, file: planora.file, W: s.W, map: planora.map, svgDefs: s.svgDefs, tables, tokens: planora.tokens }));
+  const variants = encs.flatMap((e) => e.variants);
+  assert.ok(variants.some((v) => v[0] === 'type/t14-600/strike'), 'done shopping items: t14-600 struck through');
+  const codes = varsPayload(planora.tokens, { variants });
   assert.ok(codes.every((c) => bytes(c) <= 50000));
   const f = makeFakeFigma({ fonts });
   const rs = await runAll(codes, f);
@@ -246,9 +276,6 @@ test('Planora: payload batches <= 50 000 B, creates every variable and every sty
   assert.equal(names.size, planora.V.length);
   for (const n of planora.V) assert.ok(names.has(n), n);
   assert.ok((await f.variables.getLocalVariablesAsync()).every((v) => v.scopes.length && !v.scopes.includes('ALL_SCOPES')));
-  // every style name the encoder emits for the 18 screens
-  const tables = newTables(planora.V);
-  for (const s of planora.screens) encodeScreen(s.spec, { screen: s.id, file: planora.file, W: s.W, map: planora.map, svgDefs: s.svgDefs, tables, tokens: planora.tokens });
   assert.ok(tables.S.length > 0);
   const styles = new Set([...(await f.getLocalTextStylesAsync()), ...(await f.getLocalEffectStylesAsync())].map((s) => s.name));
   for (const n of tables.S) assert.ok(styles.has(n), n);

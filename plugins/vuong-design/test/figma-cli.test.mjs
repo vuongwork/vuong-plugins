@@ -267,7 +267,7 @@ async function figmaFor(dsName, opts = {}) {
   return { out, F, roles, res };
 }
 
-test('check: a readback matching the page passes in the norm role (screenshot rescaled from scale 4), and the 4 readback mutations are caught', { skip }, async () => {
+test('check: a readback matching the page passes in the norm role (screenshot rescaled from scale 4), and the readback mutations are caught', { skip }, async () => {
   const { out, F, roles } = await figmaFor('lh', { fourX: true });
   assert.deepEqual(roles, { s0: 'norm', s1: 'norm' });
   const q = quiet();
@@ -276,9 +276,13 @@ test('check: a readback matching the page passes in the norm role (screenshot re
   for (const s of rep.screens) {
     assert.equal(s.summary.pass, true, `${s.summary.screen}: ${JSON.stringify({ u: s.report.unchecked, sk: s.report.skipped, d: s.report.data, r: s.report.roots.filter((r) => !r.explainedBy), a: s.report.needsApproval, c: s.report.crop })}`);
     assert.equal(s.figma.role, 'norm');
-    assert.deepEqual(s.report.skipped, ['figma-crop-B', 'figma-effect', 'figma-text-decoration', 'figma-text-transform']);
+    // D.rd: text decoration / case and the dash pattern are read back, so only crop-B and effects stay unread
+    assert.deepEqual(s.report.skipped, ['figma-crop-B', 'figma-effect']);
     assert.ok(s.report.cropChecked > 0 && s.report.cropWidths.join() === 'A', 'crops measured on the screenshot at A');
-    assert.deepEqual(s.mutations.results.map((r) => [r.kind, r.caught]), [['figMove', true], ['figText', true], ['figFill', true], ['figDrop', true]]);
+    // no dashed stroke and no icon on these screens: figDash / figIconPx have no candidate (skipped, never missed)
+    assert.deepEqual(s.mutations.results.map((r) => [r.kind, r.caught]), [['figMove', true], ['figText', true], ['figFill', true], ['figDrop', true],
+      ['figCase', true], ['figDash', null], ['figIconPx', null]]);
+    assert.deepEqual(s.mutations.results.find((r) => r.kind === 'figCase').found, ['data|n.1.0|font-style']);
     assert.equal(s.figma.proxyVsFigma.A.max, 0);
   }
   assert.deepEqual(rep.screens.map((s) => s.figma.shot.rescaled), [true, false]);

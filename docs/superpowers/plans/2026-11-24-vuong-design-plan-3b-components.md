@@ -19,7 +19,7 @@
 - **Mỗi lần gọi ≤ 50 000 byte** (`PAYLOAD_LIMIT`). Runtime màn giữ ≤ 16 384 B như đã cài (hiện 16 330 B): mọi phần component nằm ở `figma-runtime-cmp.js` (≤ 16 384 B, test như runtime màn); runtime màn chỉ được thêm phần tạo instance, nếu vượt thì chuyển code ít dùng sang module mới, không nới giới hạn.
 - **Không đổi kết quả khi tắt component** (`--no-components`, cũng là mặc định khi `components.json` không có): lô, readback và kết quả `check` giống từng byte với kế hoạch 3. Test so với fixture hiện có.
 - **Tất định:** `components.json` không phụ thuộc thứ tự màn hay thứ tự con; không đồng hồ.
-- **Không có model trong pipeline.** Tên component lấy theo luật (lớp CSS của gốc cây con, xem Task 2). Chỗ luật không đặt được tên thì để `ask` trong `vd-names.draft.json` như tên role của kế hoạch 2. AI chỉ được điền bản nháp; script kiểm tra (định dạng, không trùng, không đổi tên đã duyệt). Agent không bao giờ tự ghi `approved: true`.
+- **Không có model trong pipeline.** Tên component lấy theo luật (lớp CSS của gốc cây con, xem Task 2). Chỗ luật không đặt được tên, loại hay trạng thái thì công cụ ghi gợi ý vào `vd-components.draft.json`; người dùng chép phần đồng ý sang `vd-components.json`. AI chỉ được điền bản nháp; script kiểm tra (định dạng, không trùng, không đổi tên đã duyệt). Agent không bao giờ tự ghi `approved: true`.
 - **Trạng thái sinh theo luật là đề xuất.** Chỉ dựng lên Figma sau khi người dùng duyệt bộ luật (Task 5). Luật không áp được → ghi vào báo cáo độ phủ, không tự vẽ.
 - **Không đè phần sửa tay**, mở rộng cho component: component có `vuongdesign/sig` như frame màn; component đã sửa tay → giữ, báo `skippedEdited`, màn dùng nó vẫn dựng bằng instance của bản đang có. `--force cmp:<tên>` mới ghi đè.
 - **Chạy lại không tạo trùng:** component và component set tìm theo `vuongdesign/cmp` trước khi tạo.
@@ -55,23 +55,36 @@
 
 **Files:** tạo `core/components.mjs`, `test/components.test.mjs`.
 
-`findComponents(screens: [{ screen, spec }], { bareMin = 2 })`:
-- **Chữ ký cấu trúc** của một cây con: `roleSig` của gốc (inventory.mjs, đã bỏ lớp trạng thái qua `STATE`) + loại node, layoutMode, số con và chữ ký con theo thứ tự, đệ quy. Không gồm: nội dung chữ, icon cụ thể, kích thước, màu. Đếm lần xuất hiện trên toàn file (mọi màn).
-- **Loại** (`kindOf`, theo thẻ / role / thuộc tính của gốc trong IR): `button` (thẻ button, `role=button`, `a` có lớp btn), `input` (input/textarea/select), `checkbox` (input checkbox, `role=checkbox`), `radio` (input radio, `role=radio`), `switch` (`role=switch`), `chip` (`aria-pressed`, hoặc class có từ `chip` ngoài `role=tablist`), `tab` (`role=tab`, con của `role=tablist`), `other`.
-- **Chọn ứng viên** (spec mục 10, không có ngưỡng số lần hay số màn cố định), mỗi ứng viên ghi `reason`:
-  - `control`: loại khác `other` → component, kể cả 1 lần, kể cả 1 node.
-  - `state`: có lần xuất hiện mang lớp trạng thái (`is-*`, `data-state`, lớp `STATE`) → component set.
-  - `class`: gốc có class không phải trạng thái, mọi lần xuất hiện của class đó cùng chữ ký, gốc có hình riêng (nền, viền, bo góc hoặc bóng) và cây ≥ 2 node → component, kể cả 1 lần. Class có ở các cây khác chữ ký → không tự chọn, vào `proposed` cho từng chữ ký.
-  - `bare`: thẻ trần (không class) cùng chữ ký ≥ `bareMin` lần, ≥ 2 node → `proposed` (không dựng thành component). Câu `ask` khoá `cmp:<chữ ký rút gọn>` trong `vd-names.draft.json` (giữ / bỏ, tên); chỉ thành component khi `vd-names.json` có câu trả lời giữ. Agent không ghi câu trả lời.
-  - Không bao giờ: gốc màn, khung không có hình riêng (trừ `control` / `state`), khối 1 node (trừ `control`).
-  - Lồng nhau: `control` luôn là component riêng (instance lồng trong component ngoài). Ứng viên `class` / `bare` nằm trong một ứng viên lớn hơn có cùng số lần xuất hiện thì không tách riêng.
-  - Người dùng bỏ một component qua `vd-names.json` (`cmp:<tên>`: bỏ) → dựng bằng layer rời, ghi `skipped` lý do `user`.
-- **Biến thể:** các lần xuất hiện có cùng chữ ký nhưng khác lớp trạng thái (`is-*`, `data-state`, các lớp `STATE`), hoặc khác paint/type theo role, gộp thành một component set; trục biến thể lấy từ tên lớp (`state=selected`). Khác biệt chỉ do đo (≤ 0,5 px, R67) không tạo biến thể.
-- **Thuộc tính:** chữ khác nhau giữa các lần xuất hiện → TEXT; con có ở lần này, không có ở lần khác (cùng chữ ký phần còn lại) → BOOLEAN; icon khác nhau ở cùng vị trí → INSTANCE_SWAP (mỗi icon khác nhau thành một component icon trong set `icon/*`).
-- **Tên:** lớp CSS đặc trưng nhất của gốc (lớp không phải trạng thái, xuất hiện ở mọi lần): `.task-row` → `task-row`. Không có lớp (thẻ trần) → tên `ask` trong `vd-names.draft.json` (khoá `cmp:<chữ ký rút gọn>`), tạm `cmp-<n>`.
-- Ra `components.json`: `{ v: 1, components: [{ name, kind, reason, sig, count, screens, variants: [{ props, nodes: [{ screen, node }] }], props: [{ name, type, default }], icons? }], proposed: [{ sig, count, screens, nodes, ask }], skipped: [{ sig, count, reason }] }`.
+`findComponents(screens: [{ screen, spec }], { bareMin = 2, decl })`; `decl` = `readComponentsFile('vd-components.json')` (người dùng ghi; thiếu file = {}):
 
-- [ ] **Step 1: Viết test** trên spec dựng tay: 3 hàng giống nhau khác chữ → 1 component, 1 thuộc tính TEXT; 2 hàng thường + 1 hàng `is-done` → 1 set, 2 biến thể; con thiếu ở 1 lần → BOOLEAN; icon khác → INSTANCE_SWAP; `noise is not a variant` (gap 12 / 12,01); đảo thứ tự màn → `components.json` giống từng byte; nút xuất hiện 1 lần, 1 màn → component `reason: control`; khối có class riêng và nền, 1 lần → component `reason: class`; khung có class nhưng không có hình riêng → không chọn; thẻ trần 2 lần → `proposed` có câu `ask`, không vào `components`; có câu trả lời giữ trong `vd-names.json` → thành component; thẻ trần 1 lần → không chọn; checkbox trong task row → component riêng lồng trong task row; người dùng bỏ → `skipped` lý do `user`.
+```
+{ "version": 1,
+  "classes": { "ck": { "kind": "checkbox", "states": ["on"], "variants": { "size": ["L", "S"], "shape": ["sq"] }, "name": "checkbox" } },
+  "keep": { "<khoá thẻ trần>": "tên" },
+  "drop": ["<tên component>"] }
+```
+
+Bối cảnh (đo 2026-11-24): corpus và profile vd-html không có `role`, `aria-*`, `data-state`, `<button>`, `<input>`; capture chỉ giữ thẻ và class. Planora đánh dấu control bằng class viết tắt (`btn`, `ck`, `tog`, `chip`, `seg`, `fab`) và trạng thái bằng `on`, `off`, `done`. Vì vậy loại, trạng thái ngoài `STATE` và class bổ nghĩa đến từ khai báo theo class gốc, không đoán. `STATE` của inventory.mjs không đổi (dùng chung với ds). Thuộc tính `role` / `aria` / `data-state`: chưa capture; đề nghị plan 5 thêm quy ước vào profile (ví dụ `data-vd-kind`, `data-state`).
+
+- **Danh tính** của một gốc: thẻ + class không phải trạng thái (`STATE` hoặc `states` khai báo cho class gốc) và không phải class bổ nghĩa khai báo (`variants`). Class gốc = class có khai báo trong `decl.classes` (nhiều class có khai báo: lấy class đầu theo thứ tự, cảnh báo). Class chưa khai báo thuộc danh tính: `ck L` và `ck` là hai component cho đến khi người dùng khai báo `L` (an toàn: mỗi component vẫn đúng).
+- **Nhóm:** gốc có class (sau khi bỏ trạng thái / bổ nghĩa) → khoá `c:<danh tính>`; thẻ trần → khoá `b:<chữ ký cấu trúc>`. Chữ ký cấu trúc: loại node (`t`), `lay.d`, danh tính, kiểu syn, chữ ký con theo thứ tự, đệ quy; không gồm chữ, icon cụ thể, kích thước, màu.
+- **Loại:** thẻ `button` → `button`; `input` / `select` / `textarea` → `input`; còn lại `decl.classes[gốc].kind`, không có → `other`.
+- **Chọn** (spec mục 10), mỗi nhóm ghi `reason`:
+  - `control`: loại khác `other` → component, kể cả 1 lần, kể cả 1 node.
+  - `state`: có lần xuất hiện mang class trạng thái → component set.
+  - `class`: gốc có class, có hình riêng (`paint.bg` không trong suốt, viền > 0, bóng, `bgImage`) và cây ≥ 2 node → component, kể cả 1 lần.
+  - `bare`: thẻ trần cùng chữ ký ≥ `bareMin` lần, ≥ 2 node, có hình riêng → `proposed`, không dựng; thành component khi `decl.keep` có khoá đó (tên = giá trị).
+  - Không bao giờ: gốc màn, node syn, pseudo (`::before` / `::after`), khung không có hình riêng (trừ `control` / `state`), khối 1 node (trừ `control`).
+  - Lồng nhau: `control` / `state` luôn là component riêng (instance lồng). Nhóm `class` / `bare` mà mọi lần xuất hiện nằm trong lần xuất hiện của một component khác có cùng số lần → `skipped` lý do `nested`.
+  - `decl.drop` có tên → `skipped` lý do `user`.
+- **Biến thể:** trong một nhóm, khoá biến thể = trục `state` (class trạng thái, nối `+`, không có = `default`) + mỗi trục `variants` khai báo (không có = `default`). Khác paint / chữ không có class khác → ghi đè (Task 5), không phải biến thể. Cấu trúc giữa các biến thể được khác nhau.
+- **Khuôn của biến thể:** lần xuất hiện nhiều node nhất (hoà: lần đầu theo màn rồi `cmpNodeId`). Mỗi lần xuất hiện khác phải nhúng được vào khuôn: cùng `t` và `lay.d` ở gốc, con khớp theo thứ tự với một dãy con của khuôn (khoá nông: `t`, `lay.d`, danh tính, syn), đệ quy. Không nhúng được → lần đó `skipped` lý do `structure` (dựng layer rời).
+- **Thuộc tính** (trên khuôn, bỏ qua cây con là instance lồng): chữ khác nhau → TEXT; con của khuôn vắng ở một lần → BOOLEAN; `icon.ref` khác nhau → INSTANCE_SWAP (bộ icon vào `icons`). Tên: class đầu của node (hoặc `text` / `icon` / `show`), trùng thì thêm số. Thuộc tính gộp theo tên trên mọi biến thể; mỗi biến thể có `bind` (tên → đường dẫn trong khuôn).
+- **Tên:** `decl.classes[gốc].name`, không có → danh tính bỏ thẻ (`div.task-row` → `task-row`), thẻ trần giữ → `decl.keep`, còn lại `cmp-<n>`.
+- **Nháp** `componentsDraft(result)` → `vd-components.draft.json` (công cụ ghi, agent không chép sang `vd-components.json`): mỗi class gốc có hình riêng hoặc kèm class trạng thái, gợi ý `kind` theo bảng tên (`btn`/`button`/`fab` → button, `ck`/`check`/`checkbox` → checkbox, `tog`/`toggle`/`switch` → switch, `radio`, `chip`, `tab`, `input`/`field` → input) và `states` / `variants` từ class đi kèm class gốc ở một số lần (từ quen thuộc như `done`, `off`, `checked`, `open`, `error` → `states`; còn lại → `variants.variant`); mỗi thẻ trần đề xuất một khoá `keep`; `notes` ghi số lần và màn.
+- Ra `components.json`: `{ v: 1, components: [{ name, kind, reason, key, count, screens, axes, variants: [{ props, template: { screen, node }, bind, nodes: [{ screen, node, vals }] }], props: [{ name, type, default }], icons? }], proposed: [{ key, count, screens, nodes }], skipped: [{ key, count, reason, nodes? }], warnings }`.
+
+- [ ] **Step 1: Viết test** trên spec dựng tay: 3 hàng có class và nền khác chữ → 1 component, 1 TEXT; 2 hàng thường + 1 hàng `is-done` → 1 set, 2 biến thể; con thiếu ở 1 lần → BOOLEAN; icon khác → INSTANCE_SWAP; khác màu nền không có class khác → không biến thể; đảo thứ tự màn → giống từng byte; khối có class và nền, 1 lần → `class`; khung có class không có hình riêng → không chọn; `ck` 1 node không khai báo → không chọn, khai báo `kind: checkbox` → `control`; `ck L` không khai báo → component riêng, khai báo `variants.size: [L]` → biến thể; `li done` khai báo `states: [done]` → biến thể state; thẻ trần 2 lần → `proposed`, `keep` → component; thẻ trần 1 lần → không chọn; ck trong li → component riêng lồng, TEXT của li không tính chữ trong ck; card có class lồng trong li cùng số lần → `nested`; `drop` → `user`; không nhúng được → `structure`; nháp gợi ý `ck` → checkbox, `done` → states.
 - [ ] **Step 2: Chạy** → FAIL. **Step 3: Viết.** **Step 4: Chạy** → PASS.
 - [ ] **Step 5: Đo trên Planora và corpus** (không ghi Figma): số component theo `reason` và `kind`, số `proposed`, biến thể, thuộc tính, tỉ lệ node của màn nằm trong instance, các ứng viên bị bỏ và lý do, tỉ lệ khối có class / thẻ trần trong HTML Planora (nếu phần lớn là thẻ trần thì báo người dùng: dấu hiệu `class` ít tác dụng). Ghi vào README mục mới "Components". Đối chiếu danh sách component của `figma-plan.md` Planora (task row, checkbox, hũ 1-3-5, nút, chip, nav, sheet): mục nào không được tìm ra → ghi lý do; người dùng quyết có cần luật bổ sung không trước Task 3.
 - [ ] **Step 6: Commit** `feat(vuong-design): component candidates, variants and properties from repeated structures`.
@@ -80,7 +93,7 @@
 
 **Files:** `core/components.mjs`, `core/states.mjs` (mới), test tương ứng.
 
-- Loại lấy từ `kindOf` (Task 2).
+- Loại lấy từ Task 2 (thẻ, hoặc khai báo `vd-components.json`).
 - Bảng trạng thái theo loại (mục 10; mobile không có hover): nút: thường, nhấn, tắt, đang tải, focus; ô nhập: trống, focus, đã nhập, lỗi, tắt; ô tích: chưa tích, đã tích, tắt; radio: chọn, chưa chọn, tắt; công tắc: bật, không bật, tắt; chip: chọn, chưa chọn, tắt; tab: chọn, chưa chọn. "Tắt" = disabled.
 - Nguồn từng trạng thái, theo thứ tự: biến thể đã có từ HTML (Task 2) → `html`; không có → sinh theo luật trong `vd-rules.json` mục `states` (mặc định của spec: nhấn = lớp phủ màu chữ 10%; tắt = nội dung 38%, nền 12%; focus = viền 2 px token focus; lỗi = token lỗi; đang tải = thay nhãn bằng vòng quay) → `proposed`; luật cần token chưa có (không có token focus / lỗi) → `missing`, ghi vào `coverage.json`, không vẽ.
 - Mặc định của luật vào `vd-rules.draft.json` mục `states` với `approved` trống.
@@ -97,7 +110,7 @@ Dựng trang HTML từ spec component (dùng renderer của norm proxy, `proxy.m
 
 - [ ] **Step 1: Viết test**: trang có đủ ô cho mọi biến thể và trạng thái; ô `proposed` có nhãn; ô `missing` có lý do; trang tất định.
 - [ ] **Step 2–4:** FAIL → viết → PASS.
-- [ ] **Step 5: Chạy trên Planora**, đưa người dùng duyệt bộ luật trạng thái và tên `ask`. Người dùng tự ghi câu trả lời vào `vd-rules.json` / `vd-names.json`.
+- [ ] **Step 5: Chạy trên Planora**, đưa người dùng duyệt bộ luật trạng thái và tên `ask`. Người dùng tự ghi câu trả lời vào `vd-rules.json` / `vd-components.json`.
 - [ ] **Step 6: Commit** `feat(vuong-design): component preview page with states and sources`.
 
 ### Task 5: Kiểm tra component trước khi ghi Figma

@@ -262,13 +262,14 @@ Numbers are rounded to 0.01.
 node core/figma.mjs plan   --ds <ds output> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo]
 node core/figma.mjs ingest --out <dir> --result <file> [--batch vars-NN | batch-NN | N]
 node core/figma.mjs shots --out <dir>    # then ingest-shots --out <dir> --result <file>, shots-clean --out <dir>
+node core/figma.mjs serve  --out <dir> [--send <keys>|run|pending]... [--shots] [--port 8787] [--wait <s>]   # Figma bridge, below
 node core/figma.mjs check  --out <dir> [--mutate] [--allowlist <json>] [--html <file> --root <sel> ...capture options] [--tol-* <px>]
 ```
 
 - **plan** encodes every screen (`spec-norm-<id>.json`, `token-map.json`, `tokens.json`, `ir.json`), writes the variable batches (`varsPayload`), `runtime.js` and the screen batches (`planBatches`, each at most 50 000 bytes), and prints the estimate: `use_figma` calls (vars + runtime + screen batches still to send), `get_screenshot` calls (one per screen), total KB. It lists the batches for this run, in order, while the calls fit `--max-calls` (default 40). It stops at a batch boundary (`state.run.stopBefore`) and warns when the plan needs more. The same input gives the same numbering.
   - **Runtime once**: `runtime.js` stores the runtime in the file's shared plugin data (`figma.root`, namespace `vuongdesign`: `rt` = the code, `rtv` = `RUNTIME_VERSION`, 12 hex of its SHA-1). It is sent again only when the runtime changes; that does not make the screens pending.
   - **Screen batch** = `const D=<data>;` + a loader of about 500 bytes. The data is a JavaScript literal (identifier keys unquoted, strings in single quotes: fewer characters to escape inside the JSON of the tool call) with compact child ids. The loader returns `{ batch, stale, have }` when the file's runtime version is not the batch's, `{ batch, damaged: 1 }` when the data's FNV-1a hash differs from the one planned (the code was changed on the way), and otherwise runs the installed runtime with D and adds `h`, the FNV-1a of the result's JSON, to the result.
-  - **Per screen**: each screen has a hash of its own data (tables resolved, page and force included). A screen `done` or `skippedEdited` with the same hash is not sent again (`screens unchanged ... (not sent again)`); the others are packed into new batches, numbered after the batches kept. Changing one screen sends one screen. `--redo` sends every screen. `--force <screen>` (repeatable or comma-separated) puts the screen in `D.force`: the runtime rebuilds it even when it was edited by hand. `--ds` must be the folder of one HTML file (in corpus mode, `<out>/<file stem>`).
+  - **Per screen**: each screen has a hash of its own data (tables resolved, page and force included). A screen `done` or `skippedEdited` with the same hash is not sent again (`screens unchanged ... (not sent again)`); the others are packed into new batches, numbered after the batches kept. Changing one screen sends one screen. `--redo` sends every screen. `--prof` sets `D.prof` in the screen batches: the runtime then returns `prof`, the ms of each phase summed over the batch (`init`, `fontLoad`, `sigOld`, `build` = `create` + `svg` + `text` (with `style`) + `paint` + `layoutProps` (own auto-layout, before the node joins its parent) + `append` + `layout` (size, sizing, min / max after), `late`, `boxA`, `resizeB`, `boxB`, `resizeA`, `read`, `sigNew`, `remove`, `total`); `ingest` prints it and keeps it in `state.batches[key].prof`. It changes nothing else in the result. `--force <screen>` (repeatable or comma-separated) puts the screen in `D.force`: the runtime rebuilds it even when it was edited by hand. `--ds` must be the folder of one HTML file (in corpus mode, `<out>/<file stem>`).
 - **ingest** validates a result against the BatchResult shape of its batch (README "Figma runtime"; vars batches: "Figma variables"), copies it to `result-<key>.json` (a compact screen result, `z: 1`, is saved expanded) and merges it into `state.json`.
   - Malformed JSON or a wrong shape → exit 2, state unchanged. Wrong shapes: a wrong batch number, a screen missing or not in the batch, `nodes` not the length of the encoding, an entry that is not `0` or `[fid, A, dB?, d?]`, a screen batch result whose `h` is missing or does not match its content (the result was retyped or cut after Figma returned it: save the tool output verbatim). A `stale` or `damaged` loader answer exits 2 with what to send.
   - `runtime`: the result `{ runtime, bytes }` must carry the planned version.
@@ -296,7 +297,7 @@ node core/figma.mjs check  --out <dir> [--mutate] [--allowlist <json>] [--html <
 
 Exit codes: 0 every screen passes the gate (and no mutation was missed), 1 otherwise, 2 usage, setup or malformed input.
 
-AI workflow (one Figma file the user named; never two writers on the same file):
+AI workflow (one Figma file the user named; never two writers on the same file). Prefer the Figma bridge (next section): it replaces steps 2 and 3 with one `serve` run and costs no model tokens. The steps below are the fallback without Figma Desktop.
 1. Run `ds.mjs`, then `figma.mjs plan --ds <ds out> --out <dir>`. Tell the user the estimate before the first write.
 2. For each batch of this run, in order (`vars-*`, then `runtime`, then `batch-*`): send the file's content as the code of `use_figma`, save the returned JSON as a file, run `figma.mjs ingest --out <dir> --result <file>`. For a `failed` batch: read its errors, fix, run `plan` again (done screens are kept), resend.
    Send them through one `vuong-design:vd-figma-courier` agent for the whole run (`agents/vd-figma-courier.md`: tools Read, Write and `use_figma` only, no skill load), given the fileKey, the sessionId and the (script, result path) pairs in order. Its own context is about 10k tokens, against about 64k for a general-purpose agent that also loads `figma-use`; the scripts only need what the controller already checked. The result hash catches a result it did not save verbatim.
@@ -321,7 +322,9 @@ Files in `<out>/figma/`:
 | `result-<key>.json` | ingest | the BatchResult as returned (screen batches: entries expanded, without `z`) |
 | `shots.js`, `shots-clean.js` | shots, shots-clean | `use_figma` code: the 2x clones on `_vd-shots`, and their removal |
 | `result-shots.json` | ingest-shots | the shots result as returned |
-| `shot-<screen>.png` | the AI | `get_screenshot` of the screen's 2x clone |
+| `shot-<screen>.png` | the AI, or serve --shots | `get_screenshot` of the screen's 2x clone, or the frame exported at 2x by the plugin |
+| `inbox/<key>.json` | serve | the result text as the plugin returned it (then ingested) |
+| `runs.jsonl` | serve | one line per bridge run: ok, seconds, KB sent and back, per job key / ms / bytes |
 | `report.json`, `report.html` | check | as layout.mjs, plus `figma` per screen |
 
 `state.json`:
@@ -331,6 +334,25 @@ Files in `<out>/figma/`:
                       status: 'pending' | 'done' | 'failed', result?, errors?, fontMissing? } },
   screens: { [id]: { batch, hash, status: 'pending' | 'done' | 'failed' | 'skippedEdited', result?, root?, sig?,
                      edited?, skippedEdited?, extra?, errors?, fontMissing?, unbound?: { [reason]: n } } },
-  shots?: { page, clones: { [screen]: clone id }, sizes?: { [screen]: [w, h] }, missing? },
+  shots?: { page, clones: { [screen]: clone id }, sizes?: { [screen]: [w, h] }, missing? }   (shots / ingest-shots)
+        | { via: 'export', scale: 2, sizes: { [screen]: [w, h] } }                          (serve --shots),
   run: { maxCalls, calls: { useFigma, screenshot, total }, kb, send: [key], sendCalls, stopBefore } }
 ```
+
+## Figma bridge
+
+Sending a batch through `use_figma` makes a model retype it as the tool's `code`, then retype the result: about 0.8 output tokens per byte (18 Planora screens: about 140 KB, 110k tokens, 14 minutes). The bridge moves the same files with no model in between: `figma.mjs serve` (`core/figma-bridge.mjs`) serves a queue on `http://localhost:8787` (127.0.0.1 and ::1), and the development plugin in `figma-plugin/` (Figma Desktop) runs each job and posts the result back.
+
+- The plugin runs the script text `use_figma` would run (`vars-NN.js`, `runtime.js`, `batch-NN.js`, top-level `await` and `return`) and sends back the JSON of its return value. Nothing else changes: the loader still checks the runtime version and the data hash and adds the result hash, and each result goes through `ingest` as it arrives (saved first as `inbox/<key>.json`).
+- `--send` names the batches: comma-separated keys (`runtime,batch-01`, a bare number is `batch-NN`), `run` (the plan's this-run list) or `pending` (every batch not done). They are sent in plan order. Nothing is sent without `--send` or `--shots`.
+- `--shots` then exports every built screen frame (`state.json` `done` with a `root`) as PNG at scale 2 with its own bounds (`exportAsync`, `useAbsoluteBounds`) to `shot-<screen>.png`. No clone page, no `get_screenshot`.
+- The first failed job (a Figma error, a result `ingest` refuses, a batch `failed`) stops the queue; later jobs are not served. A job served and not answered is served again (the plugin was reloaded).
+- Each run appends a line to `runs.jsonl`: ok, seconds, KB sent and back, and per job its key, ms and bytes.
+- Exit 0 every job ok, 1 a job failed, 2 usage or no plugin connected within `--wait` seconds (default 300).
+
+Setup, once: Figma Desktop → Plugins → Development → Import plugin from manifest… → `plugins/vuong-design/figma-plugin/manifest.json`. Then, in the target file: Plugins → Development → vuong-design bridge. Leave the plugin window open: it polls the bridge, waits between runs and picks up the next `serve` by itself. The manifest only allows `localhost:8787` (`devAllowedDomains`: Figma refuses an IP there), and the bridge listens on the loopback addresses only.
+
+AI workflow with the bridge:
+1. `ds.mjs`, then `figma.mjs plan`. Tell the user which batches and screens will be written and wait for a go-ahead.
+2. Ask the user to open the plugin in the target file, then run `figma.mjs serve --out <dir> --send <the agreed batches> [--shots]`. It prints one line per job and a summary.
+3. `figma.mjs check --out <dir> [--mutate]`.

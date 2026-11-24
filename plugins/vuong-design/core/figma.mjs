@@ -2,9 +2,10 @@
 // Figma CLI (plan 3 Task 7). The script never calls Figma: it prepares `use_figma` calls, takes their results back, and
 // verifies the real Figma screens with the plan 1-2 verifier (README "Figma CLI").
 //
-//   node core/figma.mjs plan   --ds <ds.mjs output folder> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo]
+//   node core/figma.mjs plan   --ds <ds.mjs output folder> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo] [--prof]
 //   node core/figma.mjs ingest --out <dir> --result <file> [--batch vars-NN | batch-NN | N]
 //   node core/figma.mjs shots --out <dir>; ingest-shots --out <dir> --result <file>; shots-clean --out <dir>
+//   node core/figma.mjs serve  --out <dir> [--send <keys>|run|pending]... [--shots] [--port 8787] [--wait <s>]
 //   node core/figma.mjs check  --out <dir> [--mutate] [--allowlist <json>] [--html <file>] [--root <sel>] [--widen <sel>]
 //        [--name <sel>] [--widen-by <px>] [--viewport <px>] [--no-webfonts] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>]
 //
@@ -16,7 +17,8 @@
 //   and writes the batches; vars batches first. A batch already 'done' with the same code is kept as is (not written
 //   again) unless --redo; numbering is stable for the same input (screen batches 1.., vars batches 1.. in file names;
 //   a vars result carries its 0-based `batch`). --force <screen> (repeatable or comma-separated) puts the screen in
-//   D.force: the runtime rebuilds it even when edited by hand. Prints the estimate (use_figma calls = vars + screen
+//   D.force: the runtime rebuilds it even when edited by hand. --prof sets D.prof in the screen batches: the runtime returns
+//   prof, ms per phase summed over the batch (ingest prints it and keeps it in state.batches[key].prof). Prints the estimate (use_figma calls = vars + screen
 //   batches still to send, get_screenshot calls = their screens, KB) and the batches for this run: in order, while
 //   use_figma + get_screenshot calls stay within --max-calls (default 40); it stops at a batch boundary
 //   (state.run.stopBefore) and warns when the whole plan needs more.
@@ -39,16 +41,23 @@
 //   returns { page, clones: { screen: id }, sizes: { screen: [w, h] }, missing, errors }. The Screens page is not
 //   changed. ingest-shots records it in state.shots and prints the get_screenshot calls (maxDimension = the clone's
 //   larger side = 2 x the frame's) -> shot-<screen>.png; shots-clean writes shots-clean.js (removes the clones and the page).
+// serve (Figma bridge): sends the named batches (--send: comma-separated keys such as runtime,batch-01; `run` = the
+//   plan's this-run list; `pending` = every batch not done) through the local Figma Desktop plugin (figma-plugin/,
+//   figma-bridge.mjs) instead of use_figma, in plan order, and ingests each result as it arrives (the same checks as
+//   ingest). --shots then exports every built screen frame at 2x (PNG, the frame's own bounds) to shot-<screen>.png, with
+//   no clone page. The first failed job stops the run. Appends the run's timings and bytes to runs.jsonl. Nothing is
+//   sent without --send or --shots. Exit 0 all jobs ok, 1 a job failed, 2 usage / no plugin connected.
 // Exit codes: 0 every screen passes the gate (and no mutation missed), 1 otherwise, 2 usage / setup / malformed input.
 import { parseArgs } from 'node:util';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSync, appendFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { UsageError, readAllowlist, runVerdict } from './layout.mjs';
 import { encodeScreen, planBatches, newTables, OversizeError, batchData, compactIds, jsLiteral, fnv } from './figma-encode.mjs';
 import { varsPayload, varNames } from './figma-vars.mjs';
-import { ordOf, decode, expandNodes, figmaProxy, shotAtDsf, proxyVsFigma, effectNodes } from './figma-check.mjs';
+import { ordOf, decode, expandNodes, figmaProxy, shotAtDsf, proxyVsFigma, effectNodes, pngSize } from './figma-check.mjs';
+import { startBridge, BRIDGE_PORT } from './figma-bridge.mjs';
 
 const RUNTIME = readFileSync(new URL('./figma-runtime.js', import.meta.url), 'utf8');
 const shaOf = (s) => createHash('sha1').update(s).digest('hex').slice(0, 16);
@@ -76,9 +85,10 @@ out.h=h(JSON.stringify(out));return out;
 }
 // the hash the loader adds to a screen batch result (over the result without h, in its key order)
 export const resultHash = (res) => { const { h, ...r } = res; return fnv(JSON.stringify(r)); };
-export const USAGE = `usage: node core/figma.mjs plan --ds <ds output dir> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo]
+export const USAGE = `usage: node core/figma.mjs plan --ds <ds output dir> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo] [--prof]
        node core/figma.mjs ingest --out <dir> --result <file> [--batch vars-NN|batch-NN|N]
        node core/figma.mjs shots --out <dir> | ingest-shots --out <dir> --result <file> | shots-clean --out <dir>
+       node core/figma.mjs serve --out <dir> [--send <keys>|run|pending]... [--shots] [--port 8787] [--wait <s>]
        node core/figma.mjs check --out <dir> [--mutate] [--allowlist <json>] [--html <file>] [--root <sel>] [--widen <sel>]
             [--name <sel>] [--widen-by <px>] [--viewport <px>] [--no-webfonts] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>]`;
 
@@ -132,9 +142,9 @@ export function encodeAll(dsData, { page = 'Screens', force = [] } = {}) {
 }
 
 // the plan's items in send order: vars batches, the runtime, screen batches of the screens not in `keep` (numbered from `first`)
-export function planAll(dsData, { page = 'Screens', force = [], keep = new Set(), first = 1, encoded } = {}) {
+export function planAll(dsData, { page = 'Screens', force = [], keep = new Set(), first = 1, encoded, prof = false } = {}) {
   const { encs } = encoded || encodeAll(dsData, { page, force });
-  const batches = planBatches(encs.filter((e) => !keep.has(e.screen)), { wrap: loaderCode, page, force, first });
+  const batches = planBatches(encs.filter((e) => !keep.has(e.screen)), { wrap: loaderCode, page, force, first, prof });
   const vars = varsPayload(dsData.tokens);
   const rt = runtimeInstallCode();
   return [
@@ -148,7 +158,7 @@ export function planAll(dsData, { page = 'Screens', force = [], keep = new Set()
 const callsOf = (b) => ({ useFigma: 1, screenshot: b.kind === 'screens' ? b.screens.length : 0 });
 
 async function plan(argv, log) {
-  const o = args(argv, { ds: { type: 'string' }, out: { type: 'string' }, page: { type: 'string' }, 'max-calls': { type: 'string' }, force: { type: 'string', multiple: true }, redo: { type: 'boolean' } });
+  const o = args(argv, { ds: { type: 'string' }, out: { type: 'string' }, page: { type: 'string' }, 'max-calls': { type: 'string' }, force: { type: 'string', multiple: true }, redo: { type: 'boolean' }, prof: { type: 'boolean' } });
   if (!o.ds) throw new UsageError('--ds <ds.mjs output folder> is required');
   if (!o.out) throw new UsageError('--out <dir> is required');
   const maxCalls = num('max-calls', o['max-calls'], 40);
@@ -172,7 +182,7 @@ async function plan(argv, log) {
       return p && (p.status === 'done' || p.status === 'skippedEdited') && p.hash === encoded.hashes[s] && pb[p.batch] && has(p.batch, 'screens');
     }));
     const first = Math.max(0, ...[...keep].map((s) => pb[ps[s].batch].n)) + 1;
-    all = planAll(dsData, { page, force, keep, first, encoded });
+    all = planAll(dsData, { page, force, keep, first, encoded, prof: !!o.prof });
   } catch (e) {
     if (e instanceof OversizeError) throw new UsageError(e.message);
     throw new UsageError(`cannot plan the batches: ${e.message}`);
@@ -361,7 +371,9 @@ async function ingest(argv, log) {
     }
     b.status = failed ? 'failed' : 'done';
     b.result = file;
+    if (isObj(res.prof)) b.prof = res.prof; else delete b.prof;
     const by = (k) => res.screens.filter((s) => st.screens[s.screen].status === k).map((s) => s.screen);
+    if (b.prof) log(`${key} prof (ms): ${Object.entries(b.prof).sort((x, y) => y[1] - x[1]).map(([k, v]) => `${k} ${v}`).join(', ')}`);
     log(`${key}: ${b.status}; built ${by('done').join(', ') || 'none'}${by('skippedEdited').length ? `; edited by hand, kept (skippedEdited): ${by('skippedEdited').join(', ')}` : ''}${failed ? `; failed: ${by('failed').join(', ')}` : ''}`);
   }
   writeFileSync(statePath(o.out), json(st));
@@ -462,6 +474,86 @@ async function shotsClean(argv, log) {
   const p = join(figDir(o.out), 'shots-clean.js');
   writeFileSync(p, shotsCleanPayload());
   log(`shots-clean: ${p} removes the clones on page ${SHOTS_PAGE} (and the page)`);
+  return 0;
+}
+
+// ---------------- serve (Figma bridge) ----------------
+async function serve(argv, log, deps = {}) {
+  const o = args(argv, { out: { type: 'string' }, send: { type: 'string', multiple: true }, shots: { type: 'boolean' }, port: { type: 'string' }, wait: { type: 'string' } });
+  if (!o.out) throw new UsageError('--out <dir> is required');
+  const st0 = loadState(o.out), F = figDir(o.out);
+  const asked = (o.send || []).flatMap((x) => x.split(',')).map((x) => x.trim()).filter(Boolean);
+  if (!asked.length && !o.shots) throw new UsageError('nothing to send: name the batches with --send (keys, run or pending) and/or --shots');
+  const keys = new Set();
+  for (const a of asked) {
+    if (a === 'run') { for (const k of (st0.run && st0.run.send) || []) keys.add(k); continue; }
+    if (a === 'pending') { for (const k of st0.order) if (st0.batches[k].status !== 'done') keys.add(k); continue; }
+    const k = /^\d+$/.test(a) ? `batch-${pad(+a)}` : a;
+    if (!st0.batches[k]) throw new UsageError(`--send ${a}: no such batch (${st0.order.join(', ')})`);
+    keys.add(k);
+  }
+  const codeJobs = st0.order.filter((k) => keys.has(k));
+  const already = codeJobs.filter((k) => st0.batches[k].status === 'done');
+  if (already.length) log(`note: already done, sent again: ${already.join(', ')}`);
+  const port = o.port == null ? BRIDGE_PORT : num('port', o.port, BRIDGE_PORT);
+  if (port !== BRIDGE_PORT && port !== 0) log(`warning: the plugin only reaches port ${BRIDGE_PORT} (manifest devAllowedDomains)`);
+  const waitMs = num('wait', o.wait, 300) * 1000;
+  mkdirSync(join(F, 'inbox'), { recursive: true });
+  // shots are queued after the batches, from the state those batches leave
+  let ci = 0, shotList = null;
+  const next = () => {
+    if (ci < codeJobs.length) { const k = codeJobs[ci++]; return { key: k, kind: 'code', code: readFileSync(join(F, st0.batches[k].file), 'utf8') }; }
+    if (!o.shots) return null;
+    if (!shotList) shotList = Object.entries(loadState(o.out).screens).filter(([, s]) => s.status === 'done' && s.root).map(([screen, s]) => ({ screen, root: s.root }));
+    const s = shotList.shift();
+    return s ? { key: `shot-${s.screen}`, kind: 'shot', screen: s.screen, root: s.root, scale: 2 } : null;
+  };
+  const shotSizes = {};
+  const onResult = async (job, p) => {
+    if (!p || !p.ok) return { ok: false, msg: `Figma error: ${(p && p.error) || 'no result'}` };
+    if (job.kind === 'shot') {
+      const buf = p.png;
+      if (!buf || buf.length < 24 || buf.readUInt32BE(0) !== 0x89504e47) return { ok: false, msg: 'not a PNG' };
+      writeFileSync(join(F, `shot-${safe(job.screen)}.png`), buf);
+      shotSizes[job.screen] = pngSize(buf);
+      log(`  ${job.key}: ${shotSizes[job.screen].join(' x ')} px`);
+      return { ok: true, msg: shotSizes[job.screen].join('x') };
+    }
+    if (typeof p.text !== 'string') return { ok: false, msg: 'no result text' };
+    const file = join(F, 'inbox', `${job.key}.json`);
+    writeFileSync(file, p.text);
+    const lines = [];
+    let code;
+    try { code = await ingest(['--out', o.out, '--result', file, '--batch', job.key], (m) => lines.push(m)); } catch (e) {
+      if (e instanceof UsageError) return { ok: false, msg: e.message };
+      throw e;
+    }
+    for (const l of lines) log(`  ${l}`);
+    const b = loadState(o.out).batches[job.key];
+    if (code !== 0 || b.status !== 'done') return { ok: false, msg: `${job.key} is ${b.status}: ${lines.join('; ')}` };
+    return { ok: true, msg: lines[0] || 'ok' };
+  };
+  const total = codeJobs.length + (o.shots ? Object.values(st0.screens).filter((s) => (s.status === 'done' && s.root) || keys.has(s.batch)).length : 0);
+  const t0 = Date.now();
+  const br = await (deps.startBridge || startBridge)({ next, onResult, port, log, connectTimeoutMs: waitMs, total: total || null, ...(deps.bridgeOpts || {}) });
+  log(`serve: ${codeJobs.length ? codeJobs.join(', ') : 'no batches'}${o.shots ? ' + 2x shots of the built screens' : ''} on http://localhost:${br.port}`);
+  if (deps.onListen) deps.onListen(br.port);
+  log('waiting for the Figma Desktop plugin (Plugins > Development > vuong-design bridge)');
+  const r = await br.done;
+  if (o.shots && Object.keys(shotSizes).length) {
+    const st = loadState(o.out);
+    st.shots = { via: 'export', scale: 2, sizes: shotSizes };
+    writeFileSync(statePath(o.out), json(st));
+  }
+  const kb = (n) => Math.round(n / 100) / 10;
+  const sum = (f) => r.jobs.reduce((a, j) => a + j[f], 0);
+  appendFileSync(join(F, 'runs.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), via: 'bridge', ok: r.ok, ...(r.reason ? { reason: r.reason } : {}), seconds: Math.round((Date.now() - t0) / 100) / 10, kbOut: kb(sum('bytesOut')), kbIn: kb(sum('bytesIn')), jobs: r.jobs.map(({ key, ok, ms, bytesOut, bytesIn }) => ({ key, ok, ms, bytesOut, bytesIn })) })}\n`);
+  const okN = r.jobs.filter((j) => j.ok).length;
+  log(`serve: ${okN}/${r.jobs.length} jobs ok, ${Math.round(sum('ms') / 100) / 10} s in Figma, ${kb(sum('bytesOut'))} KB sent, ${kb(sum('bytesIn'))} KB back, 0 model tokens`);
+  if (!r.ok) {
+    log(`stopped: ${r.reason}`);
+    return !r.jobs.length && /no plugin connected/.test(r.reason || '') ? 2 : 1;
+  }
   return 0;
 }
 
@@ -640,8 +732,9 @@ export async function main(argv, deps = {}) {
     if (cmd === 'shots') return await shots(rest, log);
     if (cmd === 'ingest-shots') return await ingestShots(rest, log);
     if (cmd === 'shots-clean') return await shotsClean(rest, log);
+    if (cmd === 'serve') return await serve(rest, log, deps);
     if (cmd === '--help' || cmd === '-h' || cmd === 'help') { log(USAGE); return 0; }
-    throw new UsageError(cmd ? `unknown command ${cmd}` : 'a command is required (plan, ingest, shots, ingest-shots, shots-clean, check)');
+    throw new UsageError(cmd ? `unknown command ${cmd}` : 'a command is required (plan, ingest, serve, shots, ingest-shots, shots-clean, check)');
   } catch (e) {
     if (e instanceof UsageError) { log(`error: ${e.message}\n${USAGE}`); return 2; }
     throw e;

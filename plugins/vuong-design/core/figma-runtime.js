@@ -1,6 +1,8 @@
 // vuong-design builder (plan 3 Task 5): the code of a use_figma call. D: figma-encode.mjs header. Result, build order,
 // signature: README "Figma runtime". S: screen state; e: encoded node, o: its id, v: its bindings.
 const D = __DATA__;
+// D.prof: ms per phase summed over the batch, returned as prof (README "Figma runtime"); off, only the clock reads remain
+const T0=Date.now(),PR=D.prof?{}:0,NOW=()=>Date.now(),pt=(k,t)=>{if(PR)PR[k]=(PR[k]||0)+NOW()-t};
 for(const s of D.screens)(function x(e){const v=e.v;if(v)for(const p of'rb')if(v[p]!=null){for(let i=0;i<4;i++)v[p+i]=v[p];delete v[p]}(e.k||[]).forEach((k,i)=>{k.o=k.o==null?e.o+'.'+i:k.o[0]=='.'?e.o+k.o:k.o;x(k)})})(s.T);// compact ids
 const F=figma,U=undefined,MX=F.mixed,BF='bind-failed',BK='#000000',r2=v=>Math.round(v*100)/100+0,VM=new Map,VN=new Map,SM=new Map,SN=new Map,FC={},LD=new Set,AV=new Map,
 WN='Thin ExtraLight Light Regular Medium SemiBold Bold ExtraBold Black'.split(' '),WL=WN.map(x=>x.toLowerCase());
@@ -9,10 +11,11 @@ for(const s of[...await F.getLocalTextStylesAsync(),...await F.getLocalEffectSty
 const wt=s=>{const k=s.toLowerCase().replace(/[\s_-]/g,''),i=/italic|oblique/.test(k);return[WL.indexOf(k.replace(/italic|oblique/,'')||'regular')*100+100,i]};
 for(const{fontName:f}of await F.listAvailableFontsAsync()){const[w,it]=wt(f.style);if(w)(AV.get(f.family)||AV.set(f.family,[]).get(f.family)).push({s:f.style,w,it})}
 let S;
+pt('init',T0);
 const font=async(i,o)=>{let r=FC[i];
 if(!r){const[fa,w,x]=D.F[i],it=!!x,fm=AV.has(fa)?fa:'Inter',p=(AV.get(fm)||[]).slice().sort((a,b)=>(a.it!=it)-(b.it!=it)||Math.abs(a.w-w)-Math.abs(b.w-w))[0]||{s:'Regular'},u=fm+' '+p.s;
 r=FC[i]={f:{family:fm,style:p.s},m:fm==fa&&p.w==w&&p.it==it?0:{family:fa,style:(WN[w/100-1]||w)+(it?' Italic':''),used:u}};
-if(!LD.has(u)){await F.loadFontAsync(r.f);LD.add(u)}}
+if(!LD.has(u)){const t=NOW();await F.loadFontAsync(r.f);LD.add(u);pt('fontLoad',t)}}
 if(r.m&&!S.fm.some(m=>m.o==o&&m.style==r.m.style&&m.family==r.m.family))S.fm.push({o,...r.m});
 return r.f},
 rgb=h=>{const v=parseInt(h.slice(1,7),16);return{r:(v>>16&255)/255,g:(v>>8&255)/255,b:(v&255)/255}},al=h=>h[7]?parseInt(h.slice(7),16)/255:1,
@@ -24,7 +27,7 @@ gv=(o,k,i)=>{if(i==U)return;const v=VM.get(D.V[i]);v||ub(o,k,D.V[i],'missing-in-
 bn=(o,k,i,n,f)=>{const v=gv(o,k,i);if(v)try{n.setBoundVariable(f,v)}catch(x){ub(o,k,v.name,BF)}},
 bv=(o,k,v,p)=>{if(v)try{return F.variables.setBoundVariableForPaint(p,'color',v)}catch(x){ub(o,k,v.name,BF)}return p},
 bp=(o,k,i,p)=>bv(o,k,gv(o,k,i),p),
-sty=async(o,k,i,f)=>{const s=SM.get(D.S[i]);if(!s)return ub(o,k,D.S[i],'missing-in-file');try{await f(s.id)}catch(x){ub(o,k,D.S[i],BF)}},
+sty=async(o,k,i,f)=>{const s=SM.get(D.S[i]);if(!s)return ub(o,k,D.S[i],'missing-in-file');const t=NOW();try{await f(s.id)}catch(x){ub(o,k,D.S[i],BF)}pt('style',t)},
 isAL=n=>!!n&&n.type=='FRAME'&&n.layoutMode!='NONE',SZ={F:'FILL',H:'HUG',X:'FIXED'},AX={C:'CENTER',E:'MAX',B:'BASELINE'},
 K={L:'MIN',T:'MIN',R:'MAX',B:'MAX',LR:'STRETCH',TB:'STRETCH',C:'CENTER',SCALE:'SCALE'},
 TD={U:'UNDERLINE',S:'STRIKETHROUGH'},TT={U:'UPPER',L:'LOWER',T:'TITLE'},TA={C:'CENTER',R:'RIGHT',J:'JUSTIFIED'},
@@ -77,30 +80,32 @@ frame=()=>{const n=F.createFrame();n.fills=[];n.clipsContent=false;n.resize(.01,
 NS='vuongdesign',pd=(n,k,v)=>n.setSharedPluginData(NS,k,v),gd=(n,k)=>n.getSharedPluginData(NS,k),
 mk=async(e,par,sc)=>{const o=e.o,v=e.v||{},gl=!!(e.ic&&e.ic.g!=U),T=e.t=='T'||gl,l=e.l,s=e.s||'XX',ia=isAL(par)&&!e.a,rs=()=>n.resize(Math.max(e.w,.01),Math.max(e.h,.01));
 let n;
-try{n=T?F.createText():e.t=='V'?F.createNodeFromSvg(svg(e)):F.createFrame();
+try{let t=NOW();n=T?F.createText():e.t=='V'?F.createNodeFromSvg(svg(e)):F.createFrame();pt(e.t=='V'&&!gl?'svg':'create',t);
 if(!T){n.fills=[];n.clipsContent=false;n.name=e.y?e.y+' '+o:o}
 pd(n,'id',o);
 if(!par){pd(n,'screen',sc.screen);pd(n,'file',sc.file)}
-await(T?txt:paint)(n,e,o);
+t=NOW();await(T?txt:paint)(n,e,o);pt(T?'text':'paint',t);
 if(e.t=='V'&&!gl){const b={fills:gv(o,'vf',v.vf),strokes:gv(o,'vs',v.vs)},q={fills:e.ic.f,strokes:e.ic.s},H=p=>'#'+x2(p.color.r)+x2(p.color.g)+x2(p.color.b);// only a paint that inherits the icon colour is bound; a child's own colour stays
 if(b.fills||b.strokes)for(const x of n.findAll(()=>1))for(const k in b)if(b[k]&&x[k]&&x[k]!=MX&&x[k][0])x[k]=x[k].map(p=>p.type=='SOLID'&&H(p)==D.C[q[k]].slice(0,7).toLowerCase()?bv(o,k=='fills'?'vf':'vs',b[k],p):p)}
 if(e.op!=U)n.opacity=e.op;
 bn(o,'op',v.op,n,'opacity');
 if(T&&(e.ar||gl))rs();
-if(par)par.appendChild(n);
-if(l){n.layoutMode=l.d=='H'?'HORIZONTAL':'VERTICAL';n.strokesIncludedInLayout=false;
+// the node's own auto-layout before it joins its parent (fewer relayouts); sizing that needs the parent comes after
+t=NOW();if(l){n.layoutMode=l.d=='H'?'HORIZONTAL':'VERTICAL';n.strokesIncludedInLayout=false;
 if(l.p)[n.paddingTop,n.paddingRight,n.paddingBottom,n.paddingLeft]=l.p;
 if(l.g)n.itemSpacing=l.g;
 n.primaryAxisAlignItems=l.sb?'SPACE_BETWEEN':AX[l.pa]||'MIN';
 if(l.ca)n.counterAxisAlignItems=AX[l.ca];
 if(l.wr){n.layoutWrap='WRAP';if(l.cg)n.counterAxisSpacing=l.cg}
 for(let i=0;i<12;i+=2)bn(o,PD[i],v[PD[i]],n,PD[i+1])}
+pt('layoutProps',t);t=NOW();if(par)par.appendChild(n);pt('append',t);t=NOW();
 if(T){n.textAutoResize=gl||e.ar=='N'?'NONE':e.ar=='H'?'HEIGHT':'WIDTH_AND_HEIGHT';if(gl)n.textAlignHorizontal=n.textAlignVertical='CENTER'}else rs();
 if(ia||l)['Horizontal','Vertical'].forEach((f,i)=>{const m=SZ[s[i]];if(!(m=='FILL'&&!ia)&&!(m=='HUG'&&!l&&!T))n['layoutSizing'+f]=m});
 if(e.mn!=U)n.minWidth=e.mn;
 if(e.mx!=U)n.maxWidth=e.mx;
 if(s[0]=='X')bn(o,'w',v.w,n,'width');
 if(s[1]=='X')bn(o,'h',v.h,n,'height');
+pt('layout',t);
 if(e.raw)NI(o).raw=e.raw;
 S.reg.push([o,n,e]);
 if(e.a||e.tf)S.late.push([n,e,par])
@@ -164,20 +169,20 @@ for(let i=0;i<12;i+=2)VF[PD[i]]=PD[i+1];
 CO.forEach((f,i)=>{VF['r'+i]=f;VF['b'+i]=SI[i]});
 // the first frame of the screen is replaced (after the new one is built) unless edited; other copies: extra, kept
 const screen=async sc=>{
-const res={screen:sc.screen},M0=pg.children.filter(c=>gd(c,'screen')==sc.screen&&gd(c,'file')==sc.file),t=M0[0];
+const t0=NOW(),res={screen:sc.screen},M0=pg.children.filter(c=>gd(c,'screen')==sc.screen&&gd(c,'file')==sc.file),t=M0[0];
 if(M0[1])res.extra=M0.slice(1).map(c=>c.id);
 if(t&&gd(t,'sig')&&gd(t,'sig')!=sig(t)&&gd(t,'sig')!=sig(t,1)&&(D.force||[]).indexOf(sc.screen)<0)return{...res,root:t.id,edited:true,sig:gd(t,'sig')};// no sig = interrupted build
-const x=t?t.x:pg.children.reduce((m,c)=>Math.max(m,c.x+c.width+80),0),y=t?t.y:0,root=S.root=await mk(sc.T,null,sc);
+pt('sigOld',t0);const x=t?t.x:pg.children.reduce((m,c)=>Math.max(m,c.x+c.width+80),0),y=t?t.y:0,tb=NOW(),root=S.root=await mk(sc.T,null,sc);pt('build',tb);
 if(root){root.name=sc.screen;
-const L=S.late.reverse();for(const f of[ab,place])for(const l of L)try{f(l)}catch(z){fail(gd(l[0],'id'),z)}
-root.x=x;root.y=y;
+let tq=NOW();const L=S.late.reverse();for(const f of[ab,place])for(const l of L)try{f(l)}catch(z){fail(gd(l[0],'id'),z)}
+root.x=x;root.y=y;pt('late',tq);
 const box=()=>{const R=root.absoluteBoundingBox,m={};
 // a transformed node: its box before the transform (place() inverted), as the proxy measures it
 for(const[o,n,e,ov]of S.reg)if(!S.bad.has(o))try{const b=n.absoluteBoundingBox,t=!ov&&e.tf,T=t&&n.absoluteTransform;
 m[o]=(t?[T[0][2]-R.x-t[6]-t[4]+t[0]*t[6]+t[2]*t[7],T[1][2]-R.y-t[7]-t[5]+t[1]*t[6]+t[3]*t[7],n.width,n.height]:[b.x-R.x,b.y-R.y,b.width,b.height]).map(r2)}catch(z){fail(o,z)}
 return m},
-size=w=>{const v=root.layoutSizingVertical;root.resize(w,root.height);if(v=='HUG')root.layoutSizingVertical=v},A=box();
-size(sc.W[1]);const B=box();size(sc.W[0]);
+size=w=>{const v=root.layoutSizingVertical;root.resize(w,root.height);if(v=='HUG')root.layoutSizingVertical=v};tq=NOW();const A=box();pt('boxA',tq);
+tq=NOW();size(sc.W[1]);pt('resizeB',tq);tq=NOW();const B=box();pt('boxB',tq);tq=NOW();size(sc.W[0]);pt('resizeA',tq);tq=NOW();
 const M={},pf=root.id.split(':')[0]+':',ui=[],us={};
 for(const[o,n,e,ov]of S.reg)if(!S.bad.has(o)&&A[o]&&B[o])try{const d=read(n,e,ov),b=B[o].map((x,i)=>r2(x-A[o][i])),t=[n.id.indexOf(pf)?n.id:+n.id.slice(pf.length),A[o]];
 if(d||b.some(x=>x))t.push(b.some(x=>x)?b:0);if(d)t.push(d);M[o]=t}catch(z){fail(o,z)}
@@ -189,12 +194,13 @@ const[f,A,b,d]=t,r=q&&M[q],c=[typeof f=='number'&&f==pv+1?0:f,r?A.map((x,i)=>i<2
 if(t.length>2)c.push(b&&pb&&J(b)==J(pb)?1:b);if(d)c.push(d);return c});
 if(ui[0])res.unbound=ui;
 if(Object.keys(us)[0])res.unsupported=us;
-pd(root,'sig',res.sig=sig(root));
-if(t)t.remove()}
+pt('read',tq);tq=NOW();pd(root,'sig',res.sig=sig(root));pt('sigNew',tq);
+tq=NOW();if(t)t.remove();pt('remove',tq)}
 res.fontMissing=S.fm;res.errors=S.er;
 return res},
 out={batch:D.batch,page:pg.name,pageId:pg.id,z:1,screens:[]};
 for(const sc of D.screens){S={reg:[],late:[],i:{},fm:[],er:[],bad:new Set};
 try{out.screens.push(await screen(sc))}catch(z){try{S.root&&S.root.remove()}catch(y){}// keep the old frame, drop the half-built one
 out.screens.push({screen:sc.screen,fontMissing:S.fm,errors:[...S.er,{o:sc.T.o,msg:String(z&&z.message||z).slice(0,200)}]})}}
+if(PR){pt('total',T0);out.prof=PR}
 return out;

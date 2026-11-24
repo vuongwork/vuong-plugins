@@ -615,3 +615,18 @@ test('compact bindings: v.r binds all four corners; a corner bound to a variable
   assert.deepEqual(['topLeftRadius', 'topRightRadius', 'bottomRightRadius', 'bottomLeftRadius'].map((k) => n.boundVariables[k] && n.boundVariables[k].id).filter(Boolean).length, 4);
   assert.equal(s.N['n.2'].d, undefined);
 });
+
+test('D.prof only adds prof (ms per phase): the screens, nodes and sig are the same as without it', async () => {
+  const [b] = planBatches([encFor()], { runtime: RUNTIME });
+  const plain = await run(codeOf(dataOf(b)), fakeFor());
+  const [bp] = planBatches([encFor()], { runtime: RUNTIME, prof: true });
+  assert.equal(dataOf(bp).prof, 1);
+  const prof = await run(codeOf(dataOf(bp)), fakeFor());
+  assert.equal(plain.prof, undefined);
+  const { prof: P, ...rest } = prof;
+  assert.deepEqual(rest, plain);
+  for (const k of ['init', 'build', 'create', 'text', 'paint', 'layoutProps', 'append', 'layout', 'late', 'boxA', 'resizeB', 'boxB', 'resizeA', 'read', 'sigNew', 'total']) {
+    assert.equal(typeof P[k], 'number', `prof.${k}`);
+  }
+  assert.ok(Object.values(P).every((v) => Number.isInteger(v) && v >= 0));
+});

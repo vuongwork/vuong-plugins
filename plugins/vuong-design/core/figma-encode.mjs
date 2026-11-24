@@ -634,7 +634,7 @@ export function encodeScreen(spec, ctx = {}) {
 }
 
 // ---------------- batches ----------------
-export function batchData(encs, n, page, force) {
+export function batchData(encs, n, page, force, prof) {
   const tb = newTables();
   const screens = encs.map((enc) => {
     const T = structuredClone(enc.T);
@@ -645,19 +645,20 @@ export function batchData(encs, n, page, force) {
   if (page !== undefined) D.page = page;
   const f = (force || []).filter((x) => encs.some((enc) => enc.screen === x));
   if (f.length) D.force = f;
+  if (prof) D.prof = 1; // runtime phase timings (figma.mjs plan --prof); not in the per-screen hash
   Object.assign(D, tb, { screens });
   return D;
 }
 
 export function planBatches(encs, opts = {}) {
-  const { limit = PAYLOAD_LIMIT, runtime, page, force, wrap, first = 1 } = opts;
+  const { limit = PAYLOAD_LIMIT, runtime, page, force, wrap, first = 1, prof } = opts;
   let pre = '', post = '';
   if (!wrap) {
     if (typeof runtime !== 'string' || runtime.split('__DATA__').length !== 2) throw new Error('planBatches: runtime must contain __DATA__ exactly once');
     [pre, post] = runtime.split('__DATA__');
   }
   const build = (group, n) => {
-    const data = batchData(group, n, page, force);
+    const data = batchData(group, n, page, force, prof);
     const code = wrap ? wrap(data) : pre + JSON.stringify(data) + post;
     return { n, screens: group.map((e) => e.screen), bytes: Buffer.byteLength(code, 'utf8'), code, data };
   };

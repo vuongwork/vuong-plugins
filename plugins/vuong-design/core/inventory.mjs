@@ -91,7 +91,7 @@
 import { parseColor, toHex } from './color.mjs';
 import { firstFamily } from './font-map.mjs';
 
-const STATE = /^(is-.+|active|selected|disabled|on)$/;
+export const STATE = /^(is-.+|active|selected|disabled|on)$/;
 const SIDE = ['T', 'R', 'B', 'L'];
 const CORNER = ['TL', 'TR', 'BR', 'BL'];
 

@@ -192,6 +192,24 @@ Every fact matches the current assumptions, so nothing in the model changes; the
 
 Every case is favourable, so plan 3b keeps its design: ids on instance children through plugin data, component properties for text, booleans and icons, and instances in screens.
 
+## Components
+
+`core/components.mjs` (plan 3b Task 2) decides which subtrees of the target specs (`spec-norm-<s>.json` with the capture IR) become Figma components, with their variants and properties. It is pure: no browser, no model, and the result does not depend on the order of screens. The full rules are in the file's header comment and in spec §10.
+
+- **No fixed count.** A control (tag `button` / `input` / `select` / `textarea`, or a kind declared for its class), a block with a state class, or a block with a class of its own, its own paint (fill, border, shadow or background image) and at least 2 nodes becomes a component, even if it is used once on one screen. A bare block (no class) repeated with the same structure under the same parent class is only a proposal until the user keeps it.
+- **Declarations, not guesses.** The corpus and the vd-html profile have no `role`, `aria-*`, `data-state`, `<button>` or `<input>`; Planora marks controls with short classes (`btn`, `ck`, `tog`, `chip`) and states with `on`, `off`, `done`. So kinds, extra state classes, modifier classes (variant axes) and the choice for classes with several structures come from `vd-components.json`, which the user writes. `componentsDraft()` writes `vd-components.draft.json` with suggestions and notes (counts, screens, shapes); agents never copy it into `vd-components.json`. Until the user answers, undeclared classes keep their old behaviour: a modifier class makes a separate component, and a class with several structures is built as layers.
+- **Shapes.** Inside each variant the occurrences are clustered by structure. One structure per variant: a component. More than one: `shapes` in the declaration picks `variants` (one component set with a `shape` axis), `split` (one component per shape) or `container` (layers, the default, as plan 3 builds them).
+
+Planora (18 screens, 1155 spec nodes, ds run of 2026-11-24 with `vd-rules.json`; 11-18 ms per run):
+
+| Declaration | Components (by reason) | Variants | Properties | Occurrences | Nodes inside instances | Skipped |
+|---|---|---|---|---|---|---|
+| none | 20 (class 15, state 5) | 25 | 11 | 125 | 332 / 1155 (28.7 %) | shapes 88 (`card` 32, `li` 32, `set` 15, `nav` 6, `li done` 3), nested 6 |
+| the draft as written (a test, not an answer) | 14 (control 5, class 6, state 3) | 28 | 9 | 131 | 339 / 1155 (29.4 %) | shapes 88, nested 6 |
+| the draft with `shapes: variants` for `li`, `set`, `nav`, `card` (a test) | 18 (control 5, class 9, state 4) | 64 | 36 | 219 | 800 / 1155 (69.3 %) | nested 6 |
+
+With the draft, `btn` is one button with 4 variants (33 uses on 12 screens), `ck` one checkbox with 6 variants (state x size / form, 18 uses), `chip` one chip with 4 variants (15 uses), `tog` a switch (3 uses), `fab` a button (6 uses). Structures per class: `card` 32 uses in 19 shapes (a generic container: different content each time), `li` 35 in 16, `set` 15 in 2 (13 text rows, 2 switch rows), `nav` 6 in 2. Part of `li`'s count comes from infer wrapping the checkbox in a synthetic frame on some rows and not on others; whether matching may look through synthetic frames is decided in Task 5, where `expandInstance` checks each rebuilt instance. Three bare state groups are components named `cmp-1` to `cmp-3`: two kinds of bottom-nav item (`a` under `.nav`, two structures, so two bare keys) and the segment item (`div` under `.seg`), each with `default` / `on`: a name comes with `keep` in the declaration. The draft also warns that `bottom btn p` carries two declared base classes (`bottom` is used).
+
 ## Figma encoding
 
 `core/figma-encode.mjs` (plan 3 Task 4) turns each target spec (`spec-norm-<s>.json`) into compact data for the Figma builder: one-letter keys, Figma defaults left out, shared tables (`C` colours, `F` fonts, `I` icons, `V` variable names, `S` style names, `M` image sources), variable bindings as indices into `V` from `token-map.json`, and the spec id `o` on every node. The full format is in the file's header comment. `planBatches` packs screens in order into `use_figma` calls of at most 50 000 bytes (UTF-8, builder + data). Each batch carries only the table entries it uses. A screen too big to fit on its own throws `OversizeError` (screen, bytes); it is never cut.

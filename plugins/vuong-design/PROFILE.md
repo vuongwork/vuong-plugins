@@ -60,7 +60,7 @@ The list of properties for W5 mirrors `unsupported()` in `core/capture.mjs` (R46
 | E3 | error | runnable `<script>` |
 | E4 | error | image that is not `data:` (img src, srcset, background-image url, svg `<image>`, `<use>` to another file) |
 | E5 | error | stylesheet whose `cssRules` cannot be read (cross-origin), except Google Fonts |
-| E6 | error | font that is neither in Figma nor a system font (Figma substitutes Inter) |
+| E6 | error | font that is neither in Figma nor a system or browser-default font (Figma substitutes Inter) |
 | E7 | error | `<use>` pointing at an id that does not exist |
 | E8 | error | `iframe`, `canvas`, `video`, `object`, `embed` inside a screen |
 | W1 | warn | grid / float / table layout inside a screen |
@@ -93,7 +93,7 @@ groups per code, merged by code + screen + message):
 |---|---|---|---|---|
 | planora-ui-screens.html | 18 | 1.5 s | 0 | 22: W1 x11, W3 x7, W7 x4 |
 | 2026-11-05-ui-redesign-entry-mockup.html | 2 | 1.0 s | 0 | 8: W1 x2, W6 x2, W7 x4 |
-| calendar-layout.html | 2 | 0.6 s | 2: E6 x2 (Times New Roman, the browser default) | 3: W7 x3 |
+| calendar-layout.html | 2 | 0.9 s | 0 | 5: W8 x2 (Times New Roman, the browser default), W7 x3 |
 | calendar-layout-v2.html | 2 | 0.6 s | 0 | 8: W1 x2, W7 x4, W8 x2 |
 | calendar-layout-v3.html | 1 | 0.6 s | 0 | 6: W1 x1, W7 x4, W8 x1 |
 | templates/starter.html | 3 | 1.2 s | 0 | 0 |

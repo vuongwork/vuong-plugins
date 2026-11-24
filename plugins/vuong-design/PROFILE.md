@@ -46,6 +46,9 @@ lowers accuracy is a warning (`W`).
 - Figma has no `z-index`: a later layer always draws on top. An overlay that spills out of its parent (dropdown menu,
   popover, tooltip, snackbar) goes after the content it covers, normally as the last child of the screen with explicit
   offsets; nesting it inside the field it belongs to puts it under the following rows in Figma. Checked by W13.
+- Truncated text (a spec asks for "…"): write the shortened text with the ellipsis in the content, short enough to fit
+  on one line at width A ("Nguyễn Hoàng Phương…"). No `text-overflow`, no `white-space: nowrap` + clipping. The text
+  stays as written when widened, which Figma reproduces.
 - No height tied to width: `aspect-ratio` or vertical padding in % on a stretching element keeps its ratio in CSS but
   not in Figma auto layout, and everything below it moves. Give a stretching image a fixed height (or a fixed width, if
   the ratio matters more than stretching). Checked by W14.

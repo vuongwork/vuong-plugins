@@ -1,6 +1,6 @@
 // Helpers for a case's grade.mjs. A grade.mjs exports `default async function grade(ctx)` and returns
 // `[{ name, score: 0..1, pass?, detail?, by?: 'code' | 'model' }]`; ctx = { ws, caseDir, key, trace, sh, read, exists }.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
@@ -85,6 +85,15 @@ export function matchKey(items, key, { ok = [], slack = 3 } = {}) {
 export const fileLines = (text) => [...String(text || '').matchAll(/([\w./\\-]+\.\w{1,5}):(\d+)/g)].map((m) => ({ file: m[1].replace(/\\/g, '/'), line: +m[2] }));
 
 // How many `file:line` references point at a file that does not exist or past its end.
+function filesNamed(dir, name, out = []) {
+  for (const f of readdirSync(dir, { withFileTypes: true })) {
+    if (['node_modules', '.git'].includes(f.name)) continue;
+    const p = join(dir, f.name);
+    if (f.isDirectory()) filesNamed(p, name, out); else if (f.name === name) out.push(p);
+  }
+  return out;
+}
+
 export function badRefs(ws, text) {
   const bad = [];
   const seen = new Set();
@@ -92,7 +101,12 @@ export function badRefs(ws, text) {
     const k = file + ':' + line;
     if (seen.has(k)) continue;
     seen.add(k);
-    const p = join(ws, file);
+    let p = join(ws, file);
+    if (!existsSync(p) && !file.includes('/')) {
+      // a bare file name ("app.js:179") is fine when exactly one file in the workspace has that name
+      const hits = filesNamed(ws, file);
+      if (hits.length === 1) p = hits[0];
+    }
     if (!existsSync(p)) { bad.push(k + ' (no file)'); continue; }
     const n = readFileSync(p, 'utf8').split('\n').length;
     if (line < 1 || line > n) bad.push(k + ` (file has ${n} lines)`);

@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { badRefs, check, matchKey, mdTables, sh } from '../../../../lib/grade.mjs';
+import { rescue } from '../../../../lib/judge.mjs';
 
 const W = 'test-work/L01';
 const REPO = resolve(import.meta.dirname, '../../../../..');
@@ -28,13 +29,16 @@ export default async function grade({ ws, key, read }) {
   const files = ['spec-sources.md', 'flows.md', 'diff.md'].map((f) => read(`${W}/${f}`));
   const [sources, flows, diff] = files;
   const out = [check('3 files written', files.filter(Boolean).length / 3, ['spec-sources.md', 'flows.md', 'diff.md'].filter((_, i) => !files[i]).join(', ') || '')];
+  const saved = (m) => (m.rescued.length ? ` · by model: ${m.rescued.map((x) => `${x.id} (row ${x.row})`).join('; ')}` : '');
   if (flows) {
-    const m = matchKey(rowsOf(flows), key.flows);
-    out.push(check('flow recall', m.recall, `${m.found.length}/${key.flows.length}; missed: ${m.missed.join('; ') || '-'}`));
+    const rows = rowsOf(flows);
+    const m = await rescue(rows, matchKey(rows, key.flows), key.flows);
+    out.push(check('flow recall', m.recall, `${m.found.length}/${key.flows.length}; missed: ${m.missed.join('; ') || '-'}${saved(m)}`, m.rescued.length ? 'code+model' : 'code'));
   } else out.push(check('flow recall', 0, 'no flows.md'));
   if (diff) {
-    const m = matchKey(rowsOf(diff), key.diff, { ok: key.diffOk });
-    out.push(check('diff recall', m.recall, `${m.found.length}/${key.diff.length}; missed: ${m.missed.join('; ') || '-'}`));
+    const rows = rowsOf(diff);
+    const m = await rescue(rows, matchKey(rows, key.diff, { ok: key.diffOk }), key.diff);
+    out.push(check('diff recall', m.recall, `${m.found.length}/${key.diff.length}; missed: ${m.missed.join('; ') || '-'}${saved(m)}`, m.rescued.length ? 'code+model' : 'code'));
     out.push(check('diff rows beyond the key', m.precision, `${m.found.length} matched, ${m.dup.length} split rows, ${m.extra.length} other (often real but unseeded: check by hand)`, 'code', true));
   } else out.push(check('diff recall', 0, 'no diff.md'), check('diff precision', 0, 'no diff.md'));
   const refs = badRefs(ws, (flows || '') + '\n' + (diff || ''));

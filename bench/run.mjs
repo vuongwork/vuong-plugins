@@ -30,22 +30,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseTrace, readTrace, totals } from './lib/transcript.mjs';
 import { byStep, docsAndRework } from './lib/steps.mjs';
 import { exists, read, sh } from './lib/grade.mjs';
+import { childEnvFor } from './lib/env.mjs';
 
 const BENCH = dirname(fileURLToPath(import.meta.url));
 const REPO = dirname(BENCH);
 const RESULTS = () => process.env.BENCH_RESULTS || join(BENCH, 'results');
 const jsonOr = (p, d) => (existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : d);
 
-// Variables of the Claude Code session that launched us must not leak into the child (auth, messaging, effort).
-export function childEnv(env = process.env) {
-  const out = {};
-  for (const [k, v] of Object.entries(env)) {
-    if (k === 'ANTHROPIC_API_KEY' || k === 'CLAUDECODE' || k === 'CLAUDE_PID' || k === 'CLAUDE_EFFORT') continue;
-    if (k.startsWith('CLAUDE_CODE_')) continue;
-    out[k] = v;
-  }
-  return out;
-}
+export const childEnv = childEnvFor;
 
 export function loadCase(caseDir) {
   const dir = resolve(caseDir);

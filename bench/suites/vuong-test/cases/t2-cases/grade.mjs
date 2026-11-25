@@ -1,6 +1,7 @@
 // t2-cases: cases.md + data-plan.md from the t1 analysis. Scored against keys/leave-request.json.
 import { join, resolve } from 'node:path';
 import { check, matchKey, mdTables, sh } from '../../../../lib/grade.mjs';
+import { rescue } from '../../../../lib/judge.mjs';
 
 const W = 'test-work/L01';
 const REPO = resolve(import.meta.dirname, '../../../../..');
@@ -18,11 +19,12 @@ export default async function grade({ ws, key, read }) {
   const errLine = lint.out.split('\n').find((l) => /error/i.test(l)) || lint.out.trim().split('\n').pop();
   out.push(check('lint-cases clean', lint.code === 0 ? 1 : 0, errLine?.slice(0, 160)));
 
-  const cov = matchKey(allRows, key.flows);
-  out.push(check('flows covered (case or Not covered)', cov.recall, `missed: ${cov.missed.join('; ') || '-'}`));
+  const saved = (m) => (m.rescued.length ? ` · by model: ${m.rescued.map((x) => `${x.id} (row ${x.row})`).join('; ')}` : '');
+  const cov = await rescue(allRows, matchKey(allRows, key.flows), key.flows);
+  out.push(check('flows covered (case or Not covered)', cov.recall, `missed: ${cov.missed.join('; ') || '-'}${saved(cov)}`, cov.rescued.length ? 'code+model' : 'code'));
   const caseRows = cases.map((r) => r._text);
-  const seeded = matchKey(caseRows, key.caseExpect);
-  out.push(check('seeded defects have a spec-based case', seeded.recall, `missed: ${seeded.missed.join('; ') || '-'}`));
+  const seeded = await rescue(caseRows, matchKey(caseRows, key.caseExpect), key.caseExpect);
+  out.push(check('seeded defects have a spec-based case', seeded.recall, `missed: ${seeded.missed.join('; ') || '-'}${saved(seeded)}`, seeded.rescued.length ? 'code+model' : 'code'));
   const fromCode = cases.filter((r) => key.codeExpect.some((k) => k.any.some((re) => new RegExp(re, 'i').test(r.Expected || ''))));
   out.push(check('no Expected taken from code', fromCode.length ? 0 : 1, fromCode.map((r) => `${r.ID}: ${String(r.Expected).slice(0, 80)}`).join(' ‖ ') || '-'));
 

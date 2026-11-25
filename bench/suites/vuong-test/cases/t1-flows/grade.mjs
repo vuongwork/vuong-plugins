@@ -35,7 +35,7 @@ export default async function grade({ ws, key, read }) {
   if (diff) {
     const m = matchKey(rowsOf(diff), key.diff, { ok: key.diffOk });
     out.push(check('diff recall', m.recall, `${m.found.length}/${key.diff.length}; missed: ${m.missed.join('; ') || '-'}`));
-    out.push(check('diff precision', m.precision, `rows not in the key: ${m.extra.length}${m.extra.length ? ' — ' + m.extra.slice(0, 4).map((x) => x.slice(0, 90)).join(' ‖ ') : ''}`));
+    out.push(check('diff rows beyond the key', m.precision, `${m.found.length} matched, ${m.dup.length} split rows, ${m.extra.length} other (often real but unseeded: check by hand)`, 'code', true));
   } else out.push(check('diff recall', 0, 'no diff.md'), check('diff precision', 0, 'no diff.md'));
   const refs = badRefs(ws, (flows || '') + '\n' + (diff || ''));
   out.push(check('file:line refs exist', refs.total ? 1 - refs.bad.length / refs.total : 0, `${refs.total} refs, ${refs.bad.length} bad${refs.bad.length ? ': ' + refs.bad.slice(0, 5).join(', ') : ''}`));

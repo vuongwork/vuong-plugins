@@ -16,7 +16,7 @@
 //   key          answer key JSON passed to grade.mjs (default key.json, if it exists)
 //   steps        steps.json for the per-step split (default <suite>/steps.json)
 //   budgetUsd    --max-budget-usd (default 1)      timeoutSec   wall clock limit (default 1800)
-//   model, effort, permissionMode (default acceptEdits), allowedTools [..], disallowedTools [..] (AskUserQuestion is
+//   model, effort, permissionMode (default auto, like a person working in auto mode), allowedTools [..], disallowedTools [..] (AskUserQuestion is
 //   always removed: nobody answers in a bench run), arms (default ["plugin"]; add "baseline" when the comparison
 //   means something), setup [shell commands run in the workspace before claude], copy [[from (repo-relative), to
 //   (workspace-relative)], ...], env { NAME: value } added to the child's environment
@@ -93,7 +93,7 @@ export function claudeArgs(c, arm, ws, opts) {
   const a = ['-p', '--output-format', 'stream-json', '--verbose', '--no-session-persistence',
     '--setting-sources', '', '--strict-mcp-config',
     '--max-budget-usd', String(opts.budget ?? c.budgetUsd),
-    '--permission-mode', c.permissionMode || 'acceptEdits',
+    '--permission-mode', c.permissionMode || 'auto',
     '--disallowed-tools', ['AskUserQuestion', ...(c.disallowedTools || [])].join(',')];
   if (c.allowedTools?.length) a.push('--allowed-tools', c.allowedTools.join(','));
   const model = opts.model || c.model;
@@ -155,7 +155,7 @@ export function summarize(c, events) {
   };
 }
 
-const score = (checks) => (checks.length ? Math.round((checks.reduce((a, k) => a + k.score, 0) / checks.length) * 1000) / 1000 : null);
+const score = (all) => { const checks = all.filter((k) => !k.info); return checks.length ? Math.round((checks.reduce((a, k) => a + k.score, 0) / checks.length) * 1000) / 1000 : null; };
 
 async function runOnce(c, arm, i, opts) {
   const runId = `${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}-${arm}-${i}`;
@@ -177,20 +177,20 @@ async function runOnce(c, arm, i, opts) {
   const row = {
     ts: new Date().toISOString(), suite: c.suite, case: c.name, arm, run: runId,
     plugin: arm === 'plugin' ? pluginInfo(resolve(REPO, c.plugin)) : null,
-    model: opts.model || c.model || null, effort: opts.effort || c.effort || null, budgetUsd: opts.budget ?? c.budgetUsd,
+    model: opts.model || c.model || null, effort: opts.effort || c.effort || null, budgetUsd: opts.budget ?? c.budgetUsd, permissionMode: c.permissionMode || 'auto',
     exit: proc.code, killed: proc.killed, wallMs: proc.ms,
     error: !sum.result ? 'no result event' : sum.result.isError ? sum.result.terminalReason || 'error' : null,
     costUsd: sum.result?.costUsd ?? null, durationMs: sum.result?.durationMs ?? null, turns: sum.result?.turns ?? null,
     denials: sum.result?.denials?.length || 0, skillLoaded: sum.skillLoaded, usedSkill: sum.usedSkill,
     totals: sum.totals, steps: sum.steps, docs: sum.docs,
-    score: score(checks), checks: checks.map(({ name, score: s, by }) => ({ name, score: s, by })),
+    score: score(checks), checks: checks.map(({ name, score: s, by, info }) => ({ name, score: s, by, ...(info ? { info } : {}) })),
   };
   appendFileSync(join(RESULTS(), c.suite, 'runs.jsonl'), JSON.stringify(row) + '\n');
   const keep = opts.keep || row.error || proc.code !== 0;
   if (keep) writeFileSync(join(runDir, 'workspace.txt'), ws + '\n');
   else rmSync(ws, { recursive: true, force: true });
   console.log(`  cost ${row.costUsd ?? '?'} USD · ${Math.round((row.durationMs ?? proc.ms) / 1000)} s · ${row.turns ?? '?'} turns · score ${row.score ?? '-'}${row.error ? ' · ERROR ' + row.error : ''}${keep ? ' · kept ' + ws : ''}`);
-  for (const k of checks) console.log(`    ${k.score >= 1 ? '✓' : '✗'} ${k.name}: ${k.score}${k.detail ? ' — ' + String(k.detail).split('\n')[0].slice(0, 160) : ''}`);
+  for (const k of checks) console.log(`    ${k.info ? 'ℹ' : k.score >= 1 ? '✓' : '✗'} ${k.name}: ${k.score}${k.detail ? ' — ' + String(k.detail).split('\n')[0].slice(0, 160) : ''}`);
   return row;
 }
 
@@ -226,7 +226,15 @@ export async function main(argv) {
   if (values.regrade) {
     const ws = readFileSync(join(values.regrade, 'workspace.txt'), 'utf8').trim();
     const checks = await grade(c, ws, readTrace(readFileSync(join(values.regrade, 'trace.jsonl'), 'utf8')));
-    for (const k of checks) console.log(`${k.score >= 1 ? '✓' : '✗'} ${k.name}: ${k.score}${k.detail ? ' — ' + k.detail : ''}`);
+    for (const k of checks) console.log(`${k.info ? 'ℹ' : k.score >= 1 ? '✓' : '✗'} ${k.name}: ${Math.round(k.score * 100) / 100}${k.detail ? ' — ' + k.detail : ''}`);
+    writeFileSync(join(values.regrade, 'grade.json'), JSON.stringify(checks, null, 2));
+    // update the run's row in runs.jsonl (grader fixed after the run)
+    const file = join(RESULTS(), c.suite, 'runs.jsonl');
+    const runId = basename(resolve(values.regrade));
+    const rows = readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    for (const r of rows) if (r.run === runId && r.case === c.name) Object.assign(r, { score: score(checks), checks: checks.map(({ name, score: s, by, info }) => ({ name, score: s, by, ...(info ? { info } : {}) })), regraded: new Date().toISOString() });
+    writeFileSync(file, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    console.log(`score ${score(checks)}`);
     return 0;
   }
   const arms = values.arm === 'both' ? ['plugin', 'baseline'] : values.arm ? [values.arm] : c.arms;

@@ -44,25 +44,41 @@ export function mdTables(text) {
 // items: strings, or { text, file?, line? }.
 // Found: an item's text matches one of `any` (case-insensitive) and, when the key has file/lines, the item points
 // there (line within ±slack). Each item counts for at most one key entry (first match), each key entry once.
+// Assignment is a maximum bipartite matching (one item per key entry, one key entry per item), so an item that fits
+// two entries cannot starve the other one. Items that match some entry but are not assigned (the same finding split
+// over several rows) are `dup`, neither right nor wrong; items matching no entry and no `ok` regex are `extra`.
 export function matchKey(items, key, { ok = [], slack = 3 } = {}) {
   const its = items.map((x) => (typeof x === 'string' ? { text: x } : x));
-  const used = new Set();
-  const found = [], missed = [];
-  for (const k of key) {
+  const fits = key.map((k) => {
     const res = (k.any || []).map((r) => new RegExp(r, 'i'));
-    const idx = its.findIndex((it, i) => !used.has(i) && res.some((r) => r.test(it.text))
-      && (!k.file || (it.file && new RegExp(k.file, 'i').test(it.file)) || new RegExp(k.file, 'i').test(it.text))
-      && (!k.lines || (it.line != null && it.line >= k.lines[0] - slack && it.line <= k.lines[1] + slack)));
-    if (idx >= 0) { used.add(idx); found.push(k.id); } else missed.push(k.id);
-  }
-  const okRes = ok.map((r) => new RegExp(r, 'i'));
-  const extra = its.map((it, i) => ({ it, i })).filter(({ it, i }) => !used.has(i) && !okRes.some((r) => r.test(it.text))).map(({ it }) => it.text);
-  const judged = used.size + extra.length; // valid extras (`ok`) are neither right nor wrong
-  return {
-    recall: key.length ? found.length / key.length : 1,
-    precision: judged ? used.size / judged : 1,
-    found, missed, extra,
+    const fileRe = k.file ? new RegExp(k.file, 'i') : null;
+    return its.map((it, i) => (res.some((r) => r.test(it.text))
+      && (!fileRe || (it.file && fileRe.test(it.file)) || fileRe.test(it.text))
+      && (!k.lines || (it.line != null && it.line >= k.lines[0] - slack && it.line <= k.lines[1] + slack)) ? i : -1)).filter((i) => i >= 0);
+  });
+  const owner = new Array(its.length).fill(-1); // item -> key index
+  const augment = (k, seen) => {
+    for (const i of fits[k]) {
+      if (seen.has(i)) continue;
+      seen.add(i);
+      if (owner[i] < 0 || augment(owner[i], seen)) { owner[i] = k; return true; }
+    }
+    return false;
   };
+  key.forEach((_, k) => augment(k, new Set()));
+  const assigned = new Set(owner.filter((k) => k >= 0));
+  const found = key.filter((_, k) => assigned.has(k)).map((k) => k.id);
+  const missed = key.filter((_, k) => !assigned.has(k)).map((k) => k.id);
+  const anyFit = new Set(fits.flat());
+  const okRes = ok.map((r) => new RegExp(r, 'i'));
+  const dup = [], extra = [];
+  its.forEach((it, i) => {
+    if (owner[i] >= 0) return;
+    if (anyFit.has(i)) dup.push(it.text);
+    else if (!okRes.some((r) => r.test(it.text))) extra.push(it.text);
+  });
+  const judged = assigned.size + extra.length;
+  return { recall: key.length ? found.length / key.length : 1, precision: judged ? assigned.size / judged : 1, found, missed, dup, extra };
 }
 
 // `path:line` references in a text, e.g. src/app.js:120 → [{ file, line }].
@@ -84,4 +100,5 @@ export function badRefs(ws, text) {
   return { total: seen.size, bad };
 }
 
-export const check = (name, score, detail, by = 'code') => ({ name, score: Math.max(0, Math.min(1, Number(score) || 0)), pass: score >= 1, detail, by });
+// info: shown in reports, left out of the case score (a measurement that is not right / wrong by itself)
+export const check = (name, score, detail, by = 'code', info = false) => ({ name, score: Math.max(0, Math.min(1, Number(score) || 0)), pass: score >= 1, detail, by, ...(info ? { info: true } : {}) });

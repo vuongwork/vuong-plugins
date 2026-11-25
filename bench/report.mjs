@@ -25,7 +25,7 @@ export function render(rows, { steps = false } = {}) {
     const t = r.totals || {};
     const p = r.plugin ? `${r.plugin.version || '?'}@${r.plugin.sha || '?'}${r.plugin.dirty ? '+' : ''}` : '—';
     const model = r.model || Object.keys(t.models || {}).join(' ') || '?';
-    const checks = (r.checks || []).map((c) => `${c.score >= 1 ? '✓' : c.score > 0 ? '◐' : '✗'} ${c.name}${c.score < 1 && c.score > 0 ? ' ' + c.score.toFixed(2) : ''}`).join('<br>');
+    const checks = (r.checks || []).map((c) => `${c.info ? 'ℹ' : c.score >= 1 ? '✓' : c.score > 0 ? '◐' : '✗'} ${c.name}${c.score < 1 && c.score > 0 ? ' ' + c.score.toFixed(2) : ''}`).join('<br>');
     out.push(`| ${r.case} | ${r.arm}${r.error ? ' ⚠ ' + r.error : ''} | ${p} | ${model} | ${usd(r.costUsd)} | ${min(r.durationMs ?? r.wallMs)} | ${r.turns ?? '–'} | ${k(t.output)} | ${k((t.input || 0) + (t.cacheRead || 0) + (t.cacheWrite || 0))} | ${r.docs ? `${r.docs.docReads} (${k(r.docs.docBytes)}B)` : '–'} | ${r.docs?.rework ?? '–'} | ${r.denials ?? 0} | ${r.score ?? '–'} | ${checks} |`);
   }
   if (steps) {

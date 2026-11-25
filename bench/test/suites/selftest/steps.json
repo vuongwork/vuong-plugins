@@ -1,0 +1,9 @@
+{
+  "skill": "p:p",
+  "docs": "/(skills|references|templates)/",
+  "checks": "core/(lint-[\\w-]+)\\.mjs",
+  "steps": [
+    { "name": "3 flows", "write": ["flows\\.md$"] },
+    { "name": "4 cases", "bash": ["lint-cases\\.mjs"] }
+  ]
+}

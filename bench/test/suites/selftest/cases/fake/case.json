@@ -1,0 +1,1 @@
+{ "plugin": "bench/test/fake-plugin", "budgetUsd": 0.01, "arms": ["plugin", "baseline"], "allowedTools": ["Read", "Bash(node *)"] }

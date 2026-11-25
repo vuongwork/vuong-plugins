@@ -170,6 +170,14 @@ Component được dựng từ spec của lần xuất hiện đầu tiên (theo
   - **Giới hạn Figma:** biến không gắn được vào độ mờ riêng của một lớp màu. Vì vậy nền 12 % và lớp phủ 10 % dựng thành layer con riêng, có độ mờ gắn biến. Phép so của Task 5 / `check` phải tính layer con này.
   - Luật chưa duyệt → không có token trạng thái, không có biến.
 
+Đã làm phần 1 (2026-11-25, commit `02e2e31`):
+- Mã hoá: `core/figma-cmp.mjs`. Lô `cmp-NN` dựng icon component trước, rồi component theo thứ tự phụ thuộc. Các variant của một component không bị tách sang lô khác.
+- Runtime component: `core/figma-runtime-cmp.js` (6,7 KB), cài một lần như runtime màn (`runtime-cmp`). Loader chèn nó vào runtime màn và vá 3 chỗ gọi (`CMP_PATCHES`), nên runtime màn không đổi một byte.
+- Khác với bản kế hoạch: instance mang nguyên mã hoá của kế hoạch 3, cộng các dấu `i`, `p`, `j`, `rc`. Runtime chỉ đặt trên mỗi layer những gì khác với mã hoá. Cách này thay cho `ov` theo đường dẫn, đúng cả với instance lồng nhau, và readback giữ nguyên.
+- Chạy lại: component mới thay component cũ cùng tên, instance được chuyển sang (`swapComponent`), không tạo trùng.
+- Planora trên fake: 1 lô component (19,3 KB), 3 lô màn (44,0 / 46,6 / 19,1 KB), 147 layer instance, 1 335 / 1 335 node đọc lại đúng.
+- Còn lại (phần 2): trạng thái đề xuất (nhấn, tắt, đang tải) thành variant, và biến cho thông số trạng thái.
+
 - [ ] **Step 1: Viết test** trên fake: lô cmp dựng đủ component / set / thuộc tính, chạy lại → không trùng; `state vars`: luật duyệt → có token trong `tokens.css` và biến số trên fake, layer trạng thái gắn biến; sửa giá trị một biến → mọi component trạng thái đổi theo; màn dùng instance có readback đủ mục theo ID spec (`instance readback`); `override kept`; component có node lỗi → instance của nó `detached` và màn vẫn dựng; `off is plan 3`: tắt → mọi lô Planora giống từng byte fixture kế hoạch 3; kích thước hai runtime ≤ 16 384 B mỗi file.
 - [ ] **Step 2–4:** FAIL → viết → PASS.
 - [ ] **Step 5: Commit** `feat(vuong-design): Figma components, variants, properties and screen instances`.

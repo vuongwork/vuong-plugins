@@ -1,0 +1,10 @@
+{
+  "plugin": "plugins/vuong-test",
+  "fixture": "leave-request",
+  "copy": [["bench/suites/vuong-test/project/test.config.json", "test.config.json"]],
+  "key": "../../keys/leave-request.json",
+  "budgetUsd": 4,
+  "timeoutSec": 2400,
+  "allowedTools": ["Read", "Write", "Edit", "Glob", "Grep", "Skill", "Bash(node *)", "Bash(git *)", "Bash(ls *)", "Bash(cat *)", "Bash(grep *)", "Bash(cd *)", "Bash(mkdir *)", "Bash(head *)", "Bash(wc *)"],
+  "arms": ["plugin", "baseline"]
+}

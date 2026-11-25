@@ -1,0 +1,42 @@
+{
+  "$comment": "vuong-test project config (shared, committed). See references/config.md.",
+  "project": "leave-request",
+  "workDir": "test-work",
+  "specPaths": [
+    { "path": "docs/spec", "kind": "screen", "match": ["*{scope}*.xlsx", "API_*.xlsx"], "kinds": { "API_*": "api" } }
+  ],
+  "specMissing": ["acceptance", "decision", "ticket"],
+  "scopes": { "L01": ["DangKyNghiPhep", "Leave", "API_Leave"] },
+  "specPrecedence": ["screen", "api"],
+  "stacks": [
+    {
+      "id": "ut",
+      "stack": "jest",
+      "dir": ".",
+      "run": "npx jest --json --outputFile=test-work/_out/ut-jest.json --coverage --coverageReporters=json",
+      "results": { "jest-json": "test-work/_out/ut-jest.json" },
+      "coverage": "coverage/coverage-final.json"
+    },
+    {
+      "id": "api",
+      "stack": "api",
+      "dir": ".",
+      "run": "node test-work/<scope>/api.mjs",
+      "results": { "api-json": "test-work/<scope>/api/api-results.json" }
+    },
+    {
+      "id": "e2e",
+      "stack": "playwright",
+      "dir": ".",
+      "run": "node test-work/<scope>/e2e.mjs",
+      "results": { "e2e-json": "test-work/<scope>/e2e-results.json" }
+    }
+  ],
+  "environments": {
+    "local": { "baseUrl": "http://localhost:3210", "apiBase": "http://localhost:3210/api", "writesAllowed": true, "writable": true }
+  },
+  "accounts": { "env": [] },
+  "dataRules": "Local server, data in memory: restart the server (npm start) to reset. User is sent as header X-User (E001 owns the sample leaves, E002 owns LV-20261124-003).",
+  "uploader": null,
+  "caseTemplates": []
+}

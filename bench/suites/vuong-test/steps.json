@@ -1,0 +1,16 @@
+{
+  "skill": "vuong-test:vuong-test",
+  "docs": "/(skills|references|templates)/",
+  "checks": "core/(lint-cases|lint-tests|config|find-spec|read-spec|review-tests|cases-summary|collect|render-html)\\.mjs",
+  "steps": [
+    { "name": "0 setup", "bash": ["core/(init|config)\\.mjs"] },
+    { "name": "2 spec", "bash": ["core/(find-spec|read-spec|scan-specs)\\.mjs"], "write": ["spec-sources\\.md$"] },
+    { "name": "3 flows", "write": ["flows\\.md$"] },
+    { "name": "3 diff", "write": ["diff\\.md$"] },
+    { "name": "4 cases", "bash": ["core/(import-cases|lint-cases)\\.mjs"], "write": ["cases\\.md$", "data-plan\\.md$"] },
+    { "name": "5 gate", "bash": ["core/cases-summary\\.mjs"] },
+    { "name": "review", "bash": ["core/review-tests\\.mjs"], "write": ["existing-tests\\.md$"] },
+    { "name": "6 tests", "bash": ["core/(lint-tests|manual-runbook|account)\\.mjs", "jest", "e2e[\\w-]*\\.mjs", "api[\\w-]*\\.mjs"], "write": ["\\.test\\.js$", "/e2e[\\w-]*\\.mjs$", "/api[\\w-]*\\.mjs$", "run-notes[\\w-]*\\.md$"] },
+    { "name": "7 report", "bash": ["core/(collect|render-html|export-cases|cleanup-list)\\.mjs"], "write": ["triage\\.md$", "data-created\\.md$"] }
+  ]
+}

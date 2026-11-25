@@ -172,3 +172,37 @@ Mỗi ca bắt đầu từ đầu ra mẫu của bước trước, để không 
 3. Hook `guard-bash.mjs` của vuong-test không chặn lệnh cần thiết trong workspace tạm.
 4. `spec-to-html` sinh được màn form có đủ trạng thái (New / Edit / View, lỗi, hộp xác nhận) từ spec mẫu.
 5. Bảng chia bước theo dấu hiệu kế tiếp cho kết quả hợp lý (so tay với một transcript).
+
+## 11. Kết quả đo gốc (2026-11-25/26)
+
+vuong-test 0.22.2, Opus 5.5 (mặc định), permission mode `auto`, mỗi ô 1 lần chạy. USD là giá niêm yết quy đổi.
+Bảng đầy đủ: `node bench/report.mjs vuong-test --steps`. Đáp án lỗi: `bench/fixtures/_meta/leave-request/defects.md`.
+
+| Ca | Arm | USD | Phút | Token ra | Token vào + cache | Điểm | Trừ điểm |
+|---|---|---|---|---|---|---|---|
+| t1-flows | plugin | 1,27 | 4,1 | 28,8k | 838k | 1,00 | 1/109 `file:line` bịa (app.js:378) |
+| t1-flows | baseline | 1,08 | 3,9 | 25,6k | 699k | 1,00 | |
+| t3-review | plugin | 0,34 | 0,9 | 5,2k | 264k | 1,00 | (skill không được gọi) |
+| t3-review | baseline | 0,30 | 1,1 | 4,8k | 194k | 1,00 | |
+| t2-cases | plugin | 2,41 | 7,8 | 56,1k | 1698k | 1,00 | 93 case |
+| t2-cases | baseline | 1,82 | 6,8 | 45,1k | 925k | 0,83 | `lint-cases` lỗi; 127 case |
+| t4-tests | plugin | 3,28 | 13,4 | 62,0k | 3523k | 1,00 | |
+| t4-tests | baseline | 2,67 | 18,4 | 54,7k | 2605k | 0,80 | 6 fixed wait; kết thúc bằng api_error (hết lượt dùng) |
+| **Tổng** | plugin | **7,30** | 26,2 | | | | |
+| | baseline | **5,87** | 30,2 | | | | |
+
+Kết luận đo được:
+- Độ chính xác trên app mẫu này: hai arm gần như bằng nhau. Cả hai tìm đủ 27/27 flow, 6/6 lỗi cài sẵn, viết case cho
+  cả 6 lỗi theo spec, bắt cả 6 lỗi bằng test (FAIL trước, PASS sau `fixed.patch`), và không có test đỏ giả nào ngoài
+  U6/U7. App mẫu quá dễ với Opus để phân biệt độ chính xác.
+- Plugin hơn ở kỷ luật quy trình: định dạng sạch (`lint-cases`, `lint-tests`), không fixed wait, ít câu hỏi BA bị bỏ.
+  Ở t1, plugin ghi thêm 11 dòng ngoài đáp án (baseline 1), trong đó có lỗi thật chưa cài (U1, U2).
+- Plugin đắt hơn khoảng 24% (từ +13% ở t3 đến +32% ở t2) và tốn context hơn (t2: 1,7M so với 0,9M token vào).
+  Ở t4, plugin nhanh hơn 5 phút.
+- Chi phí cộng thêm của plugin nằm ở: bước `0 setup` (`config.mjs --check`) mỗi phiên (0,13–0,17 USD); đọc template
+  và reference bằng `cat` (7–16 kB mỗi lần); ở t2, agent đọc mã nguồn `core/*.mjs` của plugin để biết định dạng
+  `Not covered`; đầu ra lớn ghi một lần (t2: 24k token ra trong một lệnh Write `cases.md`).
+- t3: prompt "soát test có sẵn" không gọi skill; kết quả vẫn đúng nhờ model.
+
+Giới hạn của vòng này: mỗi ô 1 lần chạy (chưa có độ dao động); một app mẫu; điểm `lint-*` dùng công cụ của chính
+plugin nên baseline không biết luật trước.

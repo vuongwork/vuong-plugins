@@ -1,0 +1,9 @@
+{
+  "plugin": "../vuong-plugins-wt-preview/plugins/vuong-design",
+  "copy": [["bench/fixtures/_meta/leave-request/spec/L01.md", "spec/L01.md"]],
+  "env": { "VD_PLAYWRIGHT_FROM": "E:/vuongpq/plugins/vd-devdeps" },
+  "budgetUsd": 4,
+  "timeoutSec": 2400,
+  "allowedTools": ["Read", "Write", "Edit", "Glob", "Grep", "Skill", "Bash(node *)", "Bash(cp *)", "Bash(mkdir *)", "Bash(ls *)"],
+  "arms": ["plugin"]
+}

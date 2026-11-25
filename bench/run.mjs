@@ -5,6 +5,7 @@
 //
 //   node bench/run.mjs <case dir> [--arm plugin|baseline|both] [--runs N] [--budget USD] [--model M] [--effort E]
 //                      [--keep] [--claude <exe>] [--regrade <run dir>]
+//   node bench/run.mjs --rebuild <suite>     recompute every row from its trace (after a parser change)
 //
 // case.json (in the case dir):
 //   plugin       plugin folder, relative to the repo root (arm "plugin" loads it with --plugin-dir)
@@ -17,7 +18,8 @@
 //   budgetUsd    --max-budget-usd (default 1)      timeoutSec   wall clock limit (default 1800)
 //   model, effort, permissionMode (default acceptEdits), allowedTools [..], disallowedTools [..] (AskUserQuestion is
 //   always removed: nobody answers in a bench run), arms (default ["plugin"]; add "baseline" when the comparison
-//   means something), setup [shell commands run in the workspace before claude]
+//   means something), setup [shell commands run in the workspace before claude], copy [[from (repo-relative), to
+//   (workspace-relative)], ...], env { NAME: value } added to the child's environment
 // Exit 0 when every run finished (whatever the score), 1 when a run failed to start or grade, 2 on usage errors.
 import { parseArgs } from 'node:util';
 import { spawn, spawnSync } from 'node:child_process';
@@ -75,6 +77,7 @@ export function makeWorkspace(c) {
   const ws = mkdtempSync(join(tmpdir(), `bench-${c.name}-`));
   if (c.fixture) cpSync(join(BENCH, 'fixtures', c.fixture), ws, { recursive: true, filter: (s) => !/[\\/](node_modules|\.git)$/.test(s) });
   if (c.inputsDir) cpSync(c.inputsDir, ws, { recursive: true });
+  for (const [from, to] of c.copy || []) cpSync(resolve(REPO, from), join(ws, to), { recursive: true });
   for (const cmd of c.setup || []) {
     const r = sh(cmd, ws);
     if (r.code !== 0) throw new Error(`setup "${cmd}" failed: ${r.out.slice(-500)}`);
@@ -103,11 +106,11 @@ export function claudeArgs(c, arm, ws, opts) {
   return a;
 }
 
-function runClaude(exe, args, prompt, ws, traceFile, timeoutSec) {
+function runClaude(exe, args, prompt, ws, traceFile, timeoutSec, env) {
   return new Promise((done) => {
     const t0 = Date.now();
     const [cmd, pre] = /\.m?js$/.test(exe) ? [process.execPath, [exe]] : [exe, []];
-    const p = spawn(cmd, [...pre, ...args], { cwd: ws, env: childEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+    const p = spawn(cmd, [...pre, ...args], { cwd: ws, env: { ...childEnv(), ...(env || {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
     let buf = '', err = '', killed = false;
     const timer = setTimeout(() => { killed = true; p.kill(); }, timeoutSec * 1000);
     p.stdout.on('data', (d) => {
@@ -165,7 +168,7 @@ async function runOnce(c, arm, i, opts) {
   const traceFile = join(runDir, 'trace.jsonl');
   writeFileSync(traceFile, '');
   console.log(`[${c.suite}/${c.name}] ${arm} #${i}: running in ${ws}`);
-  const proc = await runClaude(opts.claude, args, prompt, ws, traceFile, opts.timeoutSec ?? c.timeoutSec);
+  const proc = await runClaude(opts.claude, args, prompt, ws, traceFile, opts.timeoutSec ?? c.timeoutSec, c.env);
   if (proc.err) writeFileSync(join(runDir, 'stderr.txt'), proc.err);
   const events = readTrace(readFileSync(traceFile, 'utf8'));
   const sum = summarize(c, events);
@@ -191,14 +194,33 @@ async function runOnce(c, arm, i, opts) {
   return row;
 }
 
+// Recompute totals / steps / docs of every row of a suite from its kept trace (after a parser fix). Grades are kept.
+export function rebuild(suite) {
+  const file = join(RESULTS(), suite, 'runs.jsonl');
+  const rows = readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  let n = 0;
+  for (const r of rows) {
+    const trace = join(RESULTS(), suite, r.case, r.run, 'trace.jsonl');
+    const caseDir = [join(BENCH, 'suites', suite, 'cases', r.case), join(BENCH, 'test', 'suites', suite, 'cases', r.case)].find(existsSync);
+    if (!existsSync(trace) || !caseDir) continue;
+    const sum = summarize(loadCase(caseDir), readTrace(readFileSync(trace, 'utf8')));
+    Object.assign(r, { totals: sum.totals, steps: sum.steps, docs: sum.docs, skillLoaded: sum.skillLoaded, usedSkill: sum.usedSkill });
+    n++;
+  }
+  writeFileSync(file, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  console.log(`rebuilt ${n}/${rows.length} rows of ${file}`);
+  return 0;
+}
+
 export async function main(argv) {
   let values, positionals;
   try {
     ({ values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: true, options: {
       arm: { type: 'string' }, runs: { type: 'string' }, budget: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' },
-      keep: { type: 'boolean' }, claude: { type: 'string' }, regrade: { type: 'string' }, help: { type: 'boolean', short: 'h' },
+      keep: { type: 'boolean' }, claude: { type: 'string' }, regrade: { type: 'string' }, rebuild: { type: 'string' }, help: { type: 'boolean', short: 'h' },
     } }));
   } catch (e) { console.error(e.message); return 2; }
+  if (values.rebuild) return rebuild(values.rebuild);
   if (values.help || positionals.length !== 1) { console.log(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 24).map((l) => l.replace(/^\/\/ ?/, '')).join('\n')); return values.help ? 0 : 2; }
   const c = loadCase(positionals[0]);
   if (values.regrade) {

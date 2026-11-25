@@ -1,0 +1,74 @@
+diff --git a/lib/leave.js b/lib/leave.js
+index 9ca91e6..aa6a91e 100644
+--- a/lib/leave.js
++++ b/lib/leave.js
+@@ -3,11 +3,11 @@
+   const TYPES = { annual: 'Phép năm', sick: 'Nghỉ ốm', personal: 'Việc riêng', other: 'Khác' };
+   const PARTS = { full: 'Cả ngày', am: 'Sáng', pm: 'Chiều' };
+   const STATUS = { draft: 'Nháp', pending: 'Chờ duyệt', approved: 'Đã duyệt', rejected: 'Từ chối', cancelled: 'Đã huỷ' };
+-  const REASON_MAX = 255;
++  const REASON_MAX = 200;
+ 
+   const MESSAGES = {
+     'LV-E01': 'Vui lòng chọn loại nghỉ.',
+-    'LV-E02': 'Ngày bắt đầu phải từ hôm nay trở đi.',
++    'LV-E02': 'Ngày bắt đầu không được trước hôm nay.',
+     'LV-E03': 'Ngày kết thúc phải sau hoặc bằng ngày bắt đầu.',
+     'LV-E04': 'Số ngày nghỉ vượt quá số dư phép năm (còn {n} ngày).',
+     'LV-E05': 'Vui lòng nhập lý do.',
+@@ -42,7 +42,7 @@
+ 
+   function isWeekend(d) {
+     const day = d.getDay();
+-    return day === 0 || day === 7;
++    return day === 0 || day === 6;
+   }
+ 
+   // Working days from `from` to `to`, both included; a half day (am / pm) on a single day counts 0.5.
+diff --git a/public/app.js b/public/app.js
+index 3169ca9..f0adea4 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -84,7 +84,7 @@
+     const status = leave && leave.status;
+     $('btn-save').hidden = $('btn-submit').hidden = ro;
+     $('btn-edit').hidden = !(ro && status === 'draft');
+-    $('btn-cancel').hidden = !(mode !== 'new' && status !== 'approved');
++    $('btn-cancel').hidden = !(mode !== 'new' && (status === 'draft' || status === 'pending'));
+     recalc();
+   }
+ 
+diff --git a/public/index.html b/public/index.html
+index 0c2ca02..a09db41 100644
+--- a/public/index.html
++++ b/public/index.html
+@@ -31,7 +31,7 @@
+         <div class="field" id="field-balance"><span class="label">Số dư phép năm</span><div class="input ro"><span class="val num" id="balance">–</span></div></div>
+       </div>
+       <div class="field"><span class="label">Lý do</span><div class="textarea" id="box-reason"><textarea id="reason" rows="3"></textarea></div>
+-        <div class="help-row"><p class="err-text" id="err-reason" hidden></p><span class="counter" id="counter">0/255</span></div></div>
++        <div class="help-row"><p class="err-text" id="err-reason" hidden></p><span class="counter" id="counter">0/200</span></div></div>
+     </div>
+   </div>
+   <div class="snackbar" id="snackbar" hidden></div>
+diff --git a/server.js b/server.js
+index 59ac9e3..2e5d688 100644
+--- a/server.js
++++ b/server.js
+@@ -76,6 +76,7 @@ async function api(req, res, url, user) {
+ 
+   if (req.method === 'GET' && !action) return send(res, 200, l);
+   if (req.method === 'PUT' && !action) {
++    if (l.status !== 'draft') return fail(res, 409, 'LV-E409');
+     const f = fields(await readBody(req));
+     const errors = L.validate(f, today());
+     if (errors.length) return fail(res, 400, errors[0].code);
+@@ -90,7 +91,7 @@ async function api(req, res, url, user) {
+     return send(res, 200, l);
+   }
+   if (req.method === 'POST' && action === 'cancel') {
+-    if (!['draft', 'pending', 'approved'].includes(l.status)) return fail(res, 409, 'LV-E409');
++    if (!['draft', 'pending'].includes(l.status)) return fail(res, 409, 'LV-E409');
+     Object.assign(l, { status: 'cancelled', updatedAt: now() });
+     return send(res, 200, l);
+   }

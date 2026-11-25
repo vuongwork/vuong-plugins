@@ -1,0 +1,54 @@
+{
+  "$comment": "Answer key for the leave-request fixture. Regexes are matched case-insensitively against one table row each (first unused row wins), most specific first. Source: bench/fixtures/_meta/leave-request/defects.md and spec/*.md.",
+  "flows": [
+    { "id": "E01 type required", "any": ["LV-E01"] },
+    { "id": "E02 from before today", "any": ["LV-E02"] },
+    { "id": "E03 to before from", "any": ["LV-E03"] },
+    { "id": "E04 over balance", "any": ["LV-E04"] },
+    { "id": "E05 reason required for Other", "any": ["LV-E05"] },
+    { "id": "E06 reason too long", "any": ["LV-E06"] },
+    { "id": "403 other owner", "any": ["LV-E403", "\\b403\\b"] },
+    { "id": "404 not found", "any": ["LV-E404", "\\b404\\b"] },
+    { "id": "409 submit not draft", "any": ["submit[^|]*(409|E409)", "(409|E409)[^|]*(submit|gửi)", "A4[^|]*409"] },
+    { "id": "409 cancel wrong status", "any": ["cancel[^|]*(409|E409)", "(409|E409)[^|]*(cancel|huỷ|hủy)", "A5[^|]*409"] },
+    { "id": "401 no X-User", "any": ["\\b401\\b", "X-User"] },
+    { "id": "mode New", "any": ["mode=new", "\\bnew\\b[^|]*mode", "tạo mới"] },
+    { "id": "mode Edit", "any": ["mode=edit", "\\bedit\\b[^|]*mode", "chế độ sửa|sửa đơn"] },
+    { "id": "mode View", "any": ["\\bview\\b", "chế độ xem|chi tiết đơn"] },
+    { "id": "Edit of a non-draft opens View", "any": ["(non-draft|not draft|!== 'draft'|khác nháp|không phải nháp)[^|]*(view|xem)", "(edit|sửa)[^|]*(→|->|falls back|forced|chuyển)[^|]*(view|xem)"] },
+    { "id": "Save draft (POST/PUT) + LV-I01", "any": ["LV-I01", "Lưu nháp", "btn-save", "onSave"] },
+    { "id": "Submit + confirm LV-C01 + LV-I02", "any": ["LV-C01", "LV-I02", "Gửi duyệt", "btn-submit", "onSubmit"] },
+    { "id": "Confirm dismissed (Huỷ bỏ) does nothing", "any": ["Huỷ bỏ|Hủy bỏ", "dlg-no", "(dismiss|declin|no)[^|]*(dialog|confirm)"] },
+    { "id": "Edit button (View, draft)", "any": ["btn-edit", "nút sửa|\\bSửa\\b[^|]*(button|nút)", "edit button"] },
+    { "id": "Cancel leave + LV-C02 + LV-I03", "any": ["LV-C02", "LV-I03", "Huỷ đơn|Hủy đơn", "btn-cancel", "onCancel"] },
+    { "id": "Back with unsaved changes LV-C03", "any": ["LV-C03", "unsaved|dirty|chưa lưu"] },
+    { "id": "Part only on a single day", "any": ["(part|buổi)[^|]*(lock|single|same day|khoá|khóa|cùng ngày|from ?=+ ?to)", "normalizePart"] },
+    { "id": "Working days Mon-Fri", "any": ["working ?days|ngày làm việc|weekend|cuối tuần|workingDays"] },
+    { "id": "Half day 0.5", "any": ["0[.,]5|half"] },
+    { "id": "Balance (A6) shown and used", "any": ["leave-balance|số dư|balance|A6"] },
+    { "id": "Reason counter n/max", "any": ["counter|đếm|/200|/255"] },
+    { "id": "API error shown as snackbar", "any": ["snack[^|]*(error|lỗi)|(error|lỗi)[^|]*snack|API error"] }
+  ],
+  "diff": [
+    { "id": "D1 reason max 255 vs 200", "any": ["255"] },
+    { "id": "D2 LV-E02 message text", "any": ["trở đi", "LV-E02[^|]*(message|text|nội dung|câu|wording)|(message|text|nội dung|wording)[^|]*LV-E02"] },
+    { "id": "D3 cancel of approved allowed", "any": ["(approved|đã duyệt)[^|]*(cancel|huỷ|hủy)|(cancel|huỷ|hủy)[^|]*(approved|đã duyệt)"] },
+    { "id": "B1 Saturday counted", "any": ["saturday|thứ bảy|thứ 7|=== ?7|getDay|\\bT7\\b"] },
+    { "id": "B2 PUT allowed on non-draft", "any": ["PUT[^|]*(409|draft|nháp|trạng thái|status|pending)", "A3[^|]*(409|draft|nháp|trạng thái|status|pending)"] },
+    { "id": "B3 Huỷ đơn shown for rejected/cancelled", "any": ["(rejected|từ chối|đã huỷ|đã hủy)[^|]*(huỷ đơn|hủy đơn|btn-cancel|cancel button|button)", "(huỷ đơn|hủy đơn|btn-cancel|cancel button)[^|]*(rejected|từ chối|đã huỷ|đã hủy|status !== 'approved')"] }
+  ],
+  "diffOk": ["\\b401\\b|LV-E401", "\\b500\\b|LV-E500", "\\?user|localStorage|user param", "LEAVE_TODAY|server date|ngày máy chủ", "3,0|comma|dấu phẩy|decimal separator", "favicon", "snackbar", "notice", "status bar|thanh trạng thái"],
+  "reviewTests": {
+    "weak": [
+      { "id": "no assertion", "any": ["range over the weekend"] },
+      { "id": "tautology", "any": ["shows one decimal"] },
+      { "id": "mock calls only", "any": ["called with the form values"] },
+      { "id": "swallowed failure", "any": ["valid annual leave"] }
+    ],
+    "wrongExpected": [
+      { "id": "Saturday half day asserts B1", "any": ["saturday morning"] },
+      { "id": "250-char reason asserts D1", "any": ["250 characters"] }
+    ],
+    "good": ["Monday to Friday as 5", "morning off as half a day", "reason when the type is Other"]
+  }
+}

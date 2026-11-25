@@ -25,7 +25,9 @@ export function parseTrace(events) {
   const byId = new Map();
   const messages = [];
   const toolResults = new Map();
+  let thinking = 0; // estimated thinking tokens since the last assistant message
   for (const e of events) {
+    if (e.type === 'system' && e.subtype === 'thinking_tokens') { thinking += e.estimated_tokens_delta || 0; continue; }
     if (e.type === 'assistant' && e.message) {
       const m = e.message;
       let msg = byId.get(m.id);
@@ -34,8 +36,9 @@ export function parseTrace(events) {
         msg = {
           id: m.id, model: m.model, t: e.t ?? null, sub: e.parent_tool_use_id || null,
           usage: { input: u.input_tokens || 0, output: u.output_tokens || 0, cacheRead: u.cache_read_input_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0 },
-          tools: [], text: '',
+          tools: [], text: '', thinking, chars: 0,
         };
+        thinking = 0;
         byId.set(m.id, msg);
         messages.push(msg);
       } else if (m.usage && (m.usage.output_tokens || 0) > msg.usage.output) {
@@ -43,8 +46,8 @@ export function parseTrace(events) {
       }
       if (e.t != null) msg.tEnd = e.t;
       for (const c of m.content || []) {
-        if (c.type === 'tool_use') msg.tools.push({ id: c.id, name: c.name, input: c.input || {} });
-        else if (c.type === 'text') msg.text += c.text;
+        if (c.type === 'tool_use') { msg.tools.push({ id: c.id, name: c.name, input: c.input || {} }); msg.chars += JSON.stringify(c.input || {}).length; }
+        else if (c.type === 'text') { msg.text += c.text; msg.chars += c.text.length; }
       }
     } else if (e.type === 'user' && e.message && Array.isArray(e.message.content)) {
       for (const c of e.message.content) {
@@ -54,8 +57,18 @@ export function parseTrace(events) {
       }
     }
   }
-  // Cost per message: the model's reported cost split by price weight.
   const modelUsage = (result && result.modelUsage) || {};
+  // stream-json carries a placeholder output_tokens per message; the real total is only in result.modelUsage.
+  // Split it over the model's messages by estimated thinking tokens + visible output (about 3.5 chars per token).
+  for (const [model, mu] of Object.entries(modelUsage)) {
+    const ms = messages.filter((m) => m.model === model);
+    const reported = ms.reduce((a, m) => a + m.usage.output, 0);
+    if (!ms.length || mu.outputTokens == null || reported >= mu.outputTokens * 0.9) continue;
+    const est = ms.map((m) => m.thinking + m.chars / 3.5 + 1);
+    const sum = est.reduce((a, b) => a + b, 0);
+    ms.forEach((m, i) => { m.usage.output = Math.round((mu.outputTokens * est[i]) / sum); m.outputEstimated = true; });
+  }
+  // Cost per message: the model's reported cost split by price weight.
   const wSum = {};
   for (const m of messages) wSum[m.model] = (wSum[m.model] || 0) + weight(m.usage);
   for (const m of messages) {

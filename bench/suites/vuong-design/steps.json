@@ -1,0 +1,11 @@
+{
+  "skill": "vuong-design:spec-to-html",
+  "docs": "/(skills|references|templates)/|PROFILE\\.md$",
+  "checks": "core/(lint|layout|diagnose)\\.mjs",
+  "steps": [
+    { "name": "tokens+html", "write": ["\\.html$"] },
+    { "name": "lint", "bash": ["core/lint\\.mjs"] },
+    { "name": "layout", "bash": ["core/(layout|diagnose)\\.mjs"] },
+    { "name": "log", "bash": ["session-log\\.mjs"] }
+  ]
+}

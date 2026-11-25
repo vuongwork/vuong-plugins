@@ -82,5 +82,18 @@ const eq = (a, b, name) => ok(JSON.stringify(a) === JSON.stringify(b), name, `\n
   eq(docsAndRework(t.messages, {}).rework, 0, 'docsAndRework: empty');
 }
 
+// --- output tokens: placeholder per message, real total in modelUsage → split by thinking + visible output
+{
+  const ev = [
+    { type: 'system', subtype: 'thinking_tokens', estimated_tokens_delta: 300 },
+    { type: 'assistant', message: { id: 'a', model: 'm', content: [{ type: 'text', text: 'x' }], usage: { output_tokens: 1 } } },
+    { type: 'assistant', message: { id: 'b', model: 'm', content: [{ type: 'tool_use', id: 't', name: 'Write', input: { content: 'y'.repeat(340) } }], usage: { output_tokens: 1 } } },
+    { type: 'result', total_cost_usd: 1, modelUsage: { m: { outputTokens: 400, costUSD: 1 } } },
+  ];
+  const t = parseTrace(ev);
+  eq(totals(t.messages).output, 400, 'output: per-message split adds up to modelUsage');
+  ok(t.messages[0].usage.output > t.messages[1].usage.output && t.messages[1].usage.output > 50, 'output: thinking-heavy message gets more', JSON.stringify(t.messages.map((m) => m.usage.output)));
+}
+
 console.log(`${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

@@ -1,0 +1,13 @@
+{
+  "name": "leave-request",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Leave request screen L01 and its API",
+  "scripts": {
+    "start": "node server.js",
+    "test": "jest"
+  },
+  "jest": {
+    "testMatch": ["**/tests/**/*.test.js"]
+  }
+}

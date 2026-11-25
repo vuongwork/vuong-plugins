@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=360">
+<title>L01 – Đăng ký nghỉ phép</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="ic-back" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+<div class="frame">
+<div class="screen" id="screen">
+  <div class="app-bar"><button id="btn-back" aria-label="Quay lại"><svg class="icon" width="24" height="24"><use href="#ic-back"/></svg></button><h1 class="title" id="title">Tạo đơn nghỉ phép</h1></div>
+  <div class="content">
+    <div class="notice" id="notice" hidden></div>
+    <div class="card" id="form">
+      <div class="head-row" id="row-head" hidden><div class="field"><span class="label">Mã đơn</span><p class="num" id="leave-id"></p></div><span class="pill" id="status"></span></div>
+      <div class="field"><div class="label-row"><span class="label">Loại nghỉ</span><span class="label req">*</span></div>
+        <div class="input" id="box-type"><select id="type"><option value="">Chọn loại nghỉ</option><option value="annual">Phép năm</option><option value="sick">Nghỉ ốm</option><option value="personal">Việc riêng</option><option value="other">Khác</option></select></div>
+        <p class="err-text" id="err-type" hidden></p></div>
+      <div class="pair">
+        <div class="field"><div class="label-row"><span class="label">Từ ngày</span><span class="label req">*</span></div><div class="input" id="box-from"><input type="date" id="from"></div><p class="err-text" id="err-from" hidden></p></div>
+        <div class="field"><div class="label-row"><span class="label">Đến ngày</span><span class="label req">*</span></div><div class="input" id="box-to"><input type="date" id="to"></div><p class="err-text" id="err-to" hidden></p></div>
+      </div>
+      <div class="field"><div class="label-row"><span class="label">Buổi</span><span class="label req">*</span></div>
+        <div class="seg" id="part"><button class="seg-item on" data-part="full">Cả ngày</button><button class="seg-item" data-part="am">Sáng</button><button class="seg-item" data-part="pm">Chiều</button></div></div>
+      <div class="pair">
+        <div class="field"><span class="label">Số ngày nghỉ</span><div class="input ro"><span class="val num" id="days">0.0</span></div><p class="err-text" id="err-days" hidden></p></div>
+        <div class="field" id="field-balance"><span class="label">Số dư phép năm</span><div class="input ro"><span class="val num" id="balance">–</span></div></div>
+      </div>
+      <div class="field"><span class="label">Lý do</span><div class="textarea" id="box-reason"><textarea id="reason" rows="3"></textarea></div>
+        <div class="help-row"><p class="err-text" id="err-reason" hidden></p><span class="counter" id="counter">0/255</span></div></div>
+    </div>
+  </div>
+  <div class="snackbar" id="snackbar" hidden></div>
+  <div class="actions">
+    <button class="btn secondary" id="btn-save">Lưu nháp</button>
+    <button class="btn primary" id="btn-submit">Gửi duyệt</button>
+    <button class="btn secondary" id="btn-edit">Sửa</button>
+    <button class="btn danger" id="btn-cancel">Huỷ đơn</button>
+    <button class="btn secondary" id="btn-back2">Quay lại</button>
+  </div>
+  <div id="dialog" hidden>
+    <div class="scrim"></div>
+    <div class="dialog-wrap"><div class="dialog">
+      <p class="title" id="dlg-title"></p><p id="dlg-text"></p>
+      <div class="dialog-actions"><div class="btns"><button class="dlg-btn secondary" id="dlg-no">Huỷ bỏ</button><button class="dlg-btn primary" id="dlg-yes">Đồng ý</button></div></div>
+    </div></div>
+  </div>
+</div>
+</div>
+<script src="/leave.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>L01 – Đăng ký nghỉ phép</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --color-bg:#f3f5f8;
+  --color-surface:#ffffff;
+  --color-surface-ro:#f0f2f5;
+  --color-ink:#1a2233;
+  --color-muted:#5f6b80;
+  --color-line:#d9dee6;
+  --color-primary:#1d4ed8;
+  --color-on-primary:#ffffff;
+  --color-primary-soft:#e3ebfc;
+  --color-error:#d92d20;
+  --color-neutral-soft:#eceff3;
+  --color-neutral:#4b5565;
+  --color-warning-soft:#fff1e0;
+  --color-warning:#b54708;
+  --color-snackbar:#1f2937;
+  --color-scrim:rgba(15,23,42,0.5);
+  --space-1:4px;
+  --space-2:8px;
+  --space-3:12px;
+  --space-4:16px;
+  --space-5:20px;
+  --space-6:24px;
+  --space-7:32px;
+  --radius-sm:8px;
+  --radius-md:12px;
+  --radius-lg:16px;
+  --radius-full:999px;
+  --font-sans:"Be Vietnam Pro",sans-serif;
+  --size-caption:12px;
+  --size-caption-lh:16px;
+  --size-body:14px;
+  --size-body-lh:20px;
+  --size-title:18px;
+  --size-title-lh:24px;
+  --shadow-card:0 1px 3px rgba(26,34,51,0.10);
+  --shadow-bar:0 -1px 4px rgba(26,34,51,0.08);
+  --shadow-dialog:0 8px 24px rgba(26,34,51,0.24);
+}
+
+body{margin:0;padding:var(--space-6);background:var(--color-bg);color:var(--color-ink);font-family:var(--font-sans);font-size:var(--size-body);line-height:var(--size-body-lh)}
+.board{display:flex;flex-wrap:wrap;gap:var(--space-6);align-items:flex-start}
+.frame{width:360px}
+
+.screen{position:relative;display:flex;flex-direction:column;height:800px;overflow:hidden;background:var(--color-bg)}
+.content{flex:1;min-height:0;display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-4)}
+h1,h2,p{margin:0}
+.title{font-size:var(--size-title);line-height:var(--size-title-lh);font-weight:600}
+.caption{font-size:var(--size-caption);line-height:var(--size-caption-lh);color:var(--color-muted)}
+.icon{flex-shrink:0;color:var(--color-ink)}
+
+/* status bar + app bar */
+.status-bar{display:flex;align-items:center;justify-content:space-between;height:24px;padding:0 var(--space-4);font-size:var(--size-caption);line-height:var(--size-caption-lh);font-weight:600}
+.app-bar{display:flex;align-items:center;gap:var(--space-3);height:56px;padding:0 var(--space-4);background:var(--color-surface);border-bottom:1px solid var(--color-line)}
+.app-bar .title{flex:1;min-width:0}
+
+/* card with fields */
+.card{display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-4);background:var(--color-surface);border-radius:var(--radius-md);box-shadow:var(--shadow-card)}
+.field{display:flex;flex-direction:column;gap:var(--space-1)}
+.label{font-size:var(--size-caption);line-height:var(--size-caption-lh);color:var(--color-muted);font-weight:500}
+.req{color:var(--color-error)}
+.label-row{display:flex;gap:var(--space-1)}
+.input{display:flex;align-items:center;gap:var(--space-2);height:44px;padding:0 var(--space-3);box-sizing:border-box;border:1px solid var(--color-line);border-radius:var(--radius-sm);background:var(--color-surface)}
+.input .val{flex:1 1 0;min-width:0}
+.input .ph{flex:1 1 0;min-width:0;color:var(--color-muted)}
+.input .icon{color:var(--color-muted)}
+.input.err{border-color:var(--color-error)}
+.input.ro{background:var(--color-surface-ro)}
+.textarea{display:flex;padding:var(--space-3);border:1px solid var(--color-line);border-radius:var(--radius-sm);background:var(--color-surface)}
+.textarea .val{flex:1 1 0;min-width:0}
+.textarea.tall{padding-bottom:var(--space-7)}
+.textarea.err{border-color:var(--color-error)}
+.textarea.ro{background:var(--color-surface-ro)}
+.err-text{font-size:var(--size-caption);line-height:var(--size-caption-lh);color:var(--color-error)}
+.help-row{display:flex;gap:var(--space-2);justify-content:flex-end}
+.help-row .err-text{flex:1;min-width:0}
+.counter{flex-shrink:0;font-size:var(--size-caption);line-height:var(--size-caption-lh);color:var(--color-muted)}
+.counter.over{color:var(--color-error);font-weight:600}
+.pair{display:flex;gap:var(--space-3)}
+.pair .field{flex:1 1 0;min-width:0}
+.num{font-weight:600}
+
+/* segmented: Buổi */
+.seg{display:flex;gap:var(--space-1);padding:var(--space-1);border-radius:var(--radius-sm);background:var(--color-surface-ro)}
+.seg-item{flex:1 1 0;min-width:0;display:flex;align-items:center;justify-content:center;height:36px;border-radius:var(--radius-sm);color:var(--color-muted);font-weight:500}
+.seg-item.on{background:var(--color-surface);color:var(--color-primary);font-weight:600;box-shadow:var(--shadow-card)}
+.seg.locked .seg-item.on{color:var(--color-neutral)}
+
+/* header row: Mã đơn + pill */
+.head-row{display:flex;align-items:center;gap:var(--space-3)}
+.head-row .field{flex:1;min-width:0}
+.pill{flex-shrink:0;padding:var(--space-1) var(--space-3);border-radius:var(--radius-full);font-size:var(--size-caption);line-height:var(--size-caption-lh);font-weight:600}
+.pill.pending{background:var(--color-warning-soft);color:var(--color-warning)}
+.divider{height:1px;background:var(--color-line)}
+
+/* fixed button bar */
+.actions{position:absolute;left:0;right:0;bottom:0;display:flex;gap:var(--space-3);padding:var(--space-3) var(--space-4);background:var(--color-surface);box-shadow:var(--shadow-bar)}
+.btn{flex:1 1 0;min-width:0;display:flex;align-items:center;justify-content:center;height:44px;box-sizing:border-box;border-radius:var(--radius-sm);font-weight:600}
+.btn.primary{border:1px solid var(--color-primary);background:var(--color-primary);color:var(--color-on-primary)}
+.btn.secondary{border:1px solid var(--color-line);background:var(--color-surface);color:var(--color-ink)}
+.btn.danger{border:1px solid var(--color-line);background:var(--color-surface);color:var(--color-error)}
+
+/* dialog */
+.scrim{position:absolute;left:0;top:0;right:0;bottom:0;background:var(--color-scrim)}
+.dialog-wrap{position:absolute;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center}
+.dialog{width:312px;box-sizing:border-box;display:flex;flex-direction:column;gap:var(--space-3);padding:var(--space-6);background:var(--color-surface);border-radius:var(--radius-lg);box-shadow:var(--shadow-dialog)}
+.dialog-actions{display:flex;align-items:center;justify-content:flex-end;padding-top:var(--space-2)}
+.dialog-actions .btns{display:flex;gap:var(--space-2)}
+.dlg-btn{display:flex;align-items:center;justify-content:center;height:36px;padding:0 var(--space-4);box-sizing:border-box;border-radius:var(--radius-sm);font-weight:600}
+.dlg-btn.secondary{border:1px solid var(--color-line);color:var(--color-ink)}
+.dlg-btn.primary{background:var(--color-primary);color:var(--color-on-primary)}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="ic-back" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="ic-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="ic-calendar" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 10h16M9 3v4M15 3v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+</svg>
+
+<div class="board">
+
+<!-- L01-N: Tạo mới, đã nhập -->
+<div class="frame" data-vd-widen>
+<div class="screen" data-vd-screen="L01-N" data-vd-name="Tạo mới – đã nhập">
+  <div class="status-bar"><span>9:41</span><span>100%</span></div>
+  <div class="app-bar"><svg class="icon" width="24" height="24"><use href="#ic-back"/></svg><h1 class="title">Tạo đơn nghỉ phép</h1></div>
+  <div class="content">
+    <div class="card">
+      <div class="field"><div class="label-row"><span class="label">Loại nghỉ</span><span class="label req">*</span></div><div class="input"><span class="val">Phép năm</span><svg class="icon" width="20" height="20"><use href="#ic-chevron"/></svg></div></div>
+      <div class="pair">
+        <div class="field"><div class="label-row"><span class="label">Từ ngày</span><span class="label req">*</span></div><div class="input"><span class="val">24/11/2026</span><svg class="icon" width="20" height="20"><use href="#ic-calendar"/></svg></div></div>
+        <div class="field"><div class="label-row"><span class="label">Đến ngày</span><span class="label req">*</span></div><div class="input"><span class="val">26/11/2026</span><svg class="icon" width="20" height="20"><use href="#ic-calendar"/></svg></div></div>
+      </div>
+      <div class="field"><div class="label-row"><span class="label">Buổi</span><span class="label req">*</span></div><div class="seg locked"><div class="seg-item on">Cả ngày</div><div class="seg-item">Sáng</div><div class="seg-item">Chiều</div></div></div>
+      <div class="pair">
+        <div class="field"><span class="label">Số ngày nghỉ</span><div class="input ro"><span class="val num">3,0</span></div></div>
+        <div class="field"><span class="label">Số dư phép năm</span><div class="input ro"><span class="val num">12,0</span></div></div>
+      </div>
+      <div class="field"><span class="label">Lý do</span><div class="textarea tall"><span class="val">Về quê dự đám cưới em gái.</span></div><div class="help-row"><span class="counter">26/200</span></div></div>
+    </div>
+  </div>
+  <div class="actions"><div class="btn secondary">Lưu nháp</div><div class="btn primary">Gửi duyệt</div></div>
+</div>
+</div>
+
+<!-- L01-NE: Tạo mới, lỗi LV-E01 + LV-E06 -->
+<div class="frame" data-vd-widen>
+<div class="screen" data-vd-screen="L01-NE" data-vd-name="Tạo mới – lỗi kiểm tra">
+  <div class="status-bar"><span>9:41</span><span>100%</span></div>
+  <div class="app-bar"><svg class="icon" width="24" height="24"><use href="#ic-back"/></svg><h1 class="title">Tạo đơn nghỉ phép</h1></div>
+  <div class="content">
+    <div class="card">
+      <div class="field"><div class="label-row"><span class="label">Loại nghỉ</span><span class="label req">*</span></div><div class="input err"><span class="ph">Chọn loại nghỉ</span><svg class="icon" width="20" height="20"><use href="#ic-chevron"/></svg></div><p class="err-text">Vui lòng chọn loại nghỉ.</p></div>
+      <div class="pair">
+        <div class="field"><div class="label-row"><span class="label">Từ ngày</span><span class="label req">*</span></div><div class="input"><span class="val">24/11/2026</span><svg class="icon" width="20" height="20"><use href="#ic-calendar"/></svg></div></div>
+        <div class="field"><div class="label-row"><span class="label">Đến ngày</span><span class="label req">*</span></div><div class="input"><span class="val">26/11/2026</span><svg class="icon" width="20" height="20"><use href="#ic-calendar"/></svg></div></div>
+      </div>
+      <div class="field"><div class="label-row"><span class="label">Buổi</span><span class="label req">*</span></div><div class="seg locked"><div class="seg-item on">Cả ngày</div><div class="seg-item">Sáng</div><div class="seg-item">Chiều</div></div></div>
+      <div class="pair">
+        <div class="field"><span class="label">Số ngày nghỉ</span><div class="input ro"><span class="val num">3,0</span></div></div>
+        <div class="field"><span class="label">Số dư phép năm</span><div class="input ro"><span class="val num">12,0</span></div></div>
+      </div>
+      <div class="field"><span class="label">Lý do</span><div class="textarea err"><span class="val">Em xin nghỉ ba ngày để về quê lo việc gia đình: ông nội nhập viện, bố mẹ đã lớn tuổi nên em cần thay phiên chăm sóc ông và đưa ông đi khám lại. Công việc đang dở em đã bàn giao cho anh Minh, có gì gấp gọi em ạ.</span></div><div class="help-row"><p class="err-text">Lý do tối đa 200 ký tự.</p><span class="counter over">210/200</span></div></div>
+    </div>
+  </div>
+  <div class="actions"><div class="btn secondary">Lưu nháp</div><div class="btn primary">Gửi duyệt</div></div>
+</div>
+</div>
+
+<!-- L01-V: Xem đơn, Chờ duyệt -->
+<div class="frame" data-vd-widen>
+<div class="screen" data-vd-screen="L01-V" data-vd-name="Xem – Chờ duyệt">
+  <div class="status-bar"><span>9:41</span><span>100%</span></div>
+  <div class="app-bar"><svg class="icon" width="24" height="24"><use href="#ic-back"/></svg><h1 class="title">Chi tiết đơn nghỉ phép</h1></div>
+  <div class="content">
+    <div class="card">
+      <div class="head-row"><div class="field"><span class="label">Mã đơn</span><p class="num">LV-20261124-001</p></div><span class="pill pending">Chờ duyệt</span></div>
+      <div class="divider"></div>
+      <div class="field"><span class="label">Loại nghỉ</span><div class="input ro"><span class="val">Phép năm</span></div></div>
+      <div class="pair">
+        <div class="field"><span class="label">Từ ngày</span><div class="input ro"><span class="val">24/11/2026</span></div></div>
+        <div class="field"><span class="label">Đến ngày</span><div class="input ro"><span class="val">26/11/2026</span></div></div>
+      </div>
+      <div class="field"><span class="label">Buổi</span><div class="seg locked"><div class="seg-item on">Cả ngày</div><div class="seg-item">Sáng</div><div class="seg-item">Chiều</div></div></div>
+      <div class="field"><span class="label">Số ngày nghỉ</span><div class="input ro"><span class="val num">3,0</span></div></div>
+      <div class="field"><span class="label">Lý do</span><div class="textarea ro"><span class="val">Về quê dự đám cưới em gái.</span></div><div class="help-row"><span class="counter">26/200</span></div></div>
+    </div>
+  </div>
+  <div class="actions"><div class="btn danger">Huỷ đơn</div><div class="btn secondary">Quay lại</div></div>
+</div>
+</div>
+
+<!-- L01-C: Hộp xác nhận LV-C01 trên L01-N -->
+<div class="frame" data-vd-widen>
+<div class="screen" data-vd-screen="L01-C" data-vd-name="Xác nhận gửi duyệt">
+  <div class="status-bar"><span>9:41</span><span>100%</span></div>
+  <div class="app-bar"><svg class="icon" width="24" height="24"><use href="#ic-back"/></svg><h1 class="title">Tạo đơn nghỉ phép</h1></div>
+  <div class="content">
+    <div class="card">
+      <div class="field"><div class="label-row"><span class="label">Loại nghỉ</span><span class="label req">*</span></div><div class="input"><span class="val">Phép năm</span><svg class="icon" width="20" height="20"><use href="#ic-chevron"/></svg></div></div>
+      <div class="pair">
+        <div class="field"><div class="label-row"><span class="label">Từ ngày</span><span class="label req">*</span></div><div class="input"><span class="val">24/11/2026</span><svg class="icon" width="20" height="20"><use href="#ic-calendar"/></svg></div></div>
+        <div class="field"><div class="label-row"><span class="label">Đến ngày</span><span class="label req">*</span></div><div class="input"><span class="val">26/11/2026</span><svg class="icon" width="20" height="20"><use href="#ic-calendar"/></svg></div></div>
+      </div>
+      <div class="field"><div class="label-row"><span class="label">Buổi</span><span class="label req">*</span></div><div class="seg locked"><div class="seg-item on">Cả ngày</div><div class="seg-item">Sáng</div><div class="seg-item">Chiều</div></div></div>
+      <div class="pair">
+        <div class="field"><span class="label">Số ngày nghỉ</span><div class="input ro"><span class="val num">3,0</span></div></div>
+        <div class="field"><span class="label">Số dư phép năm</span><div class="input ro"><span class="val num">12,0</span></div></div>
+      </div>
+      <div class="field"><span class="label">Lý do</span><div class="textarea tall"><span class="val">Về quê dự đám cưới em gái.</span></div><div class="help-row"><span class="counter">26/200</span></div></div>
+    </div>
+  </div>
+  <div class="actions"><div class="btn secondary">Lưu nháp</div><div class="btn primary">Gửi duyệt</div></div>
+  <div class="scrim"></div>
+  <div class="dialog-wrap">
+    <div class="dialog">
+      <p class="title">Xác nhận gửi duyệt</p>
+      <p>Gửi đơn cho quản lý duyệt?</p>
+      <div class="dialog-actions"><div class="btns"><div class="dlg-btn secondary">Huỷ bỏ</div><div class="dlg-btn primary">Đồng ý</div></div></div>
+    </div>
+  </div>
+</div>
+</div>
+
+</div>
+</body>
+</html>

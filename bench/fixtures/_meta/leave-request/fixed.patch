@@ -1,5 +1,5 @@
 diff --git a/lib/leave.js b/lib/leave.js
-index 9ca91e6..aa6a91e 100644
+index 9ca91e6..a6fc047 100644
 --- a/lib/leave.js
 +++ b/lib/leave.js
 @@ -3,11 +3,11 @@
@@ -25,11 +25,34 @@ index 9ca91e6..aa6a91e 100644
    }
  
    // Working days from `from` to `to`, both included; a half day (am / pm) on a single day counts 0.5.
+@@ -56,7 +56,7 @@
+   }
+ 
+   function formatDays(n) {
+-    return Number(n || 0).toFixed(1);
++    return Number(n || 0).toFixed(1).replace('.', ',');
+   }
+ 
+   // Field errors in display order. `today` is 'YYYY-MM-DD'.
 diff --git a/public/app.js b/public/app.js
-index 3169ca9..f0adea4 100644
+index 3169ca9..15e0b2b 100644
 --- a/public/app.js
 +++ b/public/app.js
-@@ -84,7 +84,7 @@
+@@ -17,11 +17,12 @@
+       method, headers: { 'X-User': user, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined,
+     });
+     const data = await res.json().catch(() => ({}));
+-    if (!res.ok) throw Object.assign(new Error(data.code || String(res.status)), { code: data.code, status: res.status });
++    if (!res.ok) throw Object.assign(new Error(data.code || String(res.status)), { code: data.code, status: res.status, text: data.message });
+     return data;
+   }
+ 
+   let snackTimer = null;
++  const apiError = (e) => e.text || (e.code && L.MESSAGES[e.code]) || 'Không kết nối được máy chủ, vui lòng thử lại.';
+   function snack(text, isError) {
+     const s = $('snackbar');
+     s.textContent = text;
+@@ -84,7 +85,7 @@
      const status = leave && leave.status;
      $('btn-save').hidden = $('btn-submit').hidden = ro;
      $('btn-edit').hidden = !(ro && status === 'draft');
@@ -38,6 +61,46 @@ index 3169ca9..f0adea4 100644
      recalc();
    }
  
+@@ -104,6 +105,7 @@
+     dirty = false;
+     showErrors([]);
+     render();
++    if (m === 'edit') loadBalance();
+   }
+ 
+   async function loadBalance() {
+@@ -120,7 +122,7 @@
+     const errors = L.validate(values(), today());
+     showErrors(errors);
+     if (errors.length) return;
+-    try { await persist(); snack(L.message('LV-I01')); setMode('edit'); } catch (e) { snack(L.message(e.code), true); }
++    try { await persist(); snack(L.message('LV-I01')); setMode('edit'); } catch (e) { snack(apiError(e), true); }
+   }
+ 
+   async function onSubmit() {
+@@ -136,12 +138,12 @@
+       leave = await call('POST', '/leaves/' + leave.id + '/submit');
+       snack(L.message('LV-I02'));
+       setMode('view');
+-    } catch (e) { snack(L.message(e.code), true); }
++    } catch (e) { snack(apiError(e), true); }
+   }
+ 
+   async function onCancel() {
+     if (!(await confirmBox('Xác nhận huỷ đơn', 'LV-C02'))) return;
+-    try { leave = await call('POST', '/leaves/' + leave.id + '/cancel'); snack(L.message('LV-I03')); setMode('view'); } catch (e) { snack(L.message(e.code), true); }
++    try { leave = await call('POST', '/leaves/' + leave.id + '/cancel'); snack(L.message('LV-I03')); setMode('view'); } catch (e) { snack(apiError(e), true); }
+   }
+ 
+   async function onBack() {
+@@ -169,6 +171,7 @@
+         $('form').hidden = true;
+         $('notice').hidden = false;
+         $('notice').textContent = L.message(e.code);
++        $('title').textContent = 'Chi tiết đơn nghỉ phép';
+         for (const id of ['btn-save', 'btn-submit', 'btn-edit', 'btn-cancel']) $(id).hidden = true;
+         return;
+       }
 diff --git a/public/index.html b/public/index.html
 index 0c2ca02..a09db41 100644
 --- a/public/index.html

@@ -36,7 +36,8 @@ export default async function grade({ ws, key, read }) {
   const auto = cases.filter((r) => !/manual/i.test(r.Layer || ''));
   const files = [...walk(join(ws, 'tests')), ...walk(join(ws, W))].filter((f) => !/run\.mjs$/.test(f));
   const src = files.map((f) => readFileSync(f, 'utf8')).join('\n');
-  const tagged = auto.filter((r) => src.includes(`[${r.ID}]`));
+  // a tag is `[ID]` in a test name, or the ID as a string literal (kit style: run.tc("L01-A01", ...))
+  const tagged = auto.filter((r) => [`[${r.ID}]`, `"${r.ID}"`, `'${r.ID}'`, '`' + r.ID + '`'].some((t) => src.includes(t)));
   const out = [check('automated cases have a tagged test', auto.length ? tagged.length / auto.length : 0, `${tagged.length}/${auto.length}; untagged: ${auto.filter((r) => !tagged.includes(r)).slice(0, 8).map((r) => r.ID).join(', ') || '-'}`)];
 
   const rel = files.map((f) => `"${relative(ws, f)}"`).join(' ');

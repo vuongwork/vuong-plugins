@@ -14,6 +14,19 @@ UI: `leave-request/design/L01.html` made by vuong-design `spec-to-html` (bench c
 | B2 | bug | PUT only for draft, else 409 LV-E409 (API A3) | PUT on pending / approved succeeds | `server.js` PUT | API test PUT pending → 409 |
 | B3 | bug | Huỷ đơn shown only for draft / pending (L01 Nut) | shown for rejected and cancelled too | `public/app.js` render | E2E view rejected: no Huỷ đơn |
 
+Real defects nobody seeded, found by the bench runs (2026-11-25). `make-fixed.mjs` fixes U1–U5 as well, so a test
+that fails on the fixed app is a wrong test or U6/U7:
+
+| ID | Spec / BA answer | Code does | Fixed in fixed.patch |
+|---|---|---|---|
+| U1 | balance shown in Edit (Item!F11) | entering Edit from View (Sửa button) does not load A6 → "–", LV-E04 not checked | yes |
+| U2 | API error snackbar shows the message of the code (Nut!A10) | LV-E04 from the API shows a literal "{n}" | yes (uses the API message) |
+| U3 | title on the 403/404 notice "Chi tiết đơn nghỉ phép" (Q6) | stays "Tạo đơn nghỉ phép" | yes |
+| U4 | network / unknown error: readable red snackbar (Q12) | empty snackbar | yes |
+| U5 | numbers like "3,0", "12,0" (Giao dien!B23 example, design) | "3.0" | yes |
+| U6 | "today" is the server date (API!A7, Q8) | FE uses the browser date | no (needs an API change) |
+| U7 | New → Gửi duyệt: A2 ok, A4 fails → screen moves to Edit of the new draft (Q7) | stays in New, next click PUTs | no |
+
 Existing tests (`tests/leave.test.js`, 9 tests):
 
 | Test | Problem | Found by |

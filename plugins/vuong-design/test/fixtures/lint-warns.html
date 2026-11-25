@@ -1,0 +1,23 @@
+<!doctype html><html><head><meta charset="utf-8"><title>lint</title><style>
+:root{--color-bg:#ffffff;--color-ink:#1a1a1a;--color-line:#dddddd;--color-accent:#3d6b5c;--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--radius-md:12px;--radius-full:999px;--font-sans:"Be Vietnam Pro",sans-serif;--size-body:14px;--size-title:20px}
+body{margin:0;background:var(--color-bg);color:var(--color-ink);font-family:var(--font-sans);font-size:var(--size-body)}
+.screen{padding:16px;width:360px;color:#222222;background:#ffffff;font-family:Arial,sans-serif}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-2)}
+.mixed{border-left:2px solid #ff0000;border-right:2px solid #0000ff;padding:var(--space-2)}
+.fx{outline:2px solid var(--color-accent);filter:blur(1px);text-shadow:1px 1px 2px #000}
+.fb{background-color:var(--x, #ffffff);margin:var(--space-2)}
+.abs{position:absolute;left:0;top:0;width:10px;height:10px}
+.rel{position:relative;height:40px}
+</style></head><body>
+<div data-vd-screen="A1" class="screen">
+  <div class="grid"><span>a</span><span>b</span></div>
+  <div class="mixed">mixed borders</div>
+  <div class="fx">effects</div>
+  <img width="24" height="24" alt="" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==">
+  <div class="fb">fallback</div>
+</div>
+<div data-vd-screen="A2" class="screen rel">
+  <i class="abs"></i><i class="abs"></i><i class="abs"></i><i class="abs"></i><i class="abs"></i><i class="abs"></i><i class="abs"></i><i class="abs"></i>
+  <span>x</span>
+</div>
+</body></html>

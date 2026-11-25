@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "answers": {
+    "grid4|space|paddingT|div.x|div.p|13": "12",
+    "project.lineHeightInt": "yes",
+    "icon|18": 16
+  },
+  "notes": { "icon|18": "small icons stay at 16 px" }
+}

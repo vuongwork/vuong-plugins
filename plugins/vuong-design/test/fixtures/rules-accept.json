@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "answers": {
+    "project.lineHeightInt": "yes",
+    "project.srcSquash": "accept-all"
+  },
+  "notes": {
+    "about": "Acceptance rules file (plan 2 Task 9 step 5b): only the line-height rounding and the squashed avatar are answered; every other question stays open."
+  }
+}

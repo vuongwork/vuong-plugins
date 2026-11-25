@@ -1,0 +1,91 @@
+{
+ "_doc": "Figma auto-layout cases measured on real Figma in spike 3 (docs/superpowers/spikes/vuong-design/spike3/probe.js), in the SNode format of core/infer.mjs. W = widths to render at. Fonts: Inter, rendered offline (webFonts: false), so only geometry that does not depend on glyph widths is asserted.",
+ "fill3": {
+  "_doc": "three FILL children in a 300 frame with padding 10 and gap 8: each (300 - 20 - 2*8)/3 = 88; the middle one is a synthetic frame",
+  "W": [300],
+  "spec": { "id": "n", "t": "F", "w": 300, "h": 40, "sz": ["FIXED", "FIXED"], "lay": { "d": "H", "p": [10, 10, 10, 10], "g": 8, "pa": "S", "ca": "S" }, "kids": [
+   { "id": "n.0", "t": "F", "w": 50, "h": 20, "sz": ["FILL", "FIXED"], "paint": { "bg": "rgb(200, 120, 120)" } },
+   { "id": "n.g0", "t": "F", "syn": "group", "w": 50, "h": 20, "sz": ["FILL", "FIXED"], "lay": { "d": "H", "p": [0, 0, 0, 0], "g": 0, "pa": "S", "ca": "S" }, "kids": [
+    { "id": "n.1", "t": "F", "w": 10, "h": 20, "sz": ["FIXED", "FIXED"], "paint": { "bg": "rgb(120, 200, 120)" } }] },
+   { "id": "n.2", "t": "F", "w": 50, "h": 20, "sz": ["FILL", "FIXED"], "paint": { "bg": "rgb(120, 120, 200)" } }] },
+  "expect": { "n.0": [10, 10, 88, 20], "n.g0": [106, 10, 88, 20], "n.1": [106, 10, 10, 20], "n.2": [202, 10, 88, 20] }
+ },
+ "spaceBetween": {
+  "_doc": "spaceBetween ignores gap: gap 20 but only (296 - 12 - 3*90) / 2 = 7 px between each pair",
+  "W": [296],
+  "spec": { "id": "n", "t": "F", "w": 296, "h": 28, "sz": ["FIXED", "FIXED"], "lay": { "d": "H", "p": [4, 6, 4, 6], "g": 20, "sb": 1, "pa": "S", "ca": "C" }, "kids": [
+   { "id": "n.0", "t": "F", "w": 90, "h": 20, "sz": ["FIXED", "FIXED"] },
+   { "id": "n.1", "t": "F", "w": 90, "h": 20, "sz": ["FIXED", "FIXED"] },
+   { "id": "n.2", "t": "F", "w": 90, "h": 20, "sz": ["FIXED", "FIXED"] }] },
+  "expect": { "n.0": [6, 4, 90, 20], "n.1": [103, 4, 90, 20], "n.2": [200, 4, 90, 20] }
+ },
+ "minMax": {
+  "_doc": "FILL with minWidth 150, FILL, FILL with maxWidth 40 in a row with gap 6: 150/98/40 at 300, 184/184/40 at 420 (spike 3 row 'mm')",
+  "W": [300, 420],
+  "spec": { "id": "n", "t": "F", "w": 300, "h": 20, "sz": ["FIXED", "FIXED"], "lay": { "d": "H", "p": [0, 0, 0, 0], "g": 6, "pa": "S", "ca": "S" }, "kids": [
+   { "id": "n.0", "t": "F", "w": 150, "h": 20, "sz": ["FILL", "FILL"], "min": 150 },
+   { "id": "n.1", "t": "F", "w": 98, "h": 20, "sz": ["FILL", "FILL"] },
+   { "id": "n.2", "t": "F", "w": 40, "h": 20, "sz": ["FILL", "FILL"], "max": 40 }] },
+  "expect": { "A": [150, 98, 40], "B": [184, 184, 40] }
+ },
+ "absolute": {
+  "_doc": "absolute children placed by constraints: LR grows by exactly the width delta (+120), R keeps its right inset, C keeps its centre offset, cy B keeps its bottom inset",
+  "W": [320, 440],
+  "spec": { "id": "n", "t": "F", "w": 320, "h": 60, "sz": ["FIXED", "FIXED"], "lay": { "d": "V", "p": [0, 0, 0, 0], "g": 0, "pa": "S", "ca": "S" }, "kids": [
+   { "id": "n.0", "t": "F", "w": 10, "h": 10, "sz": ["FIXED", "FIXED"] },
+   { "id": "n.1", "t": "F", "w": 280, "h": 4, "sz": ["FIXED", "FIXED"], "abs": { "x": 20, "y": 36, "c": "LR" } },
+   { "id": "n.2", "t": "F", "w": 20, "h": 10, "sz": ["FIXED", "FIXED"], "abs": { "x": 290, "y": 2, "c": "R" } },
+   { "id": "n.3", "t": "F", "w": 30, "h": 10, "sz": ["FIXED", "FIXED"], "abs": { "x": 145, "y": 14, "c": "C" } },
+   { "id": "n.4", "t": "F", "w": 10, "h": 6, "sz": ["FIXED", "FIXED"], "abs": { "x": 0, "y": 50, "c": "L", "cy": "B" } }] },
+  "expect": {
+   "A": { "n.1": [20, 36, 280, 4], "n.2": [290, 2, 20, 10], "n.3": [145, 14, 30, 10], "n.4": [0, 50, 10, 6] },
+   "B": { "n.1": [20, 36, 400, 4], "n.2": [410, 2, 20, 10], "n.3": [205, 14, 30, 10], "n.4": [0, 50, 10, 6] } }
+ },
+ "border": {
+  "_doc": "borders do not affect layout (strokesIncludedInLayout = false): a 4px border does not push the child in, and a bordered FILL cell keeps its equal share",
+  "W": [200],
+  "spec": { "id": "n", "t": "F", "w": 200, "h": 100, "sz": ["FIXED", "FIXED"], "paint": { "bg": "rgb(255, 255, 255)", "border": [
+    { "w": 4, "style": "solid", "color": "rgb(0, 0, 200)" }, { "w": 4, "style": "solid", "color": "rgb(0, 0, 200)" },
+    { "w": 4, "style": "solid", "color": "rgb(0, 0, 200)" }, { "w": 4, "style": "solid", "color": "rgb(0, 0, 200)" }] },
+   "lay": { "d": "V", "p": [0, 0, 0, 0], "g": 0, "pa": "S", "ca": "S" }, "kids": [
+   { "id": "n.0", "t": "F", "w": 50, "h": 20, "sz": ["FIXED", "FIXED"], "paint": { "bg": "rgb(200, 120, 120)" } },
+   { "id": "n.1", "t": "F", "w": 200, "h": 20, "sz": ["FILL", "FIXED"], "lay": { "d": "H", "p": [0, 0, 0, 0], "g": 0, "pa": "S", "ca": "S" }, "kids": [
+    { "id": "n.1.0", "t": "F", "w": 100, "h": 20, "sz": ["FILL", "FILL"], "paint": { "bg": "rgb(220, 220, 220)", "strokeOverlay": true, "border": [
+      { "w": 4, "style": "dashed", "color": "rgb(0, 0, 200)" }, { "w": 4, "style": "dashed", "color": "rgb(0, 0, 200)" },
+      { "w": 4, "style": "dashed", "color": "rgb(0, 0, 200)" }, { "w": 4, "style": "dashed", "color": "rgb(0, 0, 200)" }] } },
+    { "id": "n.1.1", "t": "F", "w": 100, "h": 20, "sz": ["FILL", "FILL"], "paint": { "bg": "rgb(200, 220, 240)" } }] }] },
+  "expect": { "n.0": [0, 0, 50, 20], "n.1": [0, 20, 200, 20], "n.1.0": [0, 20, 100, 20], "n.1.1": [100, 20, 100, 20] }
+ },
+ "baseline": {
+  "_doc": "row with ca 'B': the baselines of two texts of different sizes coincide (<= 0.5px)",
+  "W": [300],
+  "spec": { "id": "n", "t": "F", "w": 300, "h": 60, "sz": ["FIXED", "FIXED"], "lay": { "d": "H", "p": [0, 0, 0, 0], "g": 8, "pa": "S", "ca": "B" }, "kids": [
+   { "id": "n.0", "t": "T", "w": 52, "h": 36, "sz": ["HUG", "HUG"], "runs": [{ "t": "Big" }],
+    "font": { "ff": "Inter", "fs": "28px", "fw": "700", "fst": "normal", "lh": 36, "ls": "normal", "c": "rgb(0, 0, 0)", "td": "none", "tt": "none", "ta": "start", "ws": "normal" } },
+   { "id": "n.1", "t": "T", "w": 30, "h": 16, "sz": ["HUG", "HUG"], "runs": [{ "t": "small" }],
+    "font": { "ff": "Inter", "fs": "12px", "fw": "400", "fst": "normal", "lh": 16, "ls": "normal", "c": "rgb(0, 0, 0)", "td": "none", "tt": "none", "ta": "start", "ws": "normal" } }] }
+ },
+ "substitutedText": {
+  "_doc": "font.sub text: its Chrome size (999) is ignored; the proxy hugs it in the substitute font, then pins figmaTextBox (integer px); the FILL sibling takes the rest",
+  "W": [300],
+  "spec": { "model": "figma", "id": "n", "t": "F", "w": 300, "h": 20, "sz": ["FIXED", "FIXED"], "lay": { "d": "H", "p": [0, 0, 0, 0], "g": 0, "pa": "S", "ca": "S" }, "kids": [
+   { "id": "n.0", "t": "T", "w": 999, "h": 999, "sz": ["HUG", "HUG"], "runs": [{ "t": "Substituted" }],
+    "font": { "ff": "Inter", "fs": "14px", "fw": "400", "fst": "normal", "lh": 20, "ls": "2px", "c": "rgb(0, 0, 0)", "td": "none", "tt": "none", "ta": "start", "ws": "normal", "sub": true } },
+   { "id": "n.1", "t": "F", "w": 10, "h": 20, "sz": ["FILL", "FIXED"] }] }
+ },
+ "wrapText": {
+  "_doc": "FILL text with HUG height wraps; its height follows the line count at each width (a height pinned at A is not reused at B)",
+  "W": [100, 400],
+  "spec": { "model": "figma", "id": "n", "t": "F", "w": 100, "h": 200, "sz": ["FIXED", "FIXED"], "lay": { "d": "V", "p": [0, 0, 0, 0], "g": 0, "pa": "S", "ca": "S" }, "kids": [
+   { "id": "n.0", "t": "T", "w": 100, "h": 64, "sz": ["FILL", "HUG"], "runs": [{ "t": "a fairly long sentence that wraps onto several lines when narrow" }],
+    "font": { "ff": "Inter", "fs": "13px", "fw": "400", "fst": "normal", "lh": 16, "ls": "normal", "c": "rgb(0, 0, 0)", "td": "none", "tt": "none", "ta": "start", "ws": "normal" } }] }
+ },
+ "icon": {
+  "_doc": "icon drawn from the screen symbol table, FIXED 24x24, centred in a 40px row",
+  "W": [100],
+  "svgDefs": { "sym": "<symbol id=\"sym\" viewBox=\"0 0 24 24\"><path d=\"M2 2h20v20H2z\"/></symbol>" },
+  "spec": { "id": "n", "t": "F", "w": 100, "h": 40, "sz": ["FIXED", "FIXED"], "lay": { "d": "H", "p": [0, 0, 0, 0], "g": 0, "pa": "S", "ca": "C" }, "kids": [
+   { "id": "n.0", "t": "V", "w": 24, "h": 24, "sz": ["FIXED", "FIXED"], "icon": { "ref": "sym", "color": "rgb(255, 0, 0)", "fill": "rgb(255, 0, 0)", "stroke": "none", "sw": "1px" } }] },
+  "expect": { "n.0": [0, 8, 24, 24] }
+ }
+}

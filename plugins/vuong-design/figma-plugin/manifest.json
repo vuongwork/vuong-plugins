@@ -1,0 +1,14 @@
+{
+  "name": "vuong-design bridge",
+  "id": "vuong-design-bridge-local",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": ["none"],
+    "devAllowedDomains": ["http://localhost:8787"],
+    "reasoning": "Fetches prepared batches from the local vuong-design bridge (figma.mjs serve) and posts results back."
+  }
+}

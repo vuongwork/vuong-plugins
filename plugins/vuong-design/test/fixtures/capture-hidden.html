@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>capture-hidden</title>
+<style>
+  body { margin: 0; font-family: Arial, sans-serif; }
+  .scr { width: 300px; height: 200px; background: #ffffff; overflow: hidden; position: relative; }
+  .empty { width: 0; height: 0; }
+  .away { position: relative; left: 520px; width: 40px; height: 40px; background: #1e88e5; }
+  .line { height: 0; box-shadow: 0 1px 0 #000000; }
+  .rot { width: 100px; height: 20px; background: #43a047; transform: rotate(45deg); }
+</style>
+</head>
+<body>
+<div class="scr">
+  <div class="empty"></div>
+  <div class="away"></div>
+  <div class="rot"></div>
+  <div class="line"></div>
+  <div class="pre" style="white-space:pre">a   b<div>c</div></div>
+  <div class="ghost" style="visibility:hidden">Ẩn <span class="seen" style="visibility:visible">Thấy</span></div>
+</div>
+</body>
+</html>

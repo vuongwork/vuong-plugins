@@ -1,0 +1,13 @@
+{
+  "name": "vuong-design",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/vuongwork/vuong-plugins/tree/main/plugins/vuong-design",
+  "repository": "https://github.com/vuongwork/vuong-plugins",
+  "documentationUrl": "https://github.com/vuongwork/vuong-plugins/blob/main/plugins/vuong-design/README.md",
+  "supportUrl": "https://github.com/vuongwork/vuong-plugins/issues",
+  "description": "HTML tĩnh → design system → Figma có biến, component, ID; kiểm tra từng node.",
+  "author": {
+    "name": "vuongwork", "email": "vuongpq.work@gmail.com"
+  }
+}

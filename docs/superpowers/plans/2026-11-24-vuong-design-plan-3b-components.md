@@ -146,8 +146,14 @@ Component được dựng từ spec của lần xuất hiện đầu tiên (theo
 - Lô `cmp-NN`: trang `--cmp-page` (mặc định `Components`), component icon trước, rồi component theo thứ tự phụ thuộc (nguyên tử → ghép), rồi `combineAsVariants`, rồi thuộc tính. Mỗi component có `vuongdesign/cmp` (tên), `vuongdesign/id` của node, `vuongdesign/sig`. Readback như màn (hộp, `d`), để kiểm tra component trên Figma thật như một màn.
 - Màn: node instance mã hoá `{ i: <chỉ số bảng K>, p: { thuộc tính }, ov: [ghi đè theo đường dẫn con] }`; bảng `K` mang tên component như `V`, `S`. Runtime màn: `importComponent` theo `vuongdesign/cmp` (tìm một lần mỗi lô), `createInstance`, `setProperties`, ghi đè, đặt ID cho con instance (theo `figma-facts.cmpData`; nếu `no` thì readback theo thứ tự cây và encoder ghi thứ tự đó).
 - `--no-components` (và không có `components.json`) → không có lô `cmp`, encoder không thay cây con.
+- Biến cho thông số trạng thái (người dùng duyệt 2026-11-25):
+  - **Nguồn:** giá trị mục `states` trong `vd-rules.json` (đã duyệt) sinh thành token số, ví dụ `state.disabled.content = 0.38`, `state.disabled.bg = 0.12`, `state.pressed.overlay = 0.1`, `state.focus.width = 2`.
+  - **HTML:** token vào `tokens.css` (`--state-disabled-content: 0.38`…).
+  - **Figma:** token vào một collection biến số, ghi trong lô `vars`. Component trạng thái gắn biến vào độ mờ layer, độ dày nét và kích thước.
+  - **Giới hạn Figma:** biến không gắn được vào độ mờ riêng của một lớp màu. Vì vậy nền 12 % và lớp phủ 10 % dựng thành layer con riêng, có độ mờ gắn biến. Phép so của Task 5 / `check` phải tính layer con này.
+  - Luật chưa duyệt → không có token trạng thái, không có biến.
 
-- [ ] **Step 1: Viết test** trên fake: lô cmp dựng đủ component / set / thuộc tính, chạy lại → không trùng; màn dùng instance có readback đủ mục theo ID spec (`instance readback`); `override kept`; component có node lỗi → instance của nó `detached` và màn vẫn dựng; `off is plan 3`: tắt → mọi lô Planora giống từng byte fixture kế hoạch 3; kích thước hai runtime ≤ 16 384 B mỗi file.
+- [ ] **Step 1: Viết test** trên fake: lô cmp dựng đủ component / set / thuộc tính, chạy lại → không trùng; `state vars`: luật duyệt → có token trong `tokens.css` và biến số trên fake, layer trạng thái gắn biến; sửa giá trị một biến → mọi component trạng thái đổi theo; màn dùng instance có readback đủ mục theo ID spec (`instance readback`); `override kept`; component có node lỗi → instance của nó `detached` và màn vẫn dựng; `off is plan 3`: tắt → mọi lô Planora giống từng byte fixture kế hoạch 3; kích thước hai runtime ≤ 16 384 B mỗi file.
 - [ ] **Step 2–4:** FAIL → viết → PASS.
 - [ ] **Step 5: Commit** `feat(vuong-design): Figma components, variants, properties and screen instances`.
 

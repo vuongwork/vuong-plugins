@@ -29,7 +29,9 @@
 //  - state:   some occurrence carries a state class.
 //  - class:   identity classes, own paint (bg not transparent, a border > 0, shadow, bgImage) and >= 2 nodes.
 //  - bare:    bare, >= bareMin occurrences, own paint, >= 2 nodes: `proposed`, a component only when decl.keep has
-//             its key (the value is its name).
+//             its key. The value is its name, or { name, kind?, stateMap? }: a bare block has no class to
+//             declare, so its kind (other than 'other': a control, with that kind's state table) and its stateMap
+//             ({ class: state id }, read by states.mjs) go on its keep entry.
 //  Never: the screen root, synthetic frames, pseudo elements, a group whose occurrences are all 1 node (except
 //  control). A dropped name (decl.drop) -> skipped 'user'. A class / bare group whose every occurrence lies inside an
 //  occurrence of another component (not a mere proposal) with the same count -> skipped 'nested'. Control and state groups are always
@@ -72,6 +74,8 @@ const STATE_WORDS = new Set(['done', 'off', 'checked', 'open', 'error', 'current
 
 const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+// a keep entry is a name or { name, kind?, stateMap? }
+export const keepName = (v) => (typeof v === 'string' ? v : isObj(v) ? v.name : '');
 const EMPTY = () => ({ version: COMPONENTS_VERSION, classes: {}, keep: {}, drop: [] });
 
 // ---- declaration file ----------------------------------------------------------------------------------------------
@@ -105,9 +109,17 @@ function checkDecl(j, where) {
     if (d.name !== undefined && (typeof d.name !== 'string' || !d.name)) throw new Error(`${where}: classes.${c}.name must be a non-empty string`);
     out.classes[c] = JSON.parse(JSON.stringify(d));
   }
-  if (j.keep !== undefined && (!isObj(j.keep) || !Object.values(j.keep).every((v) => typeof v === 'string' && v))) throw new Error(`${where}: "keep" must map a bare key to a name`);
+  if (j.keep !== undefined && !isObj(j.keep)) throw new Error(`${where}: "keep" must map a bare key to a name or { name, kind?, stateMap? }`);
+  for (const [k, v] of Object.entries(j.keep || {})) {
+    if (typeof v === 'string' && v) continue;
+    if (!isObj(v)) throw new Error(`${where}: keep.${k} must be a name or { name, kind?, stateMap? }`);
+    for (const x of Object.keys(v)) if (!['name', 'kind', 'stateMap'].includes(x)) throw new Error(`${where}: keep.${k}: unknown key "${x}"`);
+    if (typeof v.name !== 'string' || !v.name) throw new Error(`${where}: keep.${k}.name must be a non-empty string`);
+    if (v.kind !== undefined && !KINDS.includes(v.kind)) throw new Error(`${where}: keep.${k}.kind "${v.kind}" is not one of ${KINDS.join(', ')}`);
+    if (v.stateMap !== undefined && (!isObj(v.stateMap) || !Object.values(v.stateMap).every((m) => typeof m === 'string' && m))) throw new Error(`${where}: keep.${k}.stateMap must map a class to a state id (states.mjs STATE_TABLE)`);
+  }
   if (j.drop !== undefined && !strs(j.drop)) throw new Error(`${where}: "drop" must be a list of component names`);
-  out.keep = { ...(j.keep || {}) };
+  out.keep = JSON.parse(JSON.stringify(j.keep || {}));
   out.drop = [...(j.drop || [])];
   return out;
 }
@@ -180,7 +192,9 @@ function groups(all, decl) {
   for (const key of [...by.keys()].sort(cmpStr)) {
     const occ = by.get(key).sort(cmpRec);
     const f = occ[0].ident;
-    const dc = f.base ? decl.classes[f.base] : {};
+    // a kept bare block declares its name, kind and stateMap on its keep entry
+    const kv = key.startsWith('b:') ? decl.keep[key] : undefined;
+    const dc = f.base ? decl.classes[f.base] : isObj(kv) ? kv : {};
     const kind = TAG_KIND[f.tag] || dc.kind || 'other';
     out.push({ key, occ, kind, bare: key.startsWith('b:'), ident: f, dc,
       hasState: occ.some((r) => r.ident.states.length), visual: occ.some((r) => visualOf(r.sn.paint)), big: occ.some((r) => r.size >= 2) });
@@ -213,7 +227,7 @@ export function findComponents(screens, opts = {}) {
   // names
   const taken = new Map();
   for (const g of cand) {
-    let name = g.dc.name || (g.bare ? decl.keep[g.key] || (g.reason === 'control' ? g.ident.tag : '') : g.ident.rest.join('-'));
+    let name = g.dc.name || (g.bare ? keepName(decl.keep[g.key]) || (g.reason === 'control' ? g.ident.tag : '') : g.ident.rest.join('-'));
     if (!name) name = 'cmp';
     g.name0 = name;
     if (!taken.has(name)) taken.set(name, []);
@@ -449,7 +463,7 @@ export function componentsDraft(screens, opts = {}) {
     else out.notes[sk.key] = note;
   }
   for (const p of found.proposed) {
-    out.notes[p.key] = `${p.count} bare blocks on ${p.screens.join(', ')} (${p.nodes.slice(0, 3).map((x) => `${x.screen} ${x.node}`).join('; ')}${p.count > 3 ? '; ...' : ''}); add "${p.key}": "<name>" to keep to make it a component`;
+    out.notes[p.key] = `${p.count} bare blocks on ${p.screens.join(', ')} (${p.nodes.slice(0, 3).map((x) => `${x.screen} ${x.node}`).join('; ')}${p.count > 3 ? '; ...' : ''}); add "${p.key}": "<name>" (or { "name": "<name>", "kind": "<kind>" }) to keep to make it a component`;
   }
   return out;
 }

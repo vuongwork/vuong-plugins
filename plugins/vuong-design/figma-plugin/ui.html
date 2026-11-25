@@ -20,8 +20,12 @@ const BASE = 'http://localhost:8787';
 const $ = (id) => document.getElementById(id);
 const say = (t, cls) => { $('st').textContent = t; $('st').className = cls || ''; };
 let pending = null; // { id, resolve }
+// this window's id and its Figma file name (from the main thread): the bridge serves a run only to its target file
+const INST = Math.random().toString(36).slice(2, 10);
+let fileName = null;
 onmessage = (ev) => {
   const m = ev.data.pluginMessage;
+  if (m && m.type === 'file') { fileName = m.name; return; }
   if (m && pending && m.id === pending.id) { const p = pending; pending = null; p.resolve(m); }
 };
 const runInMain = (msg) => new Promise((resolve) => { pending = { id: msg.id, resolve }; parent.postMessage({ pluginMessage: msg }, '*'); });
@@ -33,7 +37,8 @@ async function loop() {
   for (;;) {
     let j;
     try {
-      const r = await fetch(BASE + '/next');
+      if (fileName == null) { await sleep(100); continue; }
+      const r = await fetch(BASE + '/next?file=' + encodeURIComponent(fileName) + '&inst=' + INST);
       j = await r.json();
       $('srv').textContent = '· connected';
     } catch (e) {
@@ -45,15 +50,15 @@ async function loop() {
     idle = 0;
     if (j.session !== session) { session = j.session; say('Connected to session ' + session); }
     if (j.done) { say(j.ok ? 'Run finished.' : 'Run stopped (see the terminal).', j.ok ? 'ok' : 'err'); await sleep(2000); continue; }
-    if (j.wait) { await sleep(300); continue; }
+    if (j.wait) { if (j.why) say('Waiting: ' + j.why + ' (this file: "' + fileName + '")'); await sleep(300); continue; }
     say('Running ' + j.key + (j.of ? ' (' + j.n + '/' + j.of + ')' : ' (#' + j.n + ')') + '…');
     const t0 = Date.now();
-    const m = await runInMain(j.kind === 'shot' ? { type: 'shot', id: j.id, root: j.root, scale: j.scale } : { type: 'code', id: j.id, code: j.code });
+    const m = await runInMain(j.kind === 'shot' ? { type: 'shot', id: j.id, root: j.root, scale: j.scale, file: j.file } : { type: 'code', id: j.id, code: j.code, file: j.file });
     let ans;
     try {
       const r = m.type === 'shot'
-        ? await fetch(BASE + '/shot?id=' + j.id, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: m.bytes })
-        : await fetch(BASE + '/result?id=' + j.id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(m.ok ? { ok: true, text: m.text } : { ok: false, error: m.error }) });
+        ? await fetch(BASE + '/shot?id=' + j.id + '&inst=' + INST, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: m.bytes })
+        : await fetch(BASE + '/result?id=' + j.id + '&inst=' + INST, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(m.ok ? { ok: true, text: m.text } : { ok: false, error: m.error }) });
       ans = await r.json();
     } catch (e) { ans = { ok: false, msg: 'could not post the result: ' + e.message }; }
     $('last').textContent = j.key + ': ' + (ans.ok ? 'ok' : 'failed') + ' in ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s' + (ans.msg ? ' — ' + ans.msg : '');

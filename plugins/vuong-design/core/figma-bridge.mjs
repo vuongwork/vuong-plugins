@@ -4,8 +4,13 @@
 //
 // Protocol (loopback only: 127.0.0.1 and ::1, CORS open because the plugin UI iframe has origin null; a request with
 // any other Origin header, i.e. from a web page, is refused with 403):
-//   GET  /next            -> { session, done: true } | { session, wait: true } | { session, id, key, kind, code?, root?, scale?, n, of }
+//   GET  /next?file=<name>&inst=<id>
+//                         -> { session, done: true } | { session, wait: true, why? } | { session, id, key, kind, file?, code?, root?, scale?, n, of }
 //                            (a job already served and not answered is served again: the plugin was reloaded)
+//   With a target file (option file), jobs go only to a plugin whose Figma file has that name (figma.root.name, sent as
+//   file; inst is the plugin window's random id). A plugin in another file gets { wait, why: 'other file' }. Two plugin
+//   windows in files of the target name are ambiguous: no job is served before the first one is (a settle time after the
+//   first matching poll lets a second window show up), and a second one seen later stops the run.
 //   POST /result?id=<id>  <- JSON { ok: true, text } (text = JSON of the code's return value) | { ok: false, error }
 //   POST /shot?id=<id>    <- the PNG bytes of a shot job
 // Every answer is JSON { ok, msg }. A failed job stops the queue (later jobs are not served).
@@ -21,10 +26,17 @@ const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods
 // called after the previous job's onResult, so it can read what that result changed.
 // onResult(job, { ok, text?, png?, error? }) -> { ok, msg }; ok false stops the queue.
 // total: the job count shown by the plugin (null when unknown). Resolves to { port, session, done, close }: done resolves to { ok, reason?, jobs: [{ key, kind, ok, ms, bytesOut, bytesIn, msg }] }.
-export function startBridge({ next, onResult, port = BRIDGE_PORT, host = '127.0.0.1', log = () => {}, connectTimeoutMs = 300000, jobTimeoutMs = 300000, lingerMs = 3000, total = null }) {
+// file: the target Figma file name (null: any plugin, as before). settleMs: how long a matching plugin is seen before the
+// first job (other plugin windows poll at most every 3 s). liveMs: a window not seen for this long is gone.
+export function startBridge({ next, onResult, port = BRIDGE_PORT, host = '127.0.0.1', log = () => {}, connectTimeoutMs = 300000, jobTimeoutMs = 300000, lingerMs = 3000, total = null, file = null, settleMs = 3500, liveMs = 4000 }) {
   const session = randomBytes(4).toString('hex');
   const jobs = [];
   let cur = null, curAt = 0, finished = null, ids = 0, connected = false, busy = false;
+  // plugin windows seen: inst -> { file, at, first }; owner = the window that got the first job (later jobs go to it only)
+  const wins = new Map(), told = new Set();
+  let owner = null, ambiguous = null;
+  const tell = (k, m) => { if (!told.has(k)) { told.add(k); log(m); } };
+  const others = () => [...new Set([...wins.values()].filter((w) => w.file !== file).map((w) => JSON.stringify(w.file)))];
   let resolveDone;
   const done = new Promise((r) => { resolveDone = r; });
   let timer = null;
@@ -63,17 +75,45 @@ export function startBridge({ next, onResult, port = BRIDGE_PORT, host = '127.0.
       if (origin !== undefined && origin !== 'null') return send(res, 403, { ok: false, msg: 'origin not allowed' });
       const u = new URL(req.url, 'http://x');
       if (req.method === 'GET' && u.pathname === '/next') {
-        if (!connected) { connected = true; log(`plugin connected (session ${session})`); }
         if (finished) return send(res, 200, { session, done: true, ok: finished.ok });
+        if (file != null) {
+          const inst = u.searchParams.get('inst') || '', fname = u.searchParams.get('file');
+          if (fname == null || !inst) {
+            tell('old', 'a plugin window sent no file name: close it and run the plugin again (figma-plugin/ was updated)');
+            return send(res, 200, { session, wait: true, why: 'old plugin: run it again' });
+          }
+          const now = Date.now();
+          const w = wins.get(inst) || { file: fname, first: now };
+          w.file = fname; w.at = now; wins.set(inst, w);
+          if (fname !== file) {
+            tell(`other:${inst}`, `plugin in Figma file ${JSON.stringify(fname)} ignored (this run is for ${JSON.stringify(file)})`);
+            return send(res, 200, { session, wait: true, why: `this run is for Figma file "${file}"` });
+          }
+          // the owner running a job does not poll: it stays live until its result comes
+          const same = [...wins.entries()].filter(([k, x]) => x.file === file && (now - x.at <= liveMs || (k === owner && curAt)));
+          if (same.length > 1) {
+            const why = `${same.length} plugin windows are open in Figma files named "${file}" (or the plugin was run again within ${Math.round(liveMs / 1000)} s): close all but one, or give the file a unique name, then run serve again`;
+            if (owner) { finish(false, why); return send(res, 200, { session, done: true, ok: false }); }
+            ambiguous = why;
+            tell('two', why);
+            return send(res, 200, { session, wait: true, why });
+          }
+          // the window that ran the jobs is gone (closed, or the plugin was run again): the only window left takes over
+          if (owner && owner !== inst) owner = inst;
+          if (!owner && now - w.first < settleMs) return send(res, 200, { session, wait: true, why: 'checking for other plugin windows' });
+          if (!owner && cur) owner = inst;
+        }
+        if (!connected) { connected = true; log(`plugin connected (session ${session}${file != null ? `, Figma file ${JSON.stringify(file)}` : ''})`); }
         if (busy || !cur) return send(res, 200, { session, wait: true });
         if (!curAt) { curAt = Date.now(); arm(jobTimeoutMs, `no result for ${cur.key} within ${Math.round(jobTimeoutMs / 1000)} s`); }
         const { id, key, kind, code, root, scale } = cur;
-        return send(res, 200, { session, id, key, kind, ...(code != null ? { code } : {}), ...(root ? { root, scale } : {}), n: jobs.length + 1, of: total });
+        return send(res, 200, { session, id, key, kind, ...(file != null ? { file } : {}), ...(code != null ? { code } : {}), ...(root ? { root, scale } : {}), n: jobs.length + 1, of: total });
       }
       if (req.method === 'POST' && (u.pathname === '/result' || u.pathname === '/shot')) {
         const id = Number(u.searchParams.get('id'));
         const buf = await body(req);
         if (finished || busy || !cur || id !== cur.id) return send(res, 409, { ok: false, msg: 'not the current job' });
+        if (file != null && owner && u.searchParams.get('inst') !== owner) return send(res, 409, { ok: false, msg: 'not the plugin window of this session' });
         let payload;
         if (u.pathname === '/shot') payload = { ok: true, png: buf };
         else {
@@ -113,7 +153,14 @@ export function startBridge({ next, onResult, port = BRIDGE_PORT, host = '127.0.
         v6.listen(server.address().port, '::1', () => servers.push(v6));
       }
       advance();
-      if (!finished) arm(connectTimeoutMs, `no plugin connected within ${Math.round(connectTimeoutMs / 1000)} s (open Plugins > Development > vuong-design bridge in Figma Desktop)`);
+      if (!finished) {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          const o = others();
+          if (ambiguous) { finish(false, `no job sent: ${ambiguous}`); return; }
+          finish(false, `no plugin connected within ${Math.round(connectTimeoutMs / 1000)} s (open Plugins > Development > vuong-design bridge in Figma Desktop${file != null ? ` in the file named ${JSON.stringify(file)}` : ''})${o.length ? `; plugins seen in other files: ${o.join(', ')}` : ''}`);
+        }, connectTimeoutMs);
+      }
       ok({ port: server.address().port, session, done, close: () => finish(false, 'closed') });
     });
   });

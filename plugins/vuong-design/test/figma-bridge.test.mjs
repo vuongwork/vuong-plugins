@@ -35,27 +35,35 @@ async function planned() {
 const fakePng = (w, h) => { const b = Buffer.alloc(33); b.writeUInt32BE(0x89504e47, 0); b.writeUInt32BE(0x0d0a1a0a, 4); b.writeUInt32BE(13, 8); b.write('IHDR', 12); b.writeUInt32BE(w, 16); b.writeUInt32BE(h, 20); return b; };
 
 // the plugin's UI loop, against the fake Figma; tamper(job, text) may change a result on the way
-async function plugin(port, { fig = makeFakeFigma({ fonts: DEFAULT_FONTS }), tamper = (j, t) => t, fail = () => null } = {}) {
+// file: the Figma file name the window reports (null: an old plugin that sends none); inst: the window id
+async function plugin(port, { fig = makeFakeFigma({ fonts: DEFAULT_FONTS }), tamper = (j, t) => t, fail = () => null, file = 'Test', inst = Math.random().toString(36).slice(2), polls = 200, whys = [] } = {}) {
   const base = `http://127.0.0.1:${port}`, seen = [];
-  for (let i = 0; i < 200; i++) {
-    const j = await (await fetch(`${base}/next`)).json();
+  const q = `${file != null ? `file=${encodeURIComponent(file)}&` : ''}inst=${inst}`;
+  for (let i = 0; i < polls; i++) {
+    let j;
+    try { j = await (await fetch(`${base}/next?${q}`)).json(); } catch { return seen; } // the bridge closed
+    if (j.why && !whys.includes(j.why)) whys.push(j.why);
     if (j.done) return seen;
     if (j.wait) { await new Promise((r) => setTimeout(r, 5)); continue; }
     seen.push(j.key);
     const err = fail(j);
-    if (err) { await fetch(`${base}/result?id=${j.id}`, { method: 'POST', body: JSON.stringify({ ok: false, error: err }) }); continue; }
-    if (j.kind === 'shot') { await fetch(`${base}/shot?id=${j.id}`, { method: 'POST', body: fakePng(600, 400) }); continue; }
+    if (err) { await fetch(`${base}/result?id=${j.id}&inst=${inst}`, { method: 'POST', body: JSON.stringify({ ok: false, error: err }) }); continue; }
+    if (j.kind === 'shot') { await fetch(`${base}/shot?id=${j.id}&inst=${inst}`, { method: 'POST', body: fakePng(600, 400) }); continue; }
     const outv = await new AF('figma', j.code)(fig);
-    await fetch(`${base}/result?id=${j.id}`, { method: 'POST', body: JSON.stringify({ ok: true, text: tamper(j, JSON.stringify(outv)) }) });
+    await fetch(`${base}/result?id=${j.id}&inst=${inst}`, { method: 'POST', body: JSON.stringify({ ok: true, text: tamper(j, JSON.stringify(outv)) }) });
   }
+  if (polls < 200) return seen;
   throw new Error('the plugin loop did not end');
 }
-async function serveWith(out, argv, pluginOpts) {
+// pluginOpts: one window's options, an array of windows, or false (none); --file Test unless argv names a file
+// (--no-file: none)
+async function serveWith(out, argv, pluginOpts, bridgeOpts = {}) {
   const lines = [];
   let ran;
-  const code = await main(['serve', '--out', out, '--port', '0', ...argv], {
-    log: (m) => lines.push(m), bridgeOpts: { lingerMs: 30 },
-    onListen: (port) => { ran = pluginOpts === false ? null : plugin(port, pluginOpts); },
+  const fileArg = argv.includes('--file') || argv.includes('--no-file') ? argv.filter((a) => a !== '--no-file') : ['--file', 'Test', ...argv];
+  const code = await main(['serve', '--out', out, '--port', '0', ...fileArg], {
+    log: (m) => lines.push(m), bridgeOpts: { lingerMs: 30, settleMs: 0, ...bridgeOpts },
+    onListen: (port) => { ran = pluginOpts === false ? null : Array.isArray(pluginOpts) ? Promise.all(pluginOpts.map((o) => plugin(port, o))) : plugin(port, pluginOpts); },
   });
   return { code, lines, seen: ran ? await ran : null };
 }
@@ -191,4 +199,72 @@ test('check: a shot of an earlier build of the screen is not used (another root 
   assert.equal(by.s0.shot, null);
   assert.equal(by.s0.staleShot, true);
   assert.ok(by.s1.shot, 's1 not rebuilt: its shot is still used');
+});
+
+// target file (2026-11-25): a batch goes only to a plugin open in the run's Figma file
+test('serve needs --file on a plan never sent, records it, and refuses another file name later', async () => {
+  const { out, F } = await planned();
+  const lines = [];
+  assert.equal(await main(['serve', '--out', out, '--send', 'pending'], { log: (m) => lines.push(m) }), 2);
+  assert.match(lines.join('\n'), /--file <Figma file name> is required/);
+  const r = await serveWith(out, ['--file', 'Weather', '--send', 'runtime'], { file: 'Weather' });
+  assert.equal(r.code, 0, r.lines.join('\n'));
+  assert.equal(readJson(F, 'state.json').figmaFile, 'Weather');
+  const r2 = await serveWith(out, ['--no-file', '--send', 'runtime'], { file: 'Weather' });
+  assert.equal(r2.code, 0, r2.lines.join('\n'));
+  const l3 = [];
+  assert.equal(await main(['serve', '--out', out, '--file', 'Other', '--send', 'runtime'], { log: (m) => l3.push(m) }), 2);
+  assert.match(l3.join('\n'), /was sent to the Figma file "Weather", not "Other".*--renamed/);
+  const r4 = await serveWith(out, ['--file', 'Weather v2', '--renamed', '--send', 'runtime'], { file: 'Weather v2' });
+  assert.equal(r4.code, 0, r4.lines.join('\n'));
+  assert.equal(readJson(F, 'state.json').figmaFile, 'Weather v2');
+  // a new plan of the same --out keeps the file
+  const st = readJson(F, 'state.json');
+  assert.equal(await main(['plan', '--ds', st.ds, '--out', out], { log: () => {} }), 0);
+  assert.equal(readJson(F, 'state.json').figmaFile, 'Weather v2');
+});
+
+test('a plugin in another file gets no job; the one in the target file gets them all', async () => {
+  const { out, F } = await planned();
+  const st0 = readJson(F, 'state.json');
+  const whys = [];
+  const r = await serveWith(out, ['--send', 'pending'], [{ file: 'Planora Design', whys }, { file: 'Test' }]);
+  assert.equal(r.code, 0, r.lines.join('\n'));
+  assert.deepEqual(r.seen[0], []);
+  assert.deepEqual(r.seen[1], st0.order);
+  assert.match(whys.join('\n'), /this run is for Figma file "Test"/);
+  assert.match(r.lines.join('\n'), /plugin in Figma file "Planora Design" ignored/);
+});
+
+test('two plugin windows in files of the target name: no job is sent', async () => {
+  const { out, F } = await planned();
+  const r = await serveWith(out, ['--send', 'pending', '--wait', '0.6'], [{ file: 'Test', polls: 60 }, { file: 'Test', polls: 60 }], { settleMs: 300 });
+  assert.equal(r.code, 1, r.lines.join('\n'));
+  assert.deepEqual(r.seen, [[], []]);
+  assert.match(r.lines.join('\n'), /2 plugin windows are open in Figma files named "Test"/);
+  const st = readJson(F, 'state.json');
+  assert.ok(st.order.every((k) => st.batches[k].status === 'pending'));
+  assert.equal(st.figmaFile, undefined);
+});
+
+test('an old plugin that sends no file name gets no job', async () => {
+  const { out } = await planned();
+  const r = await serveWith(out, ['--send', 'pending', '--wait', '0.3'], { file: null, polls: 40 });
+  assert.equal(r.code, 2, r.lines.join('\n'));
+  assert.deepEqual(r.seen, []);
+  assert.match(r.lines.join('\n'), /sent no file name/);
+});
+
+test('bridge: a result from a window other than the one that took the job is refused', async () => {
+  let n = 0;
+  const br = await startBridge({ next: () => (n++ === 0 ? { key: 'a', kind: 'code', code: '1' } : null), onResult: async () => ({ ok: true, msg: 'ok' }), port: 0, lingerMs: 10, settleMs: 0, file: 'F' });
+  const base = `http://127.0.0.1:${br.port}`;
+  const j = await (await fetch(`${base}/next?file=F&inst=A`)).json();
+  assert.equal(j.key, 'a');
+  assert.equal(j.file, 'F');
+  const bad = await fetch(`${base}/result?id=${j.id}&inst=B`, { method: 'POST', body: JSON.stringify({ ok: true, text: '1' }) });
+  assert.equal(bad.status, 409);
+  const good = await fetch(`${base}/result?id=${j.id}&inst=A`, { method: 'POST', body: JSON.stringify({ ok: true, text: '1' }) });
+  assert.equal(good.status, 200);
+  assert.equal((await br.done).ok, true);
 });

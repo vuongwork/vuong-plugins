@@ -191,3 +191,31 @@ test('readRules keeps a states section and rejects one that is not an object; st
   writeFileSync(p, JSON.stringify({ version: 1, classes: { ck: { stateMap: { done: 1 } } } }));
   assert.throws(() => readComponentsFile(p), /classes\.ck\.stateMap must map a class to a state id/);
 });
+
+// keep with a kind (2026-11-25): a bare block has no class to declare, so its kind and stateMap go on its keep entry
+test('a kept bare block declared as a tab: on is selected from the HTML; its stateMap maps another class', () => {
+  const item = (t, ...cls) => F(cls.join(' '), { bg: BG }, T(t, 'lbl'), F('dot', { bg: 'rgb(0, 0, 0)' }));
+  const screens = [scr('s1', F('nav', {}, item('Inbox', 'on'), item('Plan'), item('Done')))];
+  const key = findComponents(screens, { decl: decl() }).components.find((c) => c.key.startsWith('b:')).key;
+  const d = { ...decl(), keep: { [key]: { name: 'nav-item', kind: 'tab' } } };
+  const r = findComponents(screens, { decl: d });
+  const c = r.components.find((x) => x.name === 'nav-item');
+  assert.equal(c.kind, 'tab');
+  assert.equal(c.reason, 'control');
+  const st = run(screens, d);
+  assert.deepEqual(src(cmp(st, 'nav-item')), { unselected: 'html', selected: 'html' });
+  // a class the words do not map: extra until the keep entry's stateMap maps it
+  const s2 = [scr('s1', F('nav', {}, item('Inbox', 'is-cur'), item('Plan')))];
+  const k2 = findComponents(s2, { decl: decl() }).components.find((x) => x.key.startsWith('b:')).key;
+  assert.deepEqual(src(cmp(run(s2, { ...decl(), keep: { [k2]: { name: 'nav-item', kind: 'tab' } } }), 'nav-item')), { unselected: 'html', selected: 'missing' });
+  assert.deepEqual(src(cmp(run(s2, { ...decl(), keep: { [k2]: { name: 'nav-item', kind: 'tab', stateMap: { 'is-cur': 'selected' } } } }), 'nav-item')), { unselected: 'html', selected: 'html' });
+  assert.throws(() => run(s2, { ...decl(), keep: { [k2]: { name: 'nav-item', kind: 'tab', stateMap: { 'is-cur': 'on' } } } }), /keep\.b:[0-9a-f]{8}\.stateMap.is-cur: "on" is not a state of kind tab/);
+});
+
+test('keep entries: a name or { name, kind?, stateMap? }; a bad kind or key is named', () => {
+  const screens = [scr('s1', F('nav', {}, F('on', { bg: BG }, T('A', 'lbl'), F('dot', { bg: BG })), F('', { bg: BG }, T('B', 'lbl'), F('dot', { bg: BG }))))];
+  assert.throws(() => findComponents(screens, { decl: { ...decl(), keep: { 'b:00000000': { name: 'x', kind: 'menu' } } } }), /keep\.b:00000000\.kind "menu" is not one of/);
+  assert.throws(() => findComponents(screens, { decl: { ...decl(), keep: { 'b:00000000': { kind: 'tab' } } } }), /keep\.b:00000000\.name must be a non-empty string/);
+  assert.throws(() => findComponents(screens, { decl: { ...decl(), keep: { 'b:00000000': { name: 'x', role: 'tab' } } } }), /keep\.b:00000000: unknown key "role"/);
+  assert.throws(() => findComponents(screens, { decl: { ...decl(), keep: { 'b:00000000': 3 } } }), /keep\.b:00000000 must be a name or/);
+});

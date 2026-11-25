@@ -5,7 +5,7 @@
 //   node core/figma.mjs plan   --ds <ds.mjs output folder> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo] [--prof]
 //   node core/figma.mjs ingest --out <dir> --result <file> [--batch vars-NN | batch-NN | N]
 //   node core/figma.mjs shots --out <dir>; ingest-shots --out <dir> --result <file>; shots-clean --out <dir>
-//   node core/figma.mjs serve  --out <dir> [--send <keys>|run|pending]... [--shots] [--port 8787] [--wait <s>]
+//   node core/figma.mjs serve  --out <dir> [--file <Figma file name> [--renamed]] [--send <keys>|run|pending]... [--shots] [--port 8787] [--wait <s>]
 //   node core/figma.mjs check  --out <dir> [--mutate] [--allowlist <json>] [--html <file>] [--root <sel>] [--widen <sel>]
 //        [--name <sel>] [--widen-by <px>] [--viewport <px>] [--no-webfonts] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>]
 //
@@ -47,6 +47,9 @@
 //   ingest). --shots then exports every built screen frame at 2x (PNG, the frame's own bounds) to shot-<screen>.png, with
 //   no clone page. The first failed job stops the run. Appends the run's timings and bytes to runs.jsonl. Nothing is
 //   sent without --send or --shots. Exit 0 all jobs ok, 1 a job failed, 2 usage / no plugin connected.
+//   Target file: jobs go only to a plugin open in the Figma file named --file (two plugin windows in files of that name
+//   stop the run). The first run that reaches the plugin records the name in state.json (figmaFile); later runs use it
+//   and refuse another --file (the plan's state is that file's), unless --renamed says the same file has a new name.
 // Exit codes: 0 every screen passes the gate (and no mutation missed), 1 otherwise, 2 usage / setup / malformed input.
 import { parseArgs } from 'node:util';
 import { createHash } from 'node:crypto';
@@ -88,7 +91,7 @@ export const resultHash = (res) => { const { h, ...r } = res; return fnv(JSON.st
 export const USAGE = `usage: node core/figma.mjs plan --ds <ds output dir> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo] [--prof]
        node core/figma.mjs ingest --out <dir> --result <file> [--batch vars-NN|batch-NN|N]
        node core/figma.mjs shots --out <dir> | ingest-shots --out <dir> --result <file> | shots-clean --out <dir>
-       node core/figma.mjs serve --out <dir> [--send <keys>|run|pending]... [--shots] [--port 8787] [--wait <s>]
+       node core/figma.mjs serve --out <dir> [--file <Figma file name> [--renamed]] [--send <keys>|run|pending]... [--shots] [--port 8787] [--wait <s>]
        node core/figma.mjs check --out <dir> [--mutate] [--allowlist <json>] [--html <file>] [--root <sel>] [--widen <sel>]
             [--name <sel>] [--widen-by <px>] [--viewport <px>] [--no-webfonts] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>]`;
 
@@ -194,6 +197,8 @@ async function plan(argv, log) {
     order: [], batches: {}, screens: {}, run: null,
     // the shots on disk stay recorded (with the frame each is of), so check can tell a shot of an earlier build
     ...(prev && prev.shots ? { shots: prev.shots } : {}),
+    // the Figma file the batches were sent to (serve --file): a new plan of the same --out is still that file's
+    ...(prev && prev.figmaFile ? { figmaFile: prev.figmaFile } : {}),
   };
   const changed = [];
   // batches whose screens are all or partly kept stay in the state (check reads their data), before the new ones
@@ -485,7 +490,7 @@ async function shotsClean(argv, log) {
 
 // ---------------- serve (Figma bridge) ----------------
 async function serve(argv, log, deps = {}) {
-  const o = args(argv, { out: { type: 'string' }, send: { type: 'string', multiple: true }, shots: { type: 'boolean' }, port: { type: 'string' }, wait: { type: 'string' } });
+  const o = args(argv, { out: { type: 'string' }, file: { type: 'string' }, renamed: { type: 'boolean' }, send: { type: 'string', multiple: true }, shots: { type: 'boolean' }, port: { type: 'string' }, wait: { type: 'string' } });
   if (!o.out) throw new UsageError('--out <dir> is required');
   const st0 = loadState(o.out), F = figDir(o.out);
   const asked = (o.send || []).flatMap((x) => x.split(',')).map((x) => x.trim()).filter(Boolean);
@@ -498,6 +503,15 @@ async function serve(argv, log, deps = {}) {
     if (!st0.batches[k]) throw new UsageError(`--send ${a}: no such batch (${st0.order.join(', ')})`);
     keys.add(k);
   }
+  const given = o.file != null ? o.file.trim() : null;
+  if (given === '') throw new UsageError('--file: the Figma file name is empty');
+  if (o.renamed && given == null) throw new UsageError('--renamed needs --file <the new name>');
+  if (given == null && !st0.figmaFile) throw new UsageError('--file <Figma file name> is required: this plan was never sent to Figma (jobs go only to a plugin open in that file)');
+  if (given != null && st0.figmaFile && given !== st0.figmaFile && !o.renamed) {
+    throw new UsageError(`this plan was sent to the Figma file "${st0.figmaFile}", not "${given}": to draw into another file use a new --out; if the file was renamed, add --renamed`);
+  }
+  const target = given != null ? given : st0.figmaFile;
+  if (o.renamed && st0.figmaFile && given !== st0.figmaFile) log(`Figma file renamed: "${st0.figmaFile}" -> "${given}"`);
   const codeJobs = st0.order.filter((k) => keys.has(k));
   const already = codeJobs.filter((k) => st0.batches[k].status === 'done');
   if (already.length) log(`note: already done, sent again: ${already.join(', ')}`);
@@ -542,14 +556,16 @@ async function serve(argv, log, deps = {}) {
   };
   const total = codeJobs.length + (o.shots ? Object.values(st0.screens).filter((s) => (s.status === 'done' && s.root) || keys.has(s.batch)).length : 0);
   const t0 = Date.now();
-  const br = await (deps.startBridge || startBridge)({ next, onResult, port, log, connectTimeoutMs: waitMs, total: total || null, ...(deps.bridgeOpts || {}) });
-  log(`serve: ${codeJobs.length ? codeJobs.join(', ') : 'no batches'}${o.shots ? ' + 2x shots of the built screens' : ''} on http://localhost:${br.port}`);
+  const br = await (deps.startBridge || startBridge)({ next, onResult, port, log, connectTimeoutMs: waitMs, total: total || null, file: target, ...(deps.bridgeOpts || {}) });
+  log(`serve: ${codeJobs.length ? codeJobs.join(', ') : 'no batches'}${o.shots ? ' + 2x shots of the built screens' : ''} on http://localhost:${br.port}, Figma file "${target}"`);
   if (deps.onListen) deps.onListen(br.port);
   log('waiting for the Figma Desktop plugin (Plugins > Development > vuong-design bridge)');
   const r = await br.done;
-  if (o.shots && Object.keys(shotSizes).length) {
+  const reached = r.jobs.some((j) => j.ok);
+  if ((o.shots && Object.keys(shotSizes).length) || (reached && loadState(o.out).figmaFile !== target)) {
     const st = loadState(o.out);
-    st.shots = { via: 'export', scale: 2, sizes: shotSizes, roots: shotRoots };
+    if (o.shots && Object.keys(shotSizes).length) st.shots = { via: 'export', scale: 2, sizes: shotSizes, roots: shotRoots };
+    if (reached) st.figmaFile = target;
     writeFileSync(statePath(o.out), json(st));
   }
   const kb = (n) => Math.round(n / 100) / 10;

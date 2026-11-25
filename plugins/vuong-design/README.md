@@ -198,6 +198,7 @@ Every case is favourable, so plan 3b keeps its design: ids on instance children 
 
 - **No fixed count.** A control (tag `button` / `input` / `select` / `textarea`, or a kind declared for its class), a block with a state class, or a block with a class of its own, its own paint (fill, border, shadow or background image) and at least 2 nodes becomes a component, even if it is used once on one screen. A bare block (no class) repeated with the same structure under the same parent class is only a proposal until the user keeps it.
 - **Declarations, not guesses.** The corpus and the vd-html profile have no `role`, `aria-*`, `data-state`, `<button>` or `<input>`; Planora marks controls with short classes (`btn`, `ck`, `tog`, `chip`) and states with `on`, `off`, `done`. So kinds, extra state classes, modifier classes (variant axes) and the choice for classes with several structures come from `vd-components.json`, which the user writes. `componentsDraft()` writes `vd-components.draft.json` with suggestions and notes (counts, screens, shapes); agents never copy it into `vd-components.json`. Until the user answers, undeclared classes keep their old behaviour: a modifier class makes a separate component, and a class with several structures is built as layers.
+- **Kept bare blocks.** A bare block has no class to declare, so its `keep` entry carries the declaration: `"b:<hex>": "<name>"`, or `{ "name": "<name>", "kind": "tab", "stateMap": { "<class>": "<state id>" } }`. A kind other than `other` makes it a control with that kind's state table (a tab: `on` is `selected`); without one it stays `other` and keeps its HTML states as they are.
 - **Shapes.** Inside each variant the occurrences are clustered by structure. One structure per variant: a component. More than one: `shapes` in the declaration picks `variants` (one component set with a `shape` axis), `split` (one component per shape) or `container` (layers, the default, as plan 3 builds them).
 
 Planora (18 screens, 1155 spec nodes, ds run of 2026-11-24 with `vd-rules.json`; 11-18 ms per run):
@@ -352,7 +353,7 @@ Numbers are rounded to 0.01.
 node core/figma.mjs plan   --ds <ds output> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo]
 node core/figma.mjs ingest --out <dir> --result <file> [--batch vars-NN | batch-NN | N]
 node core/figma.mjs shots --out <dir>    # then ingest-shots --out <dir> --result <file>, shots-clean --out <dir>
-node core/figma.mjs serve  --out <dir> [--send <keys>|run|pending]... [--shots] [--port 8787] [--wait <s>]   # Figma bridge, below
+node core/figma.mjs serve  --out <dir> [--file <Figma file name> [--renamed]] [--send <keys>|run|pending]... [--shots] [--port 8787] [--wait <s>]   # Figma bridge, below
 node core/figma.mjs check  --out <dir> [--mutate] [--allowlist <json>] [--html <file> --root <sel> ...capture options] [--tol-* <px>]
 ```
 
@@ -459,6 +460,12 @@ Sending a batch through `use_figma` makes a model retype it as the tool's `code`
 - The plugin runs the script text `use_figma` would run (`vars-NN.js`, `runtime.js`, `batch-NN.js`, top-level `await` and `return`) and sends back the JSON of its return value. Nothing else changes: the loader still checks the runtime version and the data hash and adds the result hash, and each result goes through `ingest` as it arrives (saved first as `inbox/<key>.json`).
 - `--send` names the batches: comma-separated keys (`runtime,batch-01`, a bare number is `batch-NN`), `run` (the plan's this-run list) or `pending` (every batch not done). They are sent in plan order. Nothing is sent without `--send` or `--shots`.
 - The bridge refuses (403) any request whose `Origin` header is not `null` (the plugin UI iframe): a web page open in the browser cannot read a job or post a result. A `next()` failure (e.g. an unreadable batch file) ends the run; a job the plugin does not ask for within 300 s (the job timeout; e.g. the plugin was closed between two jobs) ends it too.
+- **Target file.** A job goes only to a plugin window open in the Figma file named `--file` (the plugin sends `figma.root.name` and a window id with each poll). Before, a batch went to whichever window polled first, so a plugin left open in a second file could receive it.
+  - A window in another file gets no job and shows why; the run logs it once.
+  - Two windows in files of the target name (for example two new files both named "Untitled") are ambiguous: no job is sent before the first one goes out (the first job waits 3.5 s after the first matching poll, so a second window can show up), and a second window seen during the run stops it. Give the file a unique name.
+  - The plugin also refuses a job addressed to another file.
+  - `--file` is required the first time a plan is sent. The first run that reaches the plugin records the name in `state.json` (`figmaFile`); `plan` keeps it. Later runs use it and refuse another name, since the plan's state describes that file: use a new `--out` for another file, or `--renamed` when the same file was renamed.
+  - A plugin window opened before this change sends no file name and gets no job: close it and run the plugin again.
 - `--shots` then exports every built screen frame (`state.json` `done` with a `root`) as PNG at scale 2 with its own bounds (`exportAsync`, `useAbsoluteBounds`) to `shot-<screen>.png`. No clone page, no `get_screenshot`.
 - The first failed job (a Figma error, a result `ingest` refuses, a batch `failed`) stops the queue; later jobs are not served. A job served and not answered is served again (the plugin was reloaded).
 - Each run appends a line to `runs.jsonl`: ok, seconds, KB sent and back, and per job its key, ms and bytes.
@@ -468,5 +475,5 @@ Setup, once: Figma Desktop → Plugins → Development → Import plugin from ma
 
 AI workflow with the bridge:
 1. `ds.mjs`, then `figma.mjs plan`. Tell the user which batches and screens will be written and wait for a go-ahead.
-2. Ask the user to open the plugin in the target file, then run `figma.mjs serve --out <dir> --send <the agreed batches> [--shots]`. It prints one line per job and a summary.
+2. Ask the user to open the plugin in the target file, then run `figma.mjs serve --out <dir> --file <its name> --send <the agreed batches> [--shots]`. It prints one line per job and a summary.
 3. `figma.mjs check --out <dir> [--mutate]`.

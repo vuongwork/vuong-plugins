@@ -19,8 +19,18 @@ async function findNode(id) {
 
 figma.showUI(__html__, { width: 300, height: 170, themeColors: true });
 
+// the bridge serves a run's jobs only to a plugin in the run's target file: tell the UI this file's name (again when the
+// file is renamed), and refuse a job addressed to another file in case one gets here anyway
+let fileName = null;
+const sendName = () => { if (figma.root.name !== fileName) { fileName = figma.root.name; figma.ui.postMessage({ type: 'file', name: fileName }); } };
+sendName();
+setInterval(sendName, 1000);
+const wrongFile = (m) => m.file != null && m.file !== figma.root.name ? `this job is for Figma file "${m.file}", this file is "${figma.root.name}"` : null;
+
 figma.ui.onmessage = async (m) => {
   if (!m || !m.type) return;
+  const wf = (m.type === 'code' || m.type === 'shot') && wrongFile(m);
+  if (wf) { figma.ui.postMessage({ type: 'result', id: m.id, ok: false, error: wf }); return; }
   if (m.type === 'code') {
     try {
       const out = await new AsyncFunction('figma', m.code)(figma);

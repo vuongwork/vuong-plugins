@@ -225,9 +225,13 @@ export function componentStates(result, { specs = {}, tokens = null, rules, decl
     const table = STATE_TABLE[kind] || [];
     // stateMap of the base class: the declared class whose name or kind matches (decl names, else the key's classes)
     const base = Object.keys(classes).filter((k) => classes[k].stateMap && (classes[k].name === c.name || String(c.key).split(/[.#]/).includes(k))).sort(cmpStr)[0];
-    const stateMap = base ? classes[base].stateMap : null;
+    // a kept bare block (key b:<hex>, '#<n>' when split) declares it on its keep entry
+    const bareKey = String(c.key).split('#')[0];
+    const kv = decl && decl.keep ? decl.keep[bareKey] : undefined;
+    const stateMap = base ? classes[base].stateMap : kv && typeof kv === 'object' && kv.stateMap ? kv.stateMap : null;
+    const where = base ? `classes.${base}` : `keep.${bareKey}`;
     if (stateMap) for (const [cls, id] of Object.entries(stateMap)) {
-      if (!table.includes(id)) throw new Error(`components file: classes.${base}.stateMap.${cls}: "${id}" is not a state of kind ${kind} (${table.join(', ') || 'none'})`);
+      if (!table.includes(id)) throw new Error(`components file: ${where}.stateMap.${cls}: "${id}" is not a state of kind ${kind} (${table.join(', ') || 'none'})`);
     }
     const have = new Map(); // state id -> [variant idx]
     const extra = new Map();

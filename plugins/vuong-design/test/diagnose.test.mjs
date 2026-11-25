@@ -4,7 +4,8 @@ import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { diagnose, formatDiagnosis, nodeLabels, main as diagMain } from '../core/diagnose.mjs';
-import { sessionCost, projectSlug, main as logMain } from '../core/session-log.mjs';
+import { sessionCost, projectSlug, newestTranscript, main as logMain } from '../core/session-log.mjs';
+import { mkdirSync } from 'node:fs';
 
 const ir = { screens: [
   { id: 's0', tree: { id: 'n', tag: 'div', cls: 'screen', kids: [{ id: 'n.1', tag: 'div', cls: 'hero', kids: [{ id: 'n.1.0', tag: 'p', cls: 'body center', text: 'Nắng nhẹ, có mây rải rác suốt ngày' }] }] } },
@@ -82,4 +83,19 @@ test('session-log main appends one line', () => {
   assert.equal(rows[0].label, 'x');
   assert.equal(rows[0].output, 140);
   assert.equal(logMain(['--log', log], () => {}, { CLAUDE_CONFIG_DIR: join(dir, 'none') }), 2);
+});
+
+test('newestTranscript: walks up from a sub folder to the project folder of a parent', () => {
+  const cfg = mkdtempSync(join(tmpdir(), 'vd-cfg-'));
+  const proj = mkdtempSync(join(tmpdir(), 'vd-proj-'));
+  const sub = join(proj, 'out', 'deep');
+  mkdirSync(sub, { recursive: true });
+  const pdir = join(cfg, 'projects', projectSlug(proj));
+  mkdirSync(pdir, { recursive: true });
+  writeFileSync(join(pdir, 's1.jsonl'), transcript);
+  assert.equal(newestTranscript(sub, { CLAUDE_CONFIG_DIR: cfg }), join(pdir, 's1.jsonl'));
+  // nothing for an unrelated folder except a fresh transcript of another project
+  const other = mkdtempSync(join(tmpdir(), 'vd-other-'));
+  assert.equal(newestTranscript(other, { CLAUDE_CONFIG_DIR: cfg }), join(pdir, 's1.jsonl'));
+  assert.equal(newestTranscript(other, { CLAUDE_CONFIG_DIR: cfg }, Date.now() + 11 * 60 * 1000), null);
 });

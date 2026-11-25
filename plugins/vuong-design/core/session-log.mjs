@@ -3,7 +3,8 @@
 //
 //   node core/session-log.mjs --log <runs.jsonl> [--transcript <session.jsonl>] [--label <text>] [--print]
 //
-// Without --transcript it reads the newest *.jsonl in <config>/projects/<slug of the working directory>/, where
+// Without --transcript it reads the newest *.jsonl in <config>/projects/<slug of the working directory or the nearest
+// parent that has one>/ (else the newest transcript of any project written in the last 10 minutes), where
 // <config> is $CLAUDE_CONFIG_DIR or ~/.claude and the slug replaces ':', '\', '/' and '.' by '-' (E:\tools\Planora ->
 // E--tools-Planora): the session that runs this command is the one writing that file. Appends one JSON line:
 //   { ts, tool: 'session', label?, session, models: { id: assistant turns }, apiCalls, output, input, cacheRead,
@@ -13,17 +14,32 @@
 import { parseArgs } from 'node:util';
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const projectSlug = (cwd) => cwd.replace(/[:\\/.]/g, '-');
 
-export function newestTranscript(cwd = process.cwd(), env = process.env) {
-  const dir = join(env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects', projectSlug(cwd));
+const newestIn = (dir) => {
   if (!existsSync(dir)) return null;
   const files = readdirSync(dir).filter((f) => f.endsWith('.jsonl')).map((f) => join(dir, f));
   if (!files.length) return null;
   return files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+};
+
+// The session was started in the working directory or one of its parents (a skill often cd's into an output folder):
+// try the project folder of the cwd, then of each parent. Last resort: the newest transcript of any project, if it was
+// written in the last 10 minutes (the running session writes its transcript continuously).
+export function newestTranscript(cwd = process.cwd(), env = process.env, now = Date.now()) {
+  const projects = join(env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects');
+  for (let d = resolve(cwd); ; d = dirname(d)) {
+    const hit = newestIn(join(projects, projectSlug(d)));
+    if (hit) return hit;
+    if (dirname(d) === d) break;
+  }
+  if (!existsSync(projects)) return null;
+  const all = readdirSync(projects).map((p) => newestIn(join(projects, p))).filter(Boolean);
+  const best = all.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+  return best && now - statSync(best).mtimeMs < 10 * 60 * 1000 ? best : null;
 }
 
 export function sessionCost(text) {

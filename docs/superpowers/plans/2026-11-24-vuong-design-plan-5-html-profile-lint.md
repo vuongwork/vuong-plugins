@@ -198,3 +198,7 @@ Sonnet 5.5, 18,2k token output (lượt 4: 25,2k), 2,7 phút, **1 vòng lint s�
 - `core/diagnose.mjs`: tóm tắt thư mục layout/ds thành vài dòng mỗi màn hỏng (thay cho việc model đọc report.json/ir.json). Skill bước 5 dùng nó.
 - `core/session-log.mjs`: ghi chi phí session (model, token, phút) vào `runs.jsonl`. Skill bước 6.
 - Còn: thử nhánh có `tokens.css` của dự án (chưa lượt nào chạy).
+- **Lượt 6: nhánh có `tokens.css`** (5 màn Planora mới, token `ds.mjs` của Planora chưa chuẩn hoá): Sonnet 15,3k token output, 3,5 phút, lint 1 vòng sạch, **layout 5/5**. `ds.mjs` (luật Planora): 9 câu mở / 5 màn = 1,8 câu/màn (Planora gốc 76 / 18 = 4,2). 6 câu GRID4 phần lớn là padding suy ra (khoảng trống còn lại 313/447 px, ô nhập 53 px), không do token.
+- `session-log.mjs` không tìm thấy transcript khi skill `cd` vào thư mục output → nay dò ngược lên thư mục cha, cuối cùng lấy transcript mới nhất (≤ 10 phút) của mọi dự án.
+- Lint 8–15 s ở file này là thời gian tải Google Fonts (thêm Roboto Mono, trình duyệt mới không cache); phần tính trong trang ~30 ms. `lint.json` nay có `timing` từng phần.
+- Nhánh lint chưa đọc được `vd-rules.json` có khoá `states` (thêm ở nhánh figma): hết khi merge.

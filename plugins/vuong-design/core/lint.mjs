@@ -67,6 +67,8 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
     });
   }
 
+  const timing = {}; let tl = performance.now();
+  const lap = (k) => { const n = performance.now(); timing[k] = Math.round(n - tl); tl = n; };
   // ---- page level: scripts, stylesheets ----
   const okScript = /^(application\/(ld\+)?json|text\/template|text\/x-template|importmap)$/i;
   for (const s of document.querySelectorAll('script')) {
@@ -85,6 +87,7 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
     sheetRules.push(rules);
   }
 
+  lap('page');
   // ---- per-screen element pass (no DOM change) ----
   const isSvgInner = (el) => el instanceof SVGElement && el.localName !== 'svg';
   const hasOwnText = (el) => [...el.childNodes].some((c) => c.nodeType === 3 && c.nodeValue.trim());
@@ -198,6 +201,7 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
   });
   out.families = [...familyMap.values()];
 
+  lap('elements');
   // ---- stylesheets: tokens (W7), nested var / fallback (W10), viewport units (W9) ----
   const GROUPS = { color: 0, space: 0, radius: 0, fontSize: 0 };
   const cnt = { color: { v: 0, l: 0 }, space: { v: 0, l: 0 }, radius: { v: 0, l: 0 }, fontSize: { v: 0, l: 0 } };
@@ -294,6 +298,7 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
     out.tokens[g] = { var: v, literal: l, ratio: v + l ? Math.round((v / (v + l)) * 1000) / 1000 : 1 };
   }
 
+  lap('stylesheets');
   // ---- layout: W3 (flex-shrink) at A, widen once (W2, W11), W3 at B ----
   const items = []; // flex items (not out of flow), per screen
   roots.forEach((root, si) => {
@@ -332,6 +337,7 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
   };
   const snap = () => roots.map((root) => ({ w: root.getBoundingClientRect().width, kids: [...root.querySelectorAll('*')].map((e) => (isSvgInner(e) ? 0 : e.getBoundingClientRect().width)) }));
   out.screens = roots.map((root) => { const r = root.getBoundingClientRect(); return { w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100 }; });
+  lap('layoutPrep');
   // W11: a wrapping flex container must break at the same items at A and B (the Figma model cannot re-wrap)
   const wraps = [];
   roots.forEach((root, si) => {
@@ -358,6 +364,7 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
     }
     return counts.join('+');
   };
+  lap('w11prep');
   // W12: an in-flow element sized in % (other than 100 %) keeps its px size in Figma auto layout (no % sizes there), so
   // it does not follow its parent when widened. Authored values are read with every element display:none (computed
   // width/height then give the specified value, as capture does for R47), in one pass.
@@ -384,6 +391,7 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
       if ([vals[i][2], vals[i][3]].some((v) => /%$/.test(v) && parseFloat(v) !== 0)) ratioEls.push({ ...f, how: 'vertical padding in %' });
     });
   }
+  lap('w12');
   // W13: Figma has no z-index; a later layer always draws on top. CSS paints an absolute/fixed element above later
   // in-flow siblings, Figma below them. Report an overlay whose box overlaps a later, non-positioned element that paints.
   {
@@ -422,10 +430,12 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
       });
     });
   }
+  lap('w13');
   w3();
   const wrapA = wraps.map(lines);
   flow.forEach((f) => { const ar = getComputedStyle(f.el).aspectRatio; if (ar && ar !== 'auto') ratioEls.push({ ...f, how: `aspect-ratio ${ar}` }); });
   const ratioA = ratioEls.map((r) => r.el.getBoundingClientRect().width);
+  lap('w3A');
   // W15: content cut by the bottom of a clipping box. Harmless when the same leaves are hidden at A and B and none
   // straddles the edge; otherwise what is visible changes when widened and the Figma model cannot follow.
   const clipOver = () => roots.map((root) => {
@@ -448,6 +458,7 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
     return out;
   });
   const overA = clipOver();
+  lap('w15prep');
   // W16: Figma FILL children of one auto layout share the free space equally (layoutGrow is 0 or 1)
   roots.forEach((root, si) => {
     for (const p of [root, ...root.querySelectorAll('*')]) {
@@ -472,6 +483,7 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
       if (hasText && inline) add('W18', si, 'icon or image inside running text: Figma text cannot hold it; put text and icon in a flex row, or drop the icon', el, root);
     }
   });
+  lap('w16w18');
   // W17: max-width that starts capping between A and B (the Figma model keeps filling)
   // W20: an empty, unpainted flex item that grows is a spacer: capture drops it (nothing to draw), its siblings fall
   // back to the container's packing. Figma has no space-evenly; use space-between.
@@ -488,6 +500,7 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
     // one spacer between two groups is space-between (inferred fine); two or more imitate space-evenly / -around
     for (const [p, list] of spacers) if (list.length >= 2) add('W20', si, `${list.length} empty growing spacers (space-evenly imitation): they are dropped and the items repack; Figma has no space-evenly, use space-between`, p, root);
   });
+  lap('w20');
   // W19: wrapped text that hugs its content (not stretched, not growing) widens with the screen in CSS; Figma keeps the
   // width of a wrapped text box. Make it fill its parent (align-self: stretch / width: 100%) and align the text instead.
   const hugText = [];
@@ -562,6 +575,8 @@ function lintPage({ rootSel, widenSel, widenBy, defaultRoot }) {
     if (b !== wrapA[i]) add('W11', w.si, `wrapping ${w.col ? 'column' : 'row'} breaks differently when widened (items per line ${wrapA[i] || '0'} -> ${b || '0'})`, w.el, w.root);
   });
   w3();
+  lap('widenAndRest');
+  out.timing = timing;
   out.findings = [...found.values()];
   return out;
 }
@@ -596,6 +611,7 @@ export async function lintFile(htmlPath, { root, widen, widenBy = 120, browser, 
     result.screens = raw.screens.map((s, i) => ({ id: ids[i] || `#${i + 1}`, ...s }));
     const screenName = (si) => (si >= 0 ? (ids[si] || `#${si + 1}`) : '-');
     result.tokens = raw.tokens;
+    result.timing = raw.timing;
     const fs = [...raw.findings];
     for (const f of raw.families) {
       if (isAvailable(fm, f.family)) continue;

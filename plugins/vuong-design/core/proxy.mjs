@@ -5,7 +5,8 @@
 //  - frame with lay = flex container; padding = lay.p; gap = lay.g on the primary axis, lay.cg between wrapped rows;
 //    spaceBetween = justify-content:space-between and the gap is ignored; ca S/C/E/B = align-items start/center/end/baseline
 //  - child sizing on the primary axis: FILL = flex:1 1 0px (+ min 0), HUG = flex:none + content size, FIXED = flex:none + px;
-//    on the counter axis: FILL = align-self:stretch, HUG = content size, FIXED = px. HUG on something that cannot hug in
+//    on the counter axis: FILL = align-self:stretch (a width FILL with max in a ca C/E column: width 100% capped by
+//    max, placed by the container's alignment), HUG = content size, FIXED = px. HUG on something that cannot hug in
 //    Figma (leaf frame, icon, image) is FIXED, as in the builder.
 //  - absolute children (n.abs, or any child of a frame without auto layout) are placed from x/y by their constraints:
 //    c L/R/LR/C/SCALE horizontally, cy T(default)/B/TB/C/SCALE vertically, against the parent's spec size. SCALE (R47)
@@ -163,7 +164,10 @@ export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
       const P = parent.lay.d === 'H' ? 0 : 1, C = 1 - P;
       const prim = P === 0 ? sx : sy, cnt = C === 0 ? sx : sy;
       if (prim === 'FILL') st.push('flex:1 1 0px'); else st.push('flex:none', ...ownSize(P));
-      if (cnt === 'FILL') st.push('align-self:stretch'); else st.push(...ownSize(C));
+      // a counter-axis FILL capped by maxWidth (infer textCap) fills up to the cap and is then placed by the
+      // container's counter alignment, as Figma does; CSS stretch would pin it to the start
+      if (cnt === 'FILL' && C === 0 && n.max && /^[CE]$/.test(parent.lay.ca || '')) st.push(`align-self:${parent.lay.ca === 'C' ? 'center' : 'flex-end'}`, 'width:100%');
+      else if (cnt === 'FILL') st.push('align-self:stretch'); else st.push(...ownSize(C));
     }
 
     const p = n.paint || {};

@@ -17,6 +17,11 @@
 // axis is in % (capture's INode.pct) and whose boxes at A and B keep their share of the parent; never from geometry
 // alone. Figma SCALE is relative to the parent frame's box; CSS % to the containing block's padding box, so a bordered
 // or non-parent containing block fails the fit and keeps the fixed constraints (visible as deviations).
+// Such a node leaves the flow even when it overlaps nothing (flag absPct), and an inset of p % plus a fixed part (a
+// negative margin, calc) hangs the node that many px from the anchor (flag anchorOffset). Capture keeps an empty
+// growing flex item of cross size 0 (INode.spacer), which becomes a FILL frame like any other. A text that wraps at
+// the content width at A and is one narrower line at B in a column is FILL + maxWidth at that line (flag textCap).
+// absPct, anchorOffset and textCap are info only (verify: they explain nothing).
 //
 // inferScreen(screen, { facts }): facts = the Figma facts measured on real Figma (figma-probe.mjs, default loadFacts()).
 // The layout facts are applied here, where the boxes at A and B are, so both proxies render the spec that goes to
@@ -99,7 +104,7 @@ const shrunk = (L) => {
 export function inferScreen(screen, opts = {}) {
   const facts = opts.facts || loadFacts();
   const sf = facts.shrinkFill || {};
-  const stats = { grouping: 0, pushSplit: 0, spaceBetween: 0, absOverlap: 0, absOverflow: 0, absTransform: 0, wrappers: 0, wrapRows: 0 };
+  const stats = { grouping: 0, pushSplit: 0, spaceBetween: 0, absOverlap: 0, absOverflow: 0, absTransform: 0, absPct: 0, wrappers: 0, wrapRows: 0 };
   const flags = [];
   const flag = (id, kind, detail) => flags.push({ id, kind, detail });
   const internal = new WeakMap(); // SNode -> { hugOK, fillAx, key }
@@ -303,8 +308,13 @@ export function inferScreen(screen, opts = {}) {
   // its share while the size stays: anchor wrapper), or null (no % on the axis, or the geometry at A and B fits
   // neither, e.g. the containing block is not the parent or has a border: the fixed constraints stand in). When the
   // parent does not change on the axis the geometry cannot tell, and the authored form decides.
+  // Anchor offset: an inset of p % plus a fixed part m (a negative margin centring a dot on its % place, or
+  // calc(p% - m)) is s = p * P + m. p is read from the authored value, m from the box at A; it holds when the box at B
+  // is where p and m put it. off[ax] receives m (0 when |m| <= PCT_TOL, the plain R47 case).
   const PCT_TOL = 0.5;
-  function pctMode(L, k, ax, s1, e1, s2, e2) {
+  const pctOf = (v) => { const m = /(-?\d*\.?\d+)%/.exec(String(v || '')); return m ? Number(m[1]) / 100 : null; };
+  function pctMode(L, k, ax, s1, e1, s2, e2, off = []) {
+    off[ax] = 0;
     const pc = k.src && k.src.pct, pos = k.src && k.src.paint && k.src.paint.pos;
     if (!pc || !/^(absolute|fixed)$/.test(pos || '')) return null;
     const [ps, pe, pz] = ax ? ['t', 'b', 'h'] : ['l', 'r', 'w'];
@@ -315,10 +325,27 @@ export function inferScreen(screen, opts = {}) {
     const errScale = Math.abs(sc(s1) - s2) + Math.abs(sc(z1) - z2);
     const errS = Math.abs(sc(s1) - s2) + Math.abs(z2 - z1), errE = Math.abs(sc(e1) - e2) + Math.abs(z2 - z1);
     const scales = !!pc[pz] || (!!pc[ps] && !!pc[pe]);
-    if (Math.abs(P2 - P1) <= GROW) return scales ? 'SCALE' : pc[ps] ? 'S' : 'E';
+    // offset form, start or end inset: [error at B, m]
+    const offFit = (key, v1, v2) => {
+      const p = pc[key] ? pctOf(pc[key]) : null;
+      if (p === null) return null;
+      const m = v1 - p * P1;
+      return Math.abs(m) <= PCT_TOL ? null : [Math.abs(v1 + p * (P2 - P1) - v2) + Math.abs(z2 - z1), m];
+    };
+    if (Math.abs(P2 - P1) <= GROW) {
+      if (scales) return 'SCALE';
+      const o = offFit(pc[ps] ? ps : pe, pc[ps] ? s1 : e1, pc[ps] ? s2 : e2);
+      if (o) off[ax] = r2(o[1]);
+      return pc[ps] ? 'S' : 'E';
+    }
     if (errScale <= PCT_TOL) return 'SCALE';
     if (pc[ps] && errS <= PCT_TOL && (!pc[pe] || errS <= errE)) return 'S';
     if (pc[pe] && errE <= PCT_TOL) return 'E';
+    if (!pc[pz] && !(pc[ps] && pc[pe])) {
+      const oS = pc[ps] ? offFit(ps, s1, s2) : null, oE = pc[pe] ? offFit(pe, e1, e2) : null;
+      if (oS && oS[0] <= PCT_TOL && (!oE || oS[0] <= oE[0])) { off[ax] = r2(oS[1]); return 'S'; }
+      if (oE && oE[0] <= PCT_TOL) { off[ax] = r2(oE[1]); return 'E'; }
+    }
     return null;
   }
 
@@ -331,6 +358,19 @@ export function inferScreen(screen, opts = {}) {
     const kids = L.kids;
     const abs = new Map(); // LNode -> reason
     for (const k of kids) if (k.src && k.src.paint && k.src.paint.transform) { abs.set(k, 'transform'); stats.absTransform++; }
+    // R47 (absPct): an absolutely positioned child with an authored % inset or size whose boxes at A and B follow that
+    // % (pctMode) is placed out of flow even when it overlaps nothing: auto layout would put it in a row or column and
+    // lose the % (a scale of segments or marks at % places). Flag absPct (info only).
+    for (const k of kids) {
+      if (abs.has(k) || !(k.src && k.src.pct)) continue;
+      const ins = (ax) => [k.A[ax] - L.A[ax], L.A[ax] + L.A[ax + 2] - (k.A[ax] + k.A[ax + 2]), k.B[ax] - L.B[ax], L.B[ax] + L.B[ax + 2] - (k.B[ax] + k.B[ax + 2])];
+      if (![0, 1].some((ax) => pctMode(L, k, ax, ...ins(ax)))) continue;
+      abs.set(k, 'pct');
+      // flagged only where this rule is what takes it out of flow (one that overlaps a sibling or sticks out of the
+      // parent was absolute already)
+      const out = k.A[0] < L.A[0] - 0.5 || k.A[1] < L.A[1] - 0.5 || k.A[0] + k.A[2] > L.A[0] + L.A[2] + 0.5 || k.A[1] + k.A[3] > L.A[1] + L.A[3] + 0.5;
+      if (!out && !kids.some((o) => o !== k && overlaps(o.A, k.A))) { stats.absPct++; flag(k.id, 'absPct', 'out of flow: authored % position'); }
+    }
     // overlap → absolute (highest overlap degree first; pairwise: the later one in paint order)
     for (;;) {
       const flow = kids.filter((k) => !abs.has(k));
@@ -520,7 +560,18 @@ export function inferScreen(screen, opts = {}) {
         nameSyn(L.id, it);
         const cs = infer(it);
         const prim = it.B[Z] - it.A[Z] > GROW ? 'FILL' : defaultSize(it, cs, P);
-        const cnt = c.stretch ? 'FILL' : defaultSize(it, cs, C);
+        let cnt = c.stretch ? 'FILL' : defaultSize(it, cs, C);
+        // capped hug text (column container, width is the counter axis): a text that wraps at A at exactly the content
+        // width and fits on one line at B, narrower than the content, sizes to its content up to the container's
+        // width (CSS: a hugging item with max = the line). Modelled as FILL + maxWidth at its one-line width (B), placed
+        // by the container's counter alignment (facts.shrinkFill.maxWidth). Flag `textCap` (info only).
+        if (C === 0 && !c.stretch && cnt !== 'FILL' && sf.maxWidth === 'ok' && isText(it) && !it.syn) {
+          const ln = it.src.lines || [], cwA = L.A[2] - lay.p[1] - lay.p[3], cwB = L.B[2] - lay.p[1] - lay.p[3];
+          if (ln[0] > 1 && ln[1] === 1 && Math.abs(it.A[2] - cwA) <= EPS && it.B[2] < cwB - EPS && it.B[2] - it.A[2] > GROW) {
+            cnt = 'FILL'; cs.max = r2(it.B[2]);
+            flag(it.id, 'textCap', `FILL + maxWidth ${cs.max}px (wraps at ${r2(cwA)}px, one line at B)`);
+          }
+        }
         cs.sz = d === 'H' ? [prim, cnt] : [cnt, prim];
         if (it.syn === 'track' && prim === 'FILL') cs.min = r2(it.min); // R42: the grid's min-content floor
         if (prim === 'FILL') { inf.fillAx[P] = true; fills.push([it, cs]); }
@@ -587,7 +638,8 @@ export function inferScreen(screen, opts = {}) {
       const tA = k.A[1] - L.A[1], bA = L.A[1] + L.A[3] - (k.A[1] + k.A[3]), tB = k.B[1] - L.B[1], bB = L.B[1] + L.B[3] - (k.B[1] + k.B[3]);
       const px = [constraint(lA, rA, lB, rB, k.A[2], k.B[2], L.A[2], L.B[2], ['L', 'R', 'LR', 'C']),
         constraint(tA, bA, tB, bB, k.A[3], k.B[3], L.A[3], L.B[3], ['T', 'B', 'TB', 'C'])];
-      const pm = [pctMode(L, k, 0, lA, rA, lB, rB), pctMode(L, k, 1, tA, bA, tB, bB)];
+      const pOff = [0, 0];
+      const pm = [pctMode(L, k, 0, lA, rA, lB, rB, pOff), pctMode(L, k, 1, tA, bA, tB, bB, pOff)];
       // Figma facts on SCALE and anchors (header): fall back to the best fixed constraint, one flag per kind
       const fell = new Set();
       for (const ax of [0, 1]) {
@@ -607,16 +659,19 @@ export function inferScreen(screen, opts = {}) {
       if (!pm.some((m) => m === 'S' || m === 'E')) { childSpecs.push(cs); continue; }
       // R47 anchor: a % inset with a size that does not scale. Figma has no "scale position, keep size" constraint,
       // so a zero-size frame on that axis carries the % position (SCALE keeps it at 0) and the node hangs from it,
-      // start- or end-aligned. On the other axis the wrapper takes the node's extent and constraint.
+      // start- or end-aligned. On the other axis the wrapper takes the node's extent and constraint. With an anchor
+      // offset m (pctMode) the wrapper sits at the pure % place and the node hangs m from it (flag anchorOffset).
       const off = [[lA, k.A[2]], [tA, k.A[3]]];
+      for (const ax of [0, 1]) if (pOff[ax] && (pm[ax] === 'S' || pm[ax] === 'E')) flag(k.id, 'anchorOffset', `${ax ? 'y' : 'x'}: ${pOff[ax]}px from the % place`);
       const W = { id: `${L.id}.g${synCount.get(L.id) || 0}`, t: 'F', syn: 'anchor', w: 0, h: 0, sz: ['FIXED', 'FIXED'] };
       synCount.set(L.id, (synCount.get(L.id) || 0) + 1);
       const wa = [], ka = [];
       for (const ax of [0, 1]) {
         const [o, z] = off[ax], anch = pm[ax] === 'S' || pm[ax] === 'E';
         if (anch) {
-          wa[ax] = { at: r2(pm[ax] === 'E' ? o + z : o), c: 'SCALE' };
-          ka[ax] = pm[ax] === 'E' ? { at: r2(-z), c: ax ? 'B' : 'R' } : { at: 0, c: ax ? 'T' : 'L' };
+          const m = pOff[ax] || 0;
+          wa[ax] = { at: r2(pm[ax] === 'E' ? o + z + m : o - m), c: 'SCALE' };
+          ka[ax] = pm[ax] === 'E' ? { at: r2(-z - m), c: ax ? 'B' : 'R' } : { at: r2(m), c: ax ? 'T' : 'L' };
         } else {
           wa[ax] = { at: r2(o), c: con[ax], z: r2(z) };
           ka[ax] = { at: 0, c: /^(LR|TB|SCALE)$/.test(con[ax]) ? (ax ? 'TB' : 'LR') : ax ? 'T' : 'L' };

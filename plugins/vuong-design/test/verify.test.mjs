@@ -687,6 +687,17 @@ test('verifyScreen (plan 3 Task 2): shrinkModelled is info only and explains not
   assert.equal(r.pass, false);
 });
 
+test('verifyScreen: textCap, anchorOffset and absPct are info only and explain nothing', () => {
+  for (const kind of ['textCap', 'anchorOffset', 'absPct']) {
+    const inp = fixture();
+    shift(inp, 'n.0.0', [0, 0, 4, 0]);
+    inp.flags = [{ id: 'n.0.0', kind, detail: 'x' }];
+    const r = verifyScreen(inp);
+    assert.ok(r.roots.length && r.roots.every((x) => x.explainedBy === undefined), kind);
+    assert.equal(r.pass, false, kind);
+  }
+});
+
 test('verifyScreen (R10): a font override that failed in capture is a font data mismatch', () => {
   const inp = fixture();
   inp.screen.fontSubs = [{ from: 'Segoe UI', to: 'Inter', reason: 'override-failed', cause: 'system' }, { from: 'system-ui', to: 'Inter', reason: 'system' }];

@@ -40,7 +40,7 @@ function ctx(screen) {
   return { ...res, inodes, snodes, byId, node, box };
 }
 
-const FIXTURES = ['row-gap', 'push', 'proximity', 'overlap', 'overflow', 'sizing', 'text', 'flags', 'baseline', 'raster', 'noflags', 'zorder', 'percent'];
+const FIXTURES = ['row-gap', 'push', 'proximity', 'overlap', 'overflow', 'sizing', 'text', 'flags', 'baseline', 'raster', 'noflags', 'zorder', 'percent', 'spacer'];
 const C = {};
 before(async () => {
   if (skip) return;
@@ -550,4 +550,117 @@ test('facts shrinkFill: a space-between container keeps its earlier sizing (no F
   assert.equal(out(r), out(inferScreen(sbRow(), { facts: facts(NO_SHRINK) })));
   assert.equal(r.flags.filter((f) => f.kind === 'shrinkModelled').length, 0);
   assert.equal(r.flags.filter((f) => f.kind === 'shrink').length, 2);
+});
+
+// ---- troi-hom-nay findings (2026-11-25): spacers, capped hug text, % anchor offset, % nodes out of flow ----
+test('spacer: empty flex: 1 items of cross size 0 are kept, FILL, and the proxy puts the items where the source has them', { skip }, async () => {
+  const { buildProxyHtml, renderProxy } = await import('../core/proxy.mjs');
+  const { defaultFontMap } = await import('../core/font-map.mjs');
+  const { launchBrowser } = await import('../core/browser.mjs');
+  const c = C.spacer, s = c.screen;
+  const sp = c.inodes.filter((n) => hasCls(n, 'spacer'));
+  assert.equal(sp.length, 4);
+  for (const n of sp) {
+    assert.equal(n.spacer, true);
+    assert.equal(n.rA[3], 0);
+    assert.equal(c.byId.get(n.id).sz[0], 'FILL');
+  }
+  assert.equal(s.excluded.filter((e) => e.reason === 'zero-size').length, 0);
+  const browser = await launchBrowser();
+  try {
+    const h = buildProxyHtml(c.spec, s.svgDefs || {}, defaultFontMap(), { webFonts: false });
+    for (const [i, M] of [[0, 'rA'], [1, 'rB']]) {
+      const { boxes } = await renderProxy(browser, h, s.W[i]);
+      for (const n of c.inodes.filter((x) => hasCls(x, 'hcol'))) {
+        const d = boxes[n.id].map((v, j) => v - n[M][j]);
+        assert.ok(d.every((v) => Math.abs(v) <= 0.5), `${n.id} @${'AB'[i]}: ${JSON.stringify(d)}`);
+      }
+    }
+  } finally { await browser.close(); }
+});
+
+// a centred column (content 296 at A, 416 at B) with a title and a text that wraps at A and fits one line at B
+const capScreen = (o = {}) => {
+  const T = (id, rA, rB, lines, tw) => N(id, rA, rB, { kind: 'text', tag: 'p', runs: [{ t: 'x' }], lines, tw,
+    font: { ff: 'Inter', fs: '14px', fw: '400', lh: 20, c: 'rgb(0, 0, 0)', ta: 'center' } });
+  return screenOf(N('n', [0, 0, 328, 60], [0, 0, 448, 40], {
+    kids: [
+      T('n.0', [114, 0, 100, 20], [174, 0, 100, 20], [1, 1], [100, 100]),
+      o.text || T('n.1', [16, 20, 296, 40], [39.5, 20, 369, 20], [2, 1], [285, 369]),
+    ],
+  }));
+};
+
+test('textCap: a text that wraps at the content width at A and is one narrower line at B is FILL + max at its line', () => {
+  const r = inferScreen(capScreen(), { facts: facts() });
+  const t = r.spec.kids.find((k) => k.id === 'n.1');
+  assert.equal(r.spec.lay.ca, 'C');
+  assert.deepEqual(t.sz, ['FILL', 'HUG']);
+  assert.equal(t.max, 369);
+  assert.deepEqual(r.flags.filter((f) => f.kind === 'textCap').map((f) => f.id), ['n.1']);
+  // without the measured maxWidth fact, or for a text that already wraps at B, nothing changes
+  const no = inferScreen(capScreen(), { facts: facts(NO_SHRINK) }).spec.kids.find((k) => k.id === 'n.1');
+  assert.equal(no.sz[0], 'FIXED');
+  assert.equal(no.max, undefined);
+});
+
+test('textCap: the proxy fills up to the cap and centres it (Figma: a capped FILL follows the counter alignment)', async () => {
+  const { buildProxyHtml } = await import('../core/proxy.mjs');
+  const { defaultFontMap } = await import('../core/font-map.mjs');
+  const r = inferScreen(capScreen(), { facts: facts() });
+  const h = buildProxyHtml(r.spec, {}, defaultFontMap(), { webFonts: false });
+  assert.match(h, /data-id="n\.1"[^>]*style="[^"]*max-width:369px[^"]*align-self:center;width:100%/);
+});
+
+test('anchorOffset: left p % plus a fixed margin hangs the node m px from a SCALE anchor at the % place', () => {
+  // track 72 -> 192; dot 12 wide at left: 70% with margin-left: -6px; fill at left 20%, width 60%
+  const tree = N('n', [0, 0, 72, 8], [0, 0, 192, 8], {
+    kids: [
+      N('n.0', [14.4, 0, 43.2, 8], [38.4, 0, 115.2, 8], { paint: { pos: 'absolute' }, pct: { l: '20%', w: '60%' } }),
+      N('n.1', [44.4, -2, 12, 12], [128.4, -2, 12, 12], { paint: { pos: 'absolute' }, pct: { l: '70%' } }),
+    ],
+  });
+  const r = inferScreen(screenOf(tree), { facts: facts() });
+  const fill = r.spec.kids.find((k) => k.id === 'n.0');
+  assert.equal(fill.abs.c, 'SCALE');
+  const w = r.spec.kids.find((k) => k.syn === 'anchor');
+  assert.ok(w, JSON.stringify(r.spec.kids));
+  assert.deepEqual([w.abs.x, w.abs.c, w.w], [50.4, 'SCALE', 0]);
+  assert.deepEqual([w.kids[0].id, w.kids[0].abs.x, w.kids[0].abs.c], ['n.1', -6, 'L']);
+  assert.deepEqual(r.flags.filter((f) => f.kind === 'anchorOffset').map((f) => f.id), ['n.1']);
+  // end inset: right: 30% with margin-right: -6px -> the anchor at the right % place, the node 6 px past it
+  const e = inferScreen(screenOf(N('n', [0, 0, 72, 8], [0, 0, 192, 8], {
+    kids: [N('n.0', [0, 0, 72, 8], [0, 0, 192, 8]), N('n.1', [44.4, -2, 12, 12], [128.4, -2, 12, 12], { paint: { pos: 'absolute' }, pct: { r: '30%' } })],
+  })), { facts: facts() }).spec.kids.find((k) => k.syn === 'anchor');
+  assert.deepEqual([e.abs.x, e.kids[0].abs.x, e.kids[0].abs.c], [50.4, -6, 'R']);
+  // the same box without an authored % stays a fixed constraint
+  const plain = inferScreen(screenOf(N('n', [0, 0, 72, 8], [0, 0, 192, 8], {
+    kids: [N('n.0', [0, 0, 72, 8], [0, 0, 192, 8]), N('n.1', [44.4, -2, 12, 12], [128.4, -2, 12, 12], { paint: { pos: 'absolute' } })],
+  })), { facts: facts() });
+  assert.equal(plain.spec.kids.some((k) => k.syn === 'anchor'), false);
+});
+
+test('absPct: % positioned nodes that overlap nothing leave the flow (segments SCALE, a mark on an anchor); px ones stay', () => {
+  const abs = (id, rA, rB, pct) => N(id, rA, rB, { paint: { pos: 'absolute' }, ...(pct ? { pct } : {}) });
+  const tree = N('n', [0, 0, 300, 48], [0, 0, 420, 48], {
+    kids: [
+      abs('n.0', [0, 0, 30, 12], [0, 0, 42, 12], { l: '0%', w: '10%' }),
+      abs('n.1', [30, 0, 90, 12], [42, 0, 126, 12], { l: '10%', w: '30%' }),
+      abs('n.2', [120, 20, 20, 16], [168, 20, 20, 16], { l: '40%' }),
+    ],
+  });
+  const r = inferScreen(screenOf(tree), { facts: facts() });
+  const k = (id) => r.spec.kids.find((x) => x.id === id);
+  assert.equal(r.spec.lay, undefined, 'no flow child is left');
+  assert.equal(k('n.0').abs.c, 'SCALE');
+  assert.equal(k('n.1').abs.c, 'SCALE');
+  const w = r.spec.kids.find((x) => x.syn === 'anchor');
+  assert.deepEqual([w.abs.x, w.abs.c, w.kids[0].id], [120, 'SCALE', 'n.2']);
+  assert.deepEqual(r.flags.filter((f) => f.kind === 'absPct').map((f) => f.id).sort(), ['n.0', 'n.1', 'n.2']);
+  // the same nodes without pct are laid out in flow as before
+  const px = inferScreen(screenOf(N('n', [0, 0, 300, 48], [0, 0, 420, 48], {
+    kids: [abs('n.0', [0, 0, 30, 12], [0, 0, 42, 12]), abs('n.1', [30, 0, 90, 12], [42, 0, 126, 12]), abs('n.2', [120, 20, 20, 16], [168, 20, 20, 16])],
+  })), { facts: facts() });
+  assert.ok(px.spec.lay);
+  assert.equal(px.flags.filter((f) => f.kind === 'absPct').length, 0);
 });

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>infer-spacer</title>
+<style>
+  body { margin: 0; font-family: Arial, sans-serif; }
+  .scr { width: 300px; padding: 10px; box-sizing: border-box; background: #ffffff; }
+  /* empty flex: 1 spacers between and around fixed items, cross size 0 (align-items: flex-start): the free space is
+     shared evenly, ends included; capture keeps them (spacer) so infer makes them FILL */
+  .hours { display: flex; align-items: flex-start; background: #eef3f8; }
+  .spacer { flex: 1; }
+  .hcol { width: 40px; height: 30px; background: #3a6ea5; }
+</style>
+</head>
+<body>
+<div class="scr">
+  <div class="hours"><div class="spacer"></div><div class="hcol"></div><div class="spacer"></div><div class="hcol"></div><div class="spacer"></div><div class="hcol"></div><div class="spacer"></div></div>
+</div>
+</body>
+</html>

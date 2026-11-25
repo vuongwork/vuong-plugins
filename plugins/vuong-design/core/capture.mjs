@@ -808,7 +808,12 @@ function measurePage({ rootSel, widenSel, extras, nameOf, vars: wantVars }) {
       kidsInto(n.kids, el, cs, id, clipFor(el, cs, b, clip));
       if (!n.kids.length) {
         delete n.kids;
-        if ((b.width < 0.5 || b.height < 0.5) && !hasBox(cs)) { excl(id, 'zero-size'); return null; }
+        // An empty flex item that grows (a spacer, flex: 1) takes space on its container's main axis even when its
+        // cross size is 0: it is kept (spacer: true) so infer sees the share it takes at both widths.
+        const fi = flexItem.get(el);
+        const spacer = !!fi && fi.g > 0 && (fi.ax === 'x' ? b.width : b.height) >= 0.5;
+        if ((b.width < 0.5 || b.height < 0.5) && !hasBox(cs) && !spacer) { excl(id, 'zero-size'); return null; }
+        if (spacer && (b.width < 0.5 || b.height < 0.5)) n.spacer = true;
       }
       if (el.dataset?.approx) n.approx = true;
       return n;
@@ -1199,6 +1204,7 @@ function mergeNode(a, mapB) {
   if (a.icon) n.icon = a.icon;
   if (a.src !== undefined) { n.src = a.src; n.fit = a.fit; n.pos = a.pos; }
   if (a.approx) n.approx = true;
+  if (a.spacer) n.spacer = true;
   if (a.flex) n.flex = a.flex;
   if (a.pct) n.pct = a.pct;
   if (a.flexBox) n.flexBox = a.flexBox;

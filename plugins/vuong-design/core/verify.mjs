@@ -86,7 +86,9 @@
 //   back as radius.full 9999 px is equal).
 //   measureCrops opts.widths limits the crops to those widths (the Figma screenshot is at width A).
 //   fontSubstitution explains nothing (R10: capture measures the source in the Figma font), nor does shrinkModelled
-//   (infer's info that a shrink item is FILL + max, plan 3 Task 2; its shrink flag still explains). On a screen flagged
+//   (infer's info that a shrink item is FILL + max, plan 3 Task 2; its shrink flag still explains), textCap (a capped
+//   hug text modelled as FILL + max), anchorOffset (a % anchor with a fixed offset) or absPct (an absolute % node
+//   placed out of flow). On a screen flagged
 //   unsafeWiden, roots at width B are `unchecked` (reason unsafeWiden), never explained.
 // Layer 3, content (modelled proxy):
 //   data: text (proxy DOM text vs source runs, whitespace normalised), icon (proxy <use> ref / glyph / inline svg),
@@ -270,7 +272,8 @@ const W = ['A', 'B'];
 const r2 = (v) => Math.round(v * 100) / 100;
 const r3 = (v) => Math.round(v * 1000) / 1000;
 const SELF_ONLY = new Set(['mixedRunHeight']);
-const NEVER_EXPLAINS = new Set(['fontSubstitution', 'unsafeWiden', 'shrinkModelled']); // shrinkModelled: info only (infer, plan 3)
+// shrinkModelled, textCap, anchorOffset, absPct: info only (infer, plan 3)
+const NEVER_EXPLAINS = new Set(['fontSubstitution', 'unsafeWiden', 'shrinkModelled', 'textCap', 'anchorOffset', 'absPct']);
 
 // ---- R66 helpers ----
 const NORM_APPLY = new Set(['auto', 'answered']);
@@ -729,7 +732,8 @@ export function verifyScreen(input, opts = {}) {
     //    container is an explained root, and only if the sizes are conserved (R24); never a position;
     //  - spaceAround (on the direct container): the item's main-axis position, only within tol of the computed
     //    space-around vs space-between difference (R23), whether or not the container is off;
-    //  - other flags (own): anything; fontSubstitution / unsafeWiden / shrinkModelled (info only): nothing;
+    //  - other flags (own): anything; fontSubstitution / unsafeWiden / shrinkModelled / textCap / anchorOffset / absPct
+    //    (info only): nothing;
     //  - an ancestor's shrink / weightedFill (R22): a descendant's SIZE only, only if the ancestor is a root by size on
     //    the flag axis, and only through an unbroken FILL chain on that axis (or, for height under a width flag, a
     //    chain that can wrap: FILL width and FILL or text-hugging height). Never a descendant's position.

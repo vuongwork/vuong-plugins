@@ -140,7 +140,7 @@ function componentSection(c, st, ctx) {
   for (const p of (st && st.proposed) || []) {
     const t = at(c.variants[p.base].template);
     if (!t) continue;
-    cells.push(cell(ctx, { spec: t.spec, screen: t.screen, root: stateSpec(t.root, p.patch), label: propsLabel(p.props), tag: 'proposed', note: `rule ${p.state}: ${RULE_TEXT[p.state] ? RULE_TEXT[p.state](p.patch) : ''}` }));
+    cells.push(cell(ctx, { spec: t.spec, screen: t.screen, root: stateSpec(t.root, p.patch), label: propsLabel(p.props), tag: 'proposed', note: `rule ${p.state}: ${RULE_TEXT[p.state] ? RULE_TEXT[p.state](p.patch) : ''}${contrastText(p.contrast)}` }));
   }
   for (const s of ((st && st.states) || []).filter((x) => x.source === 'missing')) {
     cells.push(`<figure class="cell empty"><div class="frame none">no drawing</div><figcaption><span class="tag missing">missing</span> state=${esc(s.state)}<br><span class="muted">${esc(s.reason)}</span></figcaption></figure>`);
@@ -151,7 +151,7 @@ function componentSection(c, st, ctx) {
   return `<section class="cmp" id="c-${esc(c.name)}"><h2>${esc(c.name)} <span class="muted small">${esc(c.kind)} · reason ${esc(c.reason)} · ${plural(c.count, 'use')} on ${plural(c.screens.length, 'screen')}</span></h2>
 <p class="small">Screens: ${esc(c.screens.join(', '))}. Axes: ${c.axes.length ? esc(c.axes.join(', ')) : 'none'}. Variants from the HTML: ${c.variants.length}. Properties: ${props}${c.icons ? `. Icons to swap: ${esc(c.icons.join(', '))}` : ''}.</p>
 <p class="small">States: ${stateLine}</p>
-<div class="cells">${cells.join('\n')}</div></section>`;
+${detachedLine(c)}<div class="cells">${cells.join('\n')}</div></section>`;
 }
 
 function proposalsSection(cmps, ctx) {
@@ -166,10 +166,15 @@ function proposalsSection(cmps, ctx) {
   });
   return `<section id="proposals"><h2>Bare proposals <span class="muted small">(${plural(list.length, 'group')}, built as layers until kept)</span></h2><div class="cells">${rows.join('\n')}</div></section>`;
 }
+// Task 5: contrast of a proposed state; occurrences that do not rebuild from the component (built as layers)
+const contrastText = (x) => (!x ? '' : x.exempt ? '; contrast: exempt (disabled)' : `; contrast ${x.what} ${x.ratio}:1 (WCAG ${x.required}${x.ok ? ', ok' : ', below'}${x.base != null ? `; ${x.base}:1 without the overlay` : ''})`);
+const detachedLine = (c) => (!c.detached || !c.detached.length ? '' : `<p class="small">Built as layers (${plural(c.detached.length, 'use')} that the component cannot rebuild): ${c.detached.map((d) => `${esc(d.screen)} ${esc(d.node)}: ${esc(d.reason)}`).join('; ')}.</p>
+`);
+
 function skippedSection(cmps) {
   const list = cmps.skipped || [];
   if (!list.length) return '';
-  const why = { shapes: 'several structures, no shapes choice (layers)', nested: 'always inside another component with the same count', user: 'dropped in vd-components.json', structure: 'does not fit its variant template (layers)' };
+  const why = { shapes: 'several structures, no shapes choice (layers)', nested: 'always inside another component with the same count', user: 'dropped in vd-components.json', structure: 'does not fit its variant template (layers)', detached: 'no use rebuilds from the component (layers)' };
   const rows = list.map((s) => `<tr><td><code>${esc(s.key)}</code></td><td class="v">${plural(s.count, 'use')}</td><td>${esc(why[s.reason] || s.reason)}${s.sizes ? ` (shapes of ${s.sizes.map((x) => plural(x, 'use')).join(', ')})` : ''}</td></tr>`);
   return `<section id="skipped"><h2>Not components</h2><table><thead><tr><th>Group</th><th>Uses</th><th>Why</th></tr></thead><tbody>${rows.join('')}</tbody></table></section>`;
 }

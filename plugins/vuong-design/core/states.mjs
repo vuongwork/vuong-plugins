@@ -42,10 +42,10 @@
 // componentStates(result of findComponents, { specs: { [screen]: spec root }, tokens, rules, decl }) -> {
 //   v: 1, approved, rules: { effective rule values },
 //   components: [{ name, kind, states: [{ state, source, variants?, rule?, reason? }], extra: [{ state, variants }],
-//                  proposed: [{ state, base, props, patch }] }],
+//                  proposed: [{ state, base, props, patch, contrast? }] }],   (contrast: stateContrast below)
 //   missing: [{ component, kind, state, reason }], warnings: [string] }
 // statesDraft(rules) -> the `states` section for vd-rules.draft.json: the effective values, approved '' (to fill).
-import { parseColor, toHex } from './color.mjs';
+import { parseColor, toHex, contrast as ratioOf } from './color.mjs';
 
 export const STATE_TABLE = {
   button: ['default', 'pressed', 'disabled', 'loading', 'focus'],
@@ -212,6 +212,68 @@ function patchFor(state, root, R, tokens) {
   }
 }
 
+// ---- contrast of a proposed state (Task 5) ----------------------------------------------------------------------------
+//
+// What the patch draws, against what is behind it (backgrounds of the screen spec composed from the root down, white
+// under all):
+//   pressed  each text (WCAG 1.4.3: 4.5:1, large text 3:1) and icon (1.4.11: 3:1) of the template over its background
+//            with the overlay laid on the root
+//   focus    the ring, error the stroke: against the background behind the component (1.4.11: 3:1)
+//   loading  the spinner against the root's background (1.4.11: 3:1)
+//   disabled exempt: WCAG 1.4.3 and 1.4.11 do not apply to inactive components
+// -> { ratio, required, ok, what, base? } (the worst item; base: its ratio without the overlay) | { exempt } | null
+const opaqueOver = (top, under) => {
+  const a = top.a ?? 1;
+  const m = (k) => top[k] * a + under[k] * (1 - a);
+  return { r: m('r'), g: m('g'), b: m('b'), a: 1 };
+};
+const WHITE = { r: 1, g: 1, b: 1, a: 1 };
+function pathTo(n, id, acc = []) {
+  acc.push(n);
+  if (n.id === id) return acc;
+  for (const k of n.kids || []) { const r = pathTo(k, id, acc); if (r) return r; }
+  acc.pop();
+  return null;
+}
+function compose(nodes, after = null) {
+  let c = WHITE;
+  for (const n of nodes) {
+    if (n.paint && visible(n.paint.bg)) c = opaqueOver(parseColor(n.paint.bg), c);
+    if (after && n === after.node) c = opaqueOver(after.color, c);
+  }
+  return c;
+}
+const r2 = (v) => Math.round(v * 100) / 100;
+const pxOf = (v) => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
+export function stateContrast(state, patch, spec, nodeId) {
+  if (state === 'disabled') return { exempt: 'WCAG 1.4.3 and 1.4.11 do not apply to a disabled control' };
+  const path = spec && pathTo(spec, nodeId);
+  if (!path) return null;
+  const root = path[path.length - 1];
+  const items = [];
+  const add = (fg, bg, need, what, bg0) => { if (visible(fg)) items.push({ ratio: ratioOf(parseColor(fg), bg), need, what, base: bg0 && ratioOf(parseColor(fg), bg0) }); };
+  if (state === 'pressed') {
+    const ov = { node: root, color: { ...parseColor(patch.overlay.color), a: patch.overlay.opacity } };
+    walk(root, (n) => {
+      if (n.t !== 'T' && !n.icon) return;
+      const inner = pathTo(root, n.id).slice(1);
+      const bg = compose([...path, ...inner], ov), bg0 = compose([...path, ...inner]);
+      if (n.t === 'T' && n.font) {
+        const fs = pxOf(n.font.fs), fw = pxOf(n.font.fw) ?? 400;
+        const large = fs != null && (fs >= 24 || (fs >= 18.66 && fw >= 700));
+        add(n.font.c, bg, large ? 3 : 4.5, `text ${rel(root, n.id) || 'root'}`, bg0);
+      } else if (n.icon) add(n.icon.color || n.icon.stroke, bg, 3, `icon ${rel(root, n.id) || 'root'}`, bg0);
+    });
+  } else if (state === 'focus') add(patch.ring.color, compose(path.slice(0, -1)), 3, 'focus ring');
+  else if (state === 'error') add(patch.stroke.color, compose(path.slice(0, -1)), 3, 'error stroke');
+  else if (state === 'loading') add(patch.spinner.color, compose(path), 3, 'spinner');
+  if (!items.length) return null;
+  const worst = items.reduce((a, b) => (b.ratio / b.need < a.ratio / a.need ? b : a));
+  const out = { ratio: r2(worst.ratio), required: `${worst.need}:1`, ok: worst.ratio + 1e-9 >= worst.need, what: worst.what };
+  if (worst.base != null) out.base = r2(worst.base);
+  return out;
+}
+
 // ---- main ------------------------------------------------------------------------------------------------------------
 
 export function componentStates(result, { specs = {}, tokens = null, rules, decl } = {}) {
@@ -272,7 +334,9 @@ export function componentStates(result, { specs = {}, tokens = null, rules, decl
         if (!root) { why = `template ${v.template.screen} ${v.template.node} not found in the specs`; break; }
         const r = patchFor(st, root, R, tokens);
         if (r.reason) { why = r.reason; break; }
-        made.push({ state: st, base: i, props: { ...v.props, state: st }, patch: r.patch });
+        const contrast = stateContrast(st, r.patch, spec, v.template.node);
+        made.push(contrast ? { state: st, base: i, props: { ...v.props, state: st }, patch: r.patch, contrast } : { state: st, base: i, props: { ...v.props, state: st }, patch: r.patch });
+        if (contrast && contrast.ok === false) warnings.push(`${c.name} (${kind}) ${st}: ${contrast.what} ${contrast.ratio}:1, below WCAG ${contrast.required}${contrast.base != null ? ` (${contrast.base}:1 without the overlay)` : ''}`);
       }
       if (why) {
         states.push({ state: st, source: 'missing', rule: st, reason: why });

@@ -152,3 +152,17 @@ test('componentsSummary links the preview with the verdict', () => {
   const { cmps, states } = page();
   assert.match(componentsSummary({ cmps, states }), /<a href="components\.html">/);
 });
+
+test('the preview names the uses built as layers and the contrast of each proposed state', () => {
+  // three OK buttons; the label of the last one moved (absolute): it does not rebuild from the component
+  const screens = [scr('s1', btn('OK'), btn('OK'), btn('OK'))];
+  for (const [id, x] of [['n.0.0', 0], ['n.1.0', 0], ['n.2.0', 6]]) {
+    const f = (n) => (n.id === id ? n : (n.kids || []).map(f).find(Boolean));
+    f(screens[0].spec).abs = { x, y: 0, c: 'L' };
+  }
+  const { cmps, html } = page(screens);
+  assert.deepEqual(cmps.components[0].detached.map((d) => d.node), ['n.2']);
+  assert.match(html, /Built as layers \(1 use that the component cannot rebuild\): s1 n\.2: 0 abs\.x: 0 in the component, 6 here \(not overridable\)\./);
+  assert.match(html, /rule pressed: [^<]*; contrast text 0 [\d.]+:1 \(WCAG 4\.5:1, (ok|below); [\d.]+:1 without the overlay\)/);
+  assert.match(html, /rule disabled: [^<]*; contrast: exempt \(disabled\)/);
+});

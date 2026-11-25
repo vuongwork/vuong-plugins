@@ -7,7 +7,7 @@
 // else vd-components.json in the current working directory when it exists, else none. Rules: --rules, else
 // vd-rules.json in the current working directory when it exists (the same default as ds.mjs). Both are only read.
 // Writes into <ds>:
-//   components.json          findComponents() result
+//   components.json          findComponents() result (with overrides per use and detached uses, Task 5)
 //   states.json              componentStates() result (proposed states listed even before approval; forFigma() filters)
 //   vd-components.draft.json componentsDraft() suggestions
 //   vd-rules.draft.json      ds.mjs's draft with a `states` section added (statesDraft) while the rules file has no
@@ -99,6 +99,10 @@ export async function main(argv, deps = {}) {
     const all = states.components.flatMap((c) => c.states);
     log(`${cmps.components.length} components, ${cmps.proposed.length} bare proposals, ${cmps.skipped.length} skipped groups`);
     log(`states: ${all.filter((s) => s.source === 'html').length} from the HTML, ${all.filter((s) => s.source === 'proposed').length} proposed (${states.approved ? 'rules approved' : 'rules not approved: nothing proposed goes to Figma'}), ${states.missing.length} missing`);
+    const uses = cmps.components.flatMap((c) => c.variants.flatMap((v) => v.nodes));
+    const layers = cmps.components.reduce((n, c) => n + ((c.detached && c.detached.length) || 0), 0);
+    const low = states.components.flatMap((c) => c.proposed).filter((x) => x.contrast && x.contrast.ok === false).length;
+    log(`instances: ${uses.length} (${uses.filter((x) => x.ov).length} with overrides), ${layers} built as layers (they do not rebuild from their component); contrast: ${low} proposed state${low === 1 ? '' : 's'} below WCAG`);
     log(`declarations: ${declPath || 'none'}; rules: ${rulesPath || 'none'}; preview: ${join(ds, 'components.html')}`);
     return 0;
   } catch (e) {

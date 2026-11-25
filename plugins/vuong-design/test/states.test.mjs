@@ -219,3 +219,34 @@ test('keep entries: a name or { name, kind?, stateMap? }; a bad kind or key is n
   assert.throws(() => findComponents(screens, { decl: { ...decl(), keep: { 'b:00000000': { name: 'x', role: 'tab' } } } }), /keep\.b:00000000: unknown key "role"/);
   assert.throws(() => findComponents(screens, { decl: { ...decl(), keep: { 'b:00000000': 3 } } }), /keep\.b:00000000 must be a name or/);
 });
+
+// Task 5: contrast of proposed states
+test('contrast: a disabled state with low contrast is exempt (no warning); a low-contrast error stroke is a warning', () => {
+  const pale = { primitive: { color: { p: { $type: 'color', $value: { colorSpace: 'srgb', components: [1, 0.8, 0.8], hex: '#ffcccc' } } } },
+    role: { danger: { $type: 'color', $value: '{primitive.color.p}' } } };
+  const inp = (t) => F('in', { bg: 'rgb(255, 255, 255)', border: 1 }, T(t));
+  const D = decl({ in: { kind: 'input' } });
+  const st = run([scr('s1', inp('a'))], D, { tokens: pale });
+  const c = cmp(st, 'in');
+  const p = Object.fromEntries(c.proposed.map((x) => [x.state, x]));
+  assert.match(p.disabled.contrast.exempt, /disabled/);
+  assert.equal(p.error.contrast.ok, false);
+  assert.equal(p.error.contrast.required, '3:1');
+  assert.ok(p.error.contrast.ratio < 3);
+  assert.equal(p.error.contrast.what, 'error stroke');
+  assert.deepEqual(st.warnings.filter((w) => /WCAG/.test(w)), [`in (input) error: error stroke ${p.error.contrast.ratio}:1, below WCAG 3:1`]);
+  // a red error stroke on white passes
+  const ok = cmp(run([scr('s1', inp('a'))], D, { tokens: tokens({ danger: 'primitive.color.c02' }) }), 'in');
+  assert.equal(ok.proposed.find((x) => x.state === 'error').contrast.ok, true);
+});
+
+test('contrast: pressed measures each text under the overlay and gives the ratio without it', () => {
+  // black text on red: 5.25:1; a 10 % black overlay lowers it below 4.5:1
+  const st = run([scr('s1', btn('OK'), btn('Go'))], BTN);
+  const pr = cmp(st, 'btn').proposed.find((x) => x.state === 'pressed');
+  assert.equal(pr.contrast.what, 'text 0');
+  assert.equal(pr.contrast.base, 5.25);
+  assert.ok(pr.contrast.ratio < pr.contrast.base);
+  assert.equal(pr.contrast.ok, pr.contrast.ratio >= 4.5);
+  assert.equal(cmp(st, 'btn').proposed.find((x) => x.state === 'loading').contrast.required, '3:1');
+});

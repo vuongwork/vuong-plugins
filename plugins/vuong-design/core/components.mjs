@@ -6,7 +6,7 @@
 //   v: 1,
 //   components: [{ name, kind, reason, key, count, screens, axes, props: [{ name, type, default }], icons?,
 //                  variants: [{ props, template: { screen, node }, bind: { prop: path }, nested: { path: name },
-//                               nodes: [{ screen, node, vals }] }] }],
+//                               nodes: [{ screen, node, vals, ov? }] }], detached?: [{ screen, node, reason }] }],
 //   proposed: [{ key, count, screens, nodes }], skipped: [{ key, count, reason, nodes? }], warnings: [string] }
 //
 // decl = readComponentsFile('vd-components.json'): what the user declared per base class (kind, extra state classes,
@@ -44,7 +44,7 @@
 // layers, as plan 3 does. A card holding different content each time is such a container.
 // Variants: axis `state` (state classes joined '+', none = 'default') when any occurrence has one, plus each
 // declared modifier axis that is used (absent = 'default'). A different paint or text without a different class is an
-// override (Task 5), never a variant. Structure may differ between variants.
+// override (Task 5, see 'instances must rebuild their target' below), never a variant. Structure may differ between variants.
 // Template of a variant: its occurrence with the most nodes (tie: first by screen, then cmpNodeId). Every other
 // occurrence must embed in it: same t and lay.d at the root, its kids matching a subsequence of the template's kids in
 // order by shallow key (t, lay.d, identity), recursively; a nested component occurrence matches another occurrence of
@@ -292,9 +292,191 @@ export function findComponents(screens, opts = {}) {
   });
   instOf = mapOf(comps);
 
-  const components = comps.map((g) => build(g, instOf, skipped)).filter(Boolean).sort((a, b) => cmpStr(a.name, b.name));
+  const components = cascade(comps.map((g) => build(g, instOf, skipped)).filter(Boolean), skipped).sort((a, b) => cmpStr(a.name, b.name));
   skipped.sort((a, b) => cmpStr(a.key, b.key) || cmpStr(a.reason, b.reason));
   return { v: COMPONENTS_VERSION, components, proposed, skipped, warnings: [...warnings].sort(cmpStr) };
+}
+
+// ---- instances must rebuild their target (Task 5) -------------------------------------------------------------------
+//
+// An occurrence becomes an instance only if its variant's template + its property values (vals) + its overrides (ov)
+// rebuild its own target spec. expandInstance() does what the Figma runtime will do; instanceDiff() compares the
+// result with the target as plan 1 does (frames within 0.5 px, texts within 1 px, paint, type and icons equal).
+// Overrides: { '<path>': { '<key>': value | null } } ('' = the root, paths relative to the template root as in
+// `bind`; null deletes the key). Only OVERRIDABLE keys are written; any other difference stays and detaches the
+// occurrence (`detached` on the component, with the reason): it is built as layers, as plan 3 does. Inside a nested
+// instance nothing is compared (its own component checks it); an occurrence that holds a detached occurrence is
+// detached too (Figma cannot detach a nested instance alone), and a template that holds one takes its whole variant
+// with it. A component left with no occurrence is skipped 'detached'.
+// The root's placement (abs.*) belongs to the instance node, not to the component, and is not compared; its size and
+// sizing (w, h, sz, min, max, paint.pos) are the instance's own (overrides at '').
+// Until the Figma probe (Task 1, cmpProps) says more, structure, layout direction, wrap, absolute placement, clip,
+// transforms, image fills and icon refs (those go through INSTANCE_SWAP) are not overridable.
+const OBJ_KEYS = new Set(['paint', 'font', 'icon', 'lay', 'abs']);
+export const OVERRIDABLE = new Set([
+  'w', 'h', 'sz', 'runs',
+  'paint.bg', 'paint.radius', 'paint.border', 'paint.strokeOverlay', 'paint.opacity', 'paint.shadow', 'paint.textDecoration',
+  'font.ff', 'font.fs', 'font.fw', 'font.fst', 'font.lh', 'font.ls', 'font.c', 'font.td', 'font.tt', 'font.ta', 'font.ws', 'font.remeasure',
+  'icon.color', 'icon.fill', 'icon.stroke', 'icon.sw',
+  'lay.p', 'lay.g', 'lay.cg', 'lay.pa', 'lay.ca', 'lay.sb',
+]);
+const ROOT_OWN = new Set(['w', 'h', 'sz', 'min', 'max', 'paint.pos']);
+const GEO = new Set(['w', 'h', 'min', 'max', 'lay.p', 'lay.g', 'lay.cg', 'abs.x', 'abs.y', 'paint.radius', 'paint.border', 'font.lh']);
+const TOL_FRAME = 0.5, TOL_TEXT = 1, TOL_EXACT = 1e-6;
+
+function flat(sn) {
+  const m = new Map();
+  for (const [k, v] of Object.entries(sn)) {
+    if (k === 'id' || k === 'kids' || v === undefined) continue;
+    if (OBJ_KEYS.has(k) && isObj(v)) { for (const [s, x] of Object.entries(v)) if (x !== undefined) m.set(`${k}.${s}`, x); } else m.set(k, v);
+  }
+  return m;
+}
+function same(a, b, tol) {
+  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) <= tol;
+  if (Array.isArray(a) || Array.isArray(b)) return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => same(x, b[i], tol));
+  if (isObj(a) || isObj(b)) {
+    if (!isObj(a) || !isObj(b)) return false;
+    for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (!same(a[k], b[k], tol)) return false;
+    return true;
+  }
+  return a === b;
+}
+const tolOf = (key, sn) => (!GEO.has(key) ? TOL_EXACT : (key === 'w' || key === 'h') && sn.t === 'T' ? TOL_TEXT : TOL_FRAME);
+const show = (v) => (v === undefined ? 'none' : JSON.stringify(v).slice(0, 60));
+// keys that differ between a and b (b's type sets the tolerance); the root's placement is left out. w
+// and h count only on an axis FIXED in both (HUG / FILL sizes are Figma's result, checked on the readback).
+const fixedOn = (sn, i) => !Array.isArray(sn.sz) || sn.sz[i] === 'FIXED';
+function diffKeys(a, b, root) {
+  const fa = flat(a), fb = flat(b), out = [];
+  for (const k of [...new Set([...fa.keys(), ...fb.keys()])].sort(cmpStr)) {
+    if (root && k.startsWith('abs.')) continue;
+    if ((k === 'w' || k === 'h') && !(fixedOn(a, k === 'w' ? 0 : 1) && fixedOn(b, k === 'w' ? 0 : 1))) continue;
+    if (!same(fa.get(k), fb.get(k), tolOf(k, b))) out.push({ k, a: fa.get(k), b: fb.get(k) });
+  }
+  return out;
+}
+const textRuns = (s) => String(s).split('\n').flatMap((t, i) => (i ? [{ br: true }, ...(t ? [{ t }] : [])] : [{ t }]));
+function setKey(sn, key, v) {
+  const dot = key.indexOf('.');
+  const k = dot < 0 ? key : key.slice(0, dot), s = dot < 0 ? null : key.slice(dot + 1);
+  if (s === null) { if (v === null) delete sn[k]; else sn[k] = JSON.parse(JSON.stringify(v)); return; }
+  if (v === null) { if (isObj(sn[k])) { delete sn[k][s]; if (!Object.keys(sn[k]).length) delete sn[k]; } return; }
+  if (!isObj(sn[k])) sn[k] = {};
+  sn[k][s] = JSON.parse(JSON.stringify(v));
+}
+const relId = (id, root) => (id === root ? '' : id.slice(root.length + 1));
+
+// template spec subtree + { bind: { prop: path }, props: { prop: { type, default } }, vals, ov } -> the spec the instance
+// will have (template ids). Every bound property is set: its value in vals, else its default (as Figma shows it).
+export function expandInstance(tpl, { bind = {}, props = {}, vals = {}, ov = {} } = {}) {
+  const root = JSON.parse(JSON.stringify(tpl));
+  const at = new Map();
+  const idx = (n, parent) => { at.set(rel(n.id, root.id), { n, parent }); (n.kids || []).forEach((k) => idx(k, n)); };
+  idx(root, null);
+  const hide = [];
+  for (const name of Object.keys(bind)) {
+    const x = at.get(bind[name]);
+    if (!x) throw new Error(`property ${name}: no node at "${bind[name]}"`);
+    const type = props[name] && props[name].type;
+    const v = Object.hasOwn(vals, name) ? vals[name] : props[name] && props[name].default;
+    if (v === undefined) continue;
+    if (type === 'TEXT') x.n.runs = textRuns(v);
+    else if (type === 'INSTANCE_SWAP') x.n.icon = { ...(x.n.icon || {}), ref: v };
+    else if (type === 'BOOLEAN') { if (v === false) hide.push(x); } else throw new Error(`property ${name}: unknown type ${type}`);
+  }
+  for (const [path, keys] of Object.entries(ov)) {
+    const x = at.get(path);
+    if (!x) throw new Error(`override: no node at "${path}"`);
+    for (const [k, v] of Object.entries(keys)) setKey(x.n, k, v);
+  }
+  for (const x of hide) if (x.parent) x.parent.kids = x.parent.kids.filter((k) => k !== x.n);
+  for (const { n } of at.values()) if (n.kids && !n.kids.length) delete n.kids;
+  return root;
+}
+
+// expanded instance vs target subtree -> [{ path, key, a, b }] (a: the instance, b: the target); nested: { path: name }
+export function instanceDiff(exp, target, { nested = {} } = {}) {
+  const out = [];
+  const go = (a, b, root) => {
+    const path = rel(a.id, exp.id);
+    if (!root && Object.hasOwn(nested, path)) return;
+    for (const d of diffKeys(a, b, root)) if (!(root && ROOT_OWN.has(d.k))) out.push({ path, key: d.k, a: d.a, b: d.b });
+    const ka = a.kids || [], kb = b.kids || [];
+    if (ka.length !== kb.length) { out.push({ path, key: 'kids', a: ka.length, b: kb.length }); return; }
+    ka.forEach((k, i) => go(k, kb[i], false));
+  };
+  go(exp, target, true);
+  return out;
+}
+
+// the overrides that turn the template + vals into the target, and what they cannot cover (diff, empty when it rebuilds)
+export function instanceOf(tpl, target, { bind = {}, props = {}, vals = {}, nested = {} } = {}) {
+  const base = expandInstance(tpl, { bind, props, vals });
+  const ov = {};
+  const go = (a, b, root) => {
+    const path = rel(a.id, base.id);
+    if (!root && Object.hasOwn(nested, path)) return;
+    for (const d of diffKeys(a, b, root)) {
+      if (!OVERRIDABLE.has(d.k) && !(root && ROOT_OWN.has(d.k))) continue;
+      (ov[path] ||= {})[d.k] = d.b === undefined ? null : d.b;
+    }
+    const ka = a.kids || [], kb = b.kids || [];
+    if (ka.length === kb.length) ka.forEach((k, i) => go(k, kb[i], false));
+  };
+  go(base, target, true);
+  const sorted = {};
+  for (const p of Object.keys(ov).sort((x, y) => cmpNodeId(x ? `r.${x}` : 'r', y ? `r.${y}` : 'r'))) sorted[p] = ov[p];
+  const diff = instanceDiff(expandInstance(tpl, { bind, props, vals, ov: sorted }), target, { nested });
+  return { ov: sorted, diff };
+}
+export const diffReason = (diff) => diff.slice(0, 3).map((d) => `${d.path || 'root'} ${d.key}: ${show(d.a)} in the component, ${show(d.b)} here${d.key === 'kids' ? ' (children)' : OVERRIDABLE.has(d.key) ? '' : ' (not overridable)'}`).join('; ') + (diff.length > 3 ? `; +${diff.length - 3} more` : '');
+
+// an occurrence holding a detached occurrence is detached; a template holding one takes its variant (repeat)
+function cascade(components, skipped) {
+  const det = [];
+  for (const c of components) for (const d of c.detached) det.push(d);
+  const holds = (x) => det.find((d) => d.screen === x.screen && d.node.startsWith(`${x.node}.`)) || null;
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const c of components) {
+      const keep = [];
+      for (const v of c.variants) {
+        const t = holds(v.template);
+        if (t) {
+          for (const x of v.nodes) {
+            const d = { screen: x.screen, node: x.node, reason: `the template ${v.template.screen} ${v.template.node} holds detached ${t.screen} ${t.node}` };
+            c.detached.push(d);
+            det.push(d);
+          }
+          changed = true;
+          continue;
+        }
+        v.nodes = v.nodes.filter((x) => {
+          const h = holds(x);
+          if (!h) return true;
+          const d = { screen: x.screen, node: x.node, reason: `holds detached ${h.screen} ${h.node}` };
+          c.detached.push(d);
+          det.push(d);
+          changed = true;
+          return false;
+        });
+        if (v.nodes.length) keep.push(v);
+      }
+      c.variants = keep;
+    }
+  }
+  const out = [];
+  for (const c of components) {
+    c.detached.sort((a, b) => cmpStr(a.screen, b.screen) || cmpNodeId(a.node, b.node));
+    const used = c.variants.flatMap((v) => v.nodes);
+    if (!used.length) { skipped.push({ key: c.key, count: c.detached.length, reason: 'detached', nodes: c.detached.map((d) => ({ screen: d.screen, node: d.node })) }); continue; }
+    c.count = used.length;
+    c.screens = [...new Set(used.map((x) => x.screen))];
+    if (!c.detached.length) delete c.detached;
+    out.push(c);
+  }
+  return out;
 }
 
 // ---- one component: variants, templates, properties ---------------------------------------------------------------
@@ -356,6 +538,7 @@ function build(g, instOf, skipped) {
   const icons = new Set();
   const bad = [];
   const variants = [];
+  const detached = [];
   for (const k of [...byV.keys()].sort(cmpStr)) {
     const v = byV.get(k);
     const tpl = v.occ.reduce((a, b) => (b.size > a.size ? b : a));
@@ -409,13 +592,24 @@ function build(g, instOf, skipped) {
     };
     walk(tpl);
     for (const r of occ) for (const [name, x] of Object.entries(vals.get(r))) if (x === undefined) delete vals.get(r)[name];
-    variants.push({ props: v.props, template: ref(tpl), bind, nested, nodes: occ.map((r) => ({ ...ref(r), vals: vals.get(r) })) });
+    // Task 5: each occurrence (the template too) must rebuild from the component, else it is detached
+    const propsOf = Object.fromEntries([...registry].map(([name, x]) => [name, { type: x.type, default: x.default }]));
+    const nodes = [];
+    for (const r of occ) {
+      const { ov, diff } = instanceOf(tpl.sn, r.sn, { bind, props: propsOf, vals: vals.get(r), nested });
+      if (diff.length) { detached.push({ ...ref(r), reason: diffReason(diff) }); continue; }
+      nodes.push(Object.keys(ov).length ? { ...ref(r), vals: vals.get(r), ov } : { ...ref(r), vals: vals.get(r) });
+    }
+    if (nodes.length) variants.push({ props: v.props, template: ref(tpl), bind, nested, nodes });
   }
   if (bad.length) skipped.push({ key: g.key, count: bad.length, reason: 'structure', nodes: bad.map(ref) });
-  if (!variants.length) return null;
+  if (!variants.length) {
+    if (detached.length) skipped.push({ key: g.key, count: detached.length, reason: 'detached', nodes: detached.map((d) => ({ screen: d.screen, node: d.node })) });
+    return null;
+  }
   const used = variants.flatMap((v) => v.nodes);
   const out = { name: g.name, kind: g.kind, reason: g.reason, key: g.key, count: used.length,
-    screens: [...new Set(used.map((x) => x.screen))], axes, props, variants };
+    screens: [...new Set(used.map((x) => x.screen))], axes, props, variants, detached };
   if (icons.size) out.icons = [...icons].sort(cmpStr);
   return out;
 }

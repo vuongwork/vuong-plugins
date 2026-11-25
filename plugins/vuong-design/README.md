@@ -241,6 +241,48 @@ Planora (the same draft declaration, `vd-rules.json` without `states`; 5 ms):
 
 `cmp-1` to `cmp-3` have kind `other`, so `on` stays an extra state. Planora has no focus or error token, so focus is missing on both buttons.
 
+### Instances must rebuild their target
+
+Plan 3b Task 5 (`components.mjs`, `states.mjs`). Each use of a component must rebuild its own target spec from three things: the variant's template, its property values, and its overrides. `expandInstance()` does what the Figma runtime will do. `instanceDiff()` compares the result with the target, as plan 1 compares:
+
+- frames within 0.5 px, texts within 1 px;
+- paint, type and icons equal;
+- `w` and `h` only on axes that are FIXED, since HUG and FILL sizes are Figma's result and `check` reads them back.
+
+**Overrides.** A difference without a class becomes an override on that use: `ov: { '<path>': { '<key>': value } }`, where `''` is the root.
+
+- What can be overridden: fills, borders, radius, shadow, opacity, font, text runs, icon colours, padding, gap and alignment.
+- The root's size and sizing belong to the instance.
+
+**Not overridable**, until the Figma probe (Task 1) says more:
+
+- structure, layout direction and wrap;
+- absolute placement inside the component;
+- clip, transforms and image fills;
+- icon refs, which go through INSTANCE_SWAP.
+
+A use with such a difference is `detached`: it is listed with the reason and built as layers, as plan 3 builds it. Nested uses follow two more rules:
+
+- A use that holds a detached use is detached too, because Figma cannot detach a nested instance alone. A template that holds one takes its whole variant with it.
+- A component left with no use is skipped as `detached`.
+
+**Contrast.** Each proposed state gets a WCAG contrast: `contrast` on the proposed entry, and a warning when it is below.
+
+| State | What is measured | Required |
+|---|---|---|
+| pressed | texts and icons under the overlay | 4.5:1 (large text 3:1), icons 3:1 |
+| focus ring, error stroke | against what is behind the component | 3:1 |
+| loading spinner | against the root | 3:1 |
+| disabled | exempt: WCAG does not apply to inactive controls | none |
+
+Pressed also gives the ratio without the overlay. The preview shows the contrast and the uses built as layers, and `cmp.mjs` prints the counts.
+
+Planora (the user's `vd-components.json` with the three tabs, approved `vd-rules.json`, 2026-11-25):
+
+- 127 instances, 38 of them with overrides. The most common is a root fill, on 17 uses.
+- 4 uses are built as layers, all of them `bar`: its absolutely placed marker sits at a different x on each screen.
+- 3 pressed states are below WCAG: `btn` at 3.64:1 and 2.83:1, and the `fab` icon at 2.31:1. Their base states are already low: 4.08, 3.13 and 2.53:1.
+
 ### Component CLI and preview
 
 ```

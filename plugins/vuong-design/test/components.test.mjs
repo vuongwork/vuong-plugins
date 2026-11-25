@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { findComponents, componentsDraft, readComponentsFile } from '../core/components.mjs';
+import { findComponents, componentsDraft, readComponentsFile, expandInstance, instanceDiff, instanceOf, diffReason } from '../core/components.mjs';
 
 // Hand-built IR (capture) + modelled spec for each screen; no browser. Source ids follow capture: root 'n', kids
 // '<parent>.<k>', pseudo '<parent>.a' / '.b'; synthetic frames '<source parent>.g<k>' whose kids keep source ids.
@@ -269,4 +269,98 @@ test('readComponentsFile: missing file gives the empty declaration; bad content 
   assert.throws(() => readComponentsFile(p), /version/);
   writeFileSync(p, JSON.stringify({ version: 1, approved: true }));
   assert.throws(() => readComponentsFile(p), /unknown top-level key "approved"/);
+});
+
+// ---- Task 5: every occurrence must rebuild its target spec from the component, else it is detached ----
+const nodeAt = (spec, id) => { if (spec.id === id) return spec; for (const k of spec.kids || []) { const x = nodeAt(k, id); if (x) return x; } return null; };
+const allNodes = (c) => c.variants.flatMap((v) => v.nodes);
+
+test('every occurrence of the fixture rebuilds: texts by property, a colour without a class by override', () => {
+  const s = [scr('s1', row('A'), row('B')), scr('s2', row('C'))];
+  nodeAt(s[1].spec, 'n.0').paint.bg = 'rgb(240, 240, 240)';
+  const r = findComponents(s);
+  const c = r.components[0];
+  assert.equal(c.detached, undefined);
+  assert.equal(c.count, 3);
+  const n = allNodes(c);
+  assert.deepEqual(n.map((x) => x.ov), [undefined, undefined, { '': { 'paint.bg': 'rgb(240, 240, 240)' } }]);
+  assert.equal(c.variants.length, 1);
+});
+
+test('noise is not a variant: gap 12 and 12.01, a FIXED width 0.3 px apart -> one component, no override', () => {
+  const s = [scr('s1', row('A'), row('B'))];
+  nodeAt(s[0].spec, 'n.0').lay.g = 12;
+  nodeAt(s[0].spec, 'n.1').lay.g = 12.01;
+  for (const [id, w] of [['n.0', 100], ['n.1', 100.3]]) Object.assign(nodeAt(s[0].spec, id), { w, sz: ['FIXED', 'HUG'] });
+  const c = findComponents(s).components[0];
+  assert.equal(c.variants.length, 1);
+  assert.deepEqual(allNodes(c).map((x) => x.ov), [undefined, undefined]);
+  // 2 px is a real difference: the instance's own width
+  nodeAt(s[0].spec, 'n.1').w = 102;
+  assert.deepEqual(allNodes(findComponents(s).components[0])[1].ov, { '': { w: 102 } });
+});
+
+test('a difference no override can make (an absolute child moved) detaches that occurrence, with the reason', () => {
+  const s = [scr('s1', row('A', F('dot', { bg: 'rgb(0, 0, 0)' })), row('B', F('dot', { bg: 'rgb(0, 0, 0)' }))), scr('s2', row('C', F('dot', { bg: 'rgb(0, 0, 0)' })))];
+  for (const [sc, id, x] of [[0, 'n.0.1', 4], [0, 'n.1.1', 4], [1, 'n.0.1', 30]]) nodeAt(s[sc].spec, id).abs = { x, y: 0, c: 'L' };
+  const r = findComponents(s);
+  const c = r.components.find((x) => x.name === 'row');
+  assert.equal(c.count, 2);
+  assert.deepEqual(allNodes(c).map((x) => `${x.screen} ${x.node}`), ['s1 n.0', 's1 n.1']);
+  assert.equal(c.detached.length, 1);
+  assert.deepEqual([c.detached[0].screen, c.detached[0].node], ['s2', 'n.0']);
+  assert.match(c.detached[0].reason, /^1 abs\.x: 4 in the component, 30 here \(not overridable\)/);
+});
+
+test('an override left out is caught: the instance would differ, so it is detached, never a wrong instance', () => {
+  const s = [scr('s1', row('A'), row('B'))];
+  nodeAt(s[0].spec, 'n.1.0').font.c = 'rgb(200, 0, 0)';
+  const tpl = nodeAt(s[0].spec, 'n.0'), occ = nodeAt(s[0].spec, 'n.1');
+  const props = { text: { type: 'TEXT', default: 'A' } }, bind = { text: '0' };
+  const { ov, diff } = instanceOf(tpl, occ, { bind, props, vals: { text: 'B' } });
+  assert.deepEqual(diff, []);
+  assert.deepEqual(ov, { 0: { 'font.c': 'rgb(200, 0, 0)' } });
+  // the same check with the colour override missing
+  const lost = instanceDiff(expandInstance(tpl, { bind, props, vals: { text: 'B' }, ov: {} }), occ);
+  assert.deepEqual(lost, [{ path: '0', key: 'font.c', a: 'rgb(0, 0, 0)', b: 'rgb(200, 0, 0)' }]);
+  assert.match(diffReason(lost), /^0 font\.c: "rgb\(0, 0, 0\)" in the component, "rgb\(200, 0, 0\)" here$/);
+  // and through findComponents the colour is an override
+  const c = findComponents(s).components[0];
+  assert.deepEqual(allNodes(c)[1].ov, { 0: { 'font.c': 'rgb(200, 0, 0)' } });
+});
+
+test('expandInstance: properties at their default when no value is given, BOOLEAN false hides, null override deletes', () => {
+  const tpl = { id: 'n.4', t: 'F', w: 10, h: 10, paint: { bg: 'red', radius: ['2px'] }, kids: [
+    { id: 'n.4.0', t: 'T', w: 10, h: 10, runs: [{ t: 'tpl text' }] }, { id: 'n.4.1', t: 'V', w: 10, h: 10, icon: { ref: 'a', color: 'blue' } }] };
+  const props = { text: { type: 'TEXT', default: 'Def' }, icon: { type: 'INSTANCE_SWAP', default: 'a' }, 'show-icon': { type: 'BOOLEAN', default: true } };
+  const bind = { text: '0', icon: '1', 'show-icon': '1' };
+  let e = expandInstance(tpl, { bind, props });
+  assert.deepEqual(e.kids[0].runs, [{ t: 'Def' }]);
+  e = expandInstance(tpl, { bind, props, vals: { text: 'a\nb', icon: 'b' }, ov: { '': { 'paint.radius': null } } });
+  assert.deepEqual(e.kids[0].runs, [{ t: 'a' }, { br: true }, { t: 'b' }]);
+  assert.equal(e.kids[1].icon.ref, 'b');
+  assert.deepEqual(e.paint, { bg: 'red' });
+  e = expandInstance(tpl, { bind, props, vals: { 'show-icon': false } });
+  assert.equal(e.kids.length, 1);
+  assert.deepEqual(tpl.kids.length, 2, 'the template is not changed');
+});
+
+test('an occurrence holding a detached occurrence is detached too; a template holding one takes its variant', () => {
+  const tag = (x) => F('tag', { bg: 'rgb(0, 0, 0)' }, T(x));
+  const card = (x) => F('card', { bg: BG }, T(x, 'h'), tag('t'));
+  const D = decl({ tag: { kind: 'chip' } });
+  // a lone tag on s0 is the tag template
+  const s = [scr('s0', tag('t')), scr('s1', card('A'), card('B')), scr('s2', card('C'))];
+  nodeAt(s[0].spec, 'n.0.0').abs = { x: 0, y: 0, c: 'L' };
+  for (const [sc, id, x] of [[1, 'n.0.1.0', 0], [1, 'n.1.1.0', 0], [2, 'n.0.1.0', 9]]) nodeAt(s[sc].spec, id).abs = { x, y: 0, c: 'L' };
+  let r = findComponents(s, { decl: D });
+  const by = (n) => r.components.find((c) => c.name === n);
+  assert.deepEqual(by('tag').detached.map((d) => `${d.screen} ${d.node}`), ['s2 n.0.1']);
+  assert.deepEqual(by('card').detached.map((d) => `${d.screen} ${d.node} ${d.reason}`), ['s2 n.0 holds detached s2 n.0.1']);
+  assert.equal(by('card').count, 2);
+  // the moved tag inside the card template (s1 n.0): that card variant goes; no card is left -> skipped 'detached'
+  for (const [sc, id, x] of [[1, 'n.0.1.0', 9], [2, 'n.0.1.0', 0]]) nodeAt(s[sc].spec, id).abs = { x, y: 0, c: 'L' };
+  r = findComponents(s, { decl: D });
+  assert.equal(r.components.find((c) => c.name === 'card'), undefined);
+  assert.deepEqual(r.skipped.filter((x) => x.reason === 'detached').map((x) => [x.key, x.count]), [['c:div.card', 3]]);
 });

@@ -135,9 +135,23 @@ Dựng trang HTML từ spec component (dùng renderer của norm proxy, `proxy.m
 
 Component được dựng từ spec của lần xuất hiện đầu tiên (theo thứ tự màn rồi `cmpNodeId`). Mỗi lần xuất hiện khác phải tái tạo đúng từ component + thuộc tính + ghi đè: `expandInstance(cmp, inst)` dựng lại spec của cây con, so với spec đích bằng phép so của kế hoạch 1 (khung ≤ 0,5 px, chữ ≤ 1 px, paint / type đúng). Lệch → lần xuất hiện đó không thành instance (ghi `detached` + lý do), màn vẫn dựng bằng layer rời. Trạng thái `proposed` kiểm tra tương phản WCAG như coverage.
 
-- [ ] **Step 1: Viết test**: mọi lần xuất hiện của fixture tái tạo đúng; ghi đè thiếu một màu → `detached` có lý do, không phải instance sai; trạng thái tắt có tương phản thấp vẫn được (WCAG miễn cho control tắt), trạng thái lỗi tương phản thấp → cảnh báo.
-- [ ] **Step 2–4:** FAIL → viết → PASS.
-- [ ] **Step 5: Commit** `feat(vuong-design): instances must rebuild the target spec, else detached`.
+Đã làm (2026-11-25):
+- `expandInstance`, `instanceDiff`, `instanceOf` nằm trong `components.mjs` (không cần sửa `verify.mjs`). Ghi đè lưu theo từng lần xuất hiện (`ov`).
+- Lần xuất hiện thành `detached` và dựng bằng layer rời khi:
+  - có khác biệt không ghi đè được;
+  - hoặc nó chứa một lần xuất hiện đã tách.
+- `w` / `h` chỉ so trên trục FIXED.
+- Tương phản WCAG của trạng thái đề xuất: `stateContrast` trong `states.mjs`.
+- Trang xem trước và `cmp.mjs` báo cả hai.
+- Planora:
+  - 127 instance, 38 có ghi đè.
+  - 4 lần `bar` dựng bằng layer rời: vạch đánh dấu đặt tuyệt đối ở vị trí x khác nhau.
+  - 3 trạng thái nhấn dưới WCAG; trạng thái gốc vốn đã thấp.
+- Danh sách thuộc tính ghi đè được là giả định thận trọng. Task 1 (probe `cmpProps`) sẽ xác nhận hoặc nới ra.
+
+- [x] **Step 1: Viết test**: mọi lần xuất hiện của fixture tái tạo đúng; ghi đè thiếu một màu → `detached` có lý do, không phải instance sai; trạng thái tắt có tương phản thấp vẫn được (WCAG miễn cho control tắt), trạng thái lỗi tương phản thấp → cảnh báo.
+- [x] **Step 2–4:** FAIL → viết → PASS.
+- [x] **Step 5: Commit** `feat(vuong-design): instances must rebuild the target spec, else detached`.
 
 ### Task 6: Mã hoá và runtime component
 

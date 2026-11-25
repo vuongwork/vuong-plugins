@@ -147,7 +147,10 @@ Component được dựng từ spec của lần xuất hiện đầu tiên (theo
   - 127 instance, 38 có ghi đè.
   - 4 lần `bar` dựng bằng layer rời: vạch đánh dấu đặt tuyệt đối ở vị trí x khác nhau.
   - 3 trạng thái nhấn dưới WCAG; trạng thái gốc vốn đã thấp.
-- Danh sách thuộc tính ghi đè được là giả định thận trọng. Task 1 (probe `cmpProps`) sẽ xác nhận hoặc nới ra.
+- Danh sách thuộc tính ghi đè được đã đo (2026-11-25, ca `ov` của probe, file "weather"; lưu ở `cmp.ov` trong `figma-facts.json`):
+  - Không ghi đè được: hướng layout, vị trí x/y, xoay, `resize`, min/max, thêm con.
+  - Còn lại ghi đè được, kể cả clip, wrap và ảnh nền.
+  - Task 6 phải ghi đè theo đúng danh sách này.
 
 - [x] **Step 1: Viết test**: mọi lần xuất hiện của fixture tái tạo đúng; ghi đè thiếu một màu → `detached` có lý do, không phải instance sai; trạng thái tắt có tương phản thấp vẫn được (WCAG miễn cho control tắt), trạng thái lỗi tương phản thấp → cảnh báo.
 - [x] **Step 2–4:** FAIL → viết → PASS.

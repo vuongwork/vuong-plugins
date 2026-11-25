@@ -180,7 +180,7 @@ Every fact matches the current assumptions, so nothing in the model changes; the
 
 ### Component facts (plan 3b)
 
-`cmpProbePayload()` (9.5 KB, one bridge job) probes the component API on `_vd-probe`. Everything it makes is named `cmp-*` and placed at y 3000 px or below, and its temporary variable collection is `vd-probe-tmp`. A `finally` block removes all of it; the result reports `cleaned`. `readCmpFacts` turns the result into the `cmp` key of `core/figma-facts.json`; each case falls back to the safe side (`no` / `false`) when a value is missing. Measured 2026-11-24 through the bridge: 3.4 s, no errors, `cleaned: true`.
+`cmpProbePayload()` (9.5 KB, one bridge job) probes the component API on `_vd-probe`. Everything it makes is named `cmp-*` and placed at y 3000 px or below, and its temporary variable collection is `vd-probe-tmp`. A `finally` block removes all of it; the result reports `cleaned`. `readCmpFacts` turns the result into the `cmp` key of `core/figma-facts.json`; each case falls back to the safe side (`no` / `false`) when a value is missing. Measured 2026-11-24 through the bridge: 3.4 s, no errors, `cleaned: true`. Measured again 2026-11-25 with the case `ov` added (16.3 KB): 8.5 s from the plugin's connection, no errors, `cleaned: true`, and the other cases unchanged.
 
 | Case | Measured | Fact |
 |---|---|---|
@@ -188,7 +188,8 @@ Every fact matches the current assumptions, so nothing in the model changes; the
 | `props` (component set `state=default` / `state=selected`) | TEXT, BOOLEAN and INSTANCE_SWAP properties set and read back; variant switched; a direct fill override on the instance kept after `setProperties` | all `true` |
 | `layout` (row and chip components, 8 nodes, columns 300 px and 360 px) | largest box difference instance vs plain frames: 0 px at 300 px, 0 px at 360 px (row height 32 px) | `layout: ok`, `layoutMax: 0` |
 | `bind` (fill and paddingLeft bound to variables on the main) | both bindings inherited (paddingLeft 12 px); fill rebound on the instance | `bind: ok` |
-| `time` (20 rows) | instances 412 ms, plain frame trees 815 ms | `timeMs` |
+| `time` (20 rows) | instances 412 ms, plain frame trees 815 ms (2026-11-25: 299 ms, 343 ms) | `timeMs` |
+| `ov` (2026-11-25, 30 properties on an instance's child) | see "Instances must rebuild their target" | `ov` |
 
 Every case is favourable, so plan 3b keeps its design: ids on instance children through plugin data, component properties for text, booleans and icons, and instances in screens.
 
@@ -251,15 +252,18 @@ Plan 3b Task 5 (`components.mjs`, `states.mjs`). Each use of a component must re
 
 **Overrides.** A difference without a class becomes an override on that use: `ov: { '<path>': { '<key>': value } }`, where `''` is the root.
 
-- What can be overridden: fills, borders, radius, shadow, opacity, font, text runs, icon colours, padding, gap and alignment.
 - The root's size and sizing belong to the instance.
+- Below the root, the probe's case `ov` decides what can be overridden (`cmp.ov` in `core/figma-facts.json`, read by `cmp.mjs` through `overridableFrom`). Without that measurement a safe default applies: structure, layout direction and wrap, absolute placement, clip, transforms, image fills and icon refs are not overridable.
+- Icon refs always go through INSTANCE_SWAP.
 
-**Not overridable**, until the Figma probe (Task 1) says more:
+Measured 2026-11-25 (Figma file "weather"):
 
-- structure, layout direction and wrap;
-- absolute placement inside the component;
-- clip, transforms and image fills;
-- icon refs, which go through INSTANCE_SWAP.
+| | Properties on an instance's child |
+|---|---|
+| Overridable | fills, image fills, borders, radius, shadow, opacity, clip; padding, gap, wrap, wrap gap, alignment, sizing mode; every font property; text; icon colours |
+| Not overridable | layout direction; position (`x`, `y`) and rotation, both refused by Figma ("cannot be overridden in an instance: relative-transform"); width and height through `resize`; min / max width; adding a child |
+
+`resize` and min / max width read back unchanged without an error, so they count as not overridable. Planora does not need them: no use differs from its template in a FIXED child size.
 
 A use with such a difference is `detached`: it is listed with the reason and built as layers, as plan 3 builds it. Nested uses follow two more rules:
 

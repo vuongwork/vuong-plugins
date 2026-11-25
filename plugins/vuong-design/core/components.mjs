@@ -292,7 +292,8 @@ export function findComponents(screens, opts = {}) {
   });
   instOf = mapOf(comps);
 
-  const components = cascade(comps.map((g) => build(g, instOf, skipped)).filter(Boolean), skipped).sort((a, b) => cmpStr(a.name, b.name));
+  const overridable = opts.overridable || OVERRIDABLE;
+  const components = cascade(comps.map((g) => build(g, instOf, skipped, overridable)).filter(Boolean), skipped).sort((a, b) => cmpStr(a.name, b.name));
   skipped.sort((a, b) => cmpStr(a.key, b.key) || cmpStr(a.reason, b.reason));
   return { v: COMPONENTS_VERSION, components, proposed, skipped, warnings: [...warnings].sort(cmpStr) };
 }
@@ -310,8 +311,9 @@ export function findComponents(screens, opts = {}) {
 // with it. A component left with no occurrence is skipped 'detached'.
 // The root's placement (abs.*) belongs to the instance node, not to the component, and is not compared; its size and
 // sizing (w, h, sz, min, max, paint.pos) are the instance's own (overrides at '').
-// Until the Figma probe (Task 1, cmpProps) says more, structure, layout direction, wrap, absolute placement, clip,
-// transforms, image fills and icon refs (those go through INSTANCE_SWAP) are not overridable.
+// OVERRIDABLE is the safe default: structure, layout direction, wrap, absolute placement, clip, transforms, image fills
+// and icon refs (those go through INSTANCE_SWAP) are not overridable. overridableFrom(facts.cmp) applies what the
+// Figma probe measured (figma-probe.mjs, case ov); findComponents takes it as opts.overridable.
 const OBJ_KEYS = new Set(['paint', 'font', 'icon', 'lay', 'abs']);
 export const OVERRIDABLE = new Set([
   'w', 'h', 'sz', 'runs',
@@ -320,6 +322,11 @@ export const OVERRIDABLE = new Set([
   'icon.color', 'icon.fill', 'icon.stroke', 'icon.sw',
   'lay.p', 'lay.g', 'lay.cg', 'lay.pa', 'lay.ca', 'lay.sb',
 ]);
+export function overridableFrom(cmpFacts) {
+  const out = new Set(OVERRIDABLE);
+  for (const [k, v] of Object.entries((cmpFacts && cmpFacts.ov) || {})) if (v === true) out.add(k); else out.delete(k);
+  return out;
+}
 const ROOT_OWN = new Set(['w', 'h', 'sz', 'min', 'max', 'paint.pos']);
 const GEO = new Set(['w', 'h', 'min', 'max', 'lay.p', 'lay.g', 'lay.cg', 'abs.x', 'abs.y', 'paint.radius', 'paint.border', 'font.lh']);
 const TOL_FRAME = 0.5, TOL_TEXT = 1, TOL_EXACT = 1e-6;
@@ -411,14 +418,14 @@ export function instanceDiff(exp, target, { nested = {} } = {}) {
 }
 
 // the overrides that turn the template + vals into the target, and what they cannot cover (diff, empty when it rebuilds)
-export function instanceOf(tpl, target, { bind = {}, props = {}, vals = {}, nested = {} } = {}) {
+export function instanceOf(tpl, target, { bind = {}, props = {}, vals = {}, nested = {}, overridable = OVERRIDABLE } = {}) {
   const base = expandInstance(tpl, { bind, props, vals });
   const ov = {};
   const go = (a, b, root) => {
     const path = rel(a.id, base.id);
     if (!root && Object.hasOwn(nested, path)) return;
     for (const d of diffKeys(a, b, root)) {
-      if (!OVERRIDABLE.has(d.k) && !(root && ROOT_OWN.has(d.k))) continue;
+      if (!overridable.has(d.k) && !(root && ROOT_OWN.has(d.k))) continue;
       (ov[path] ||= {})[d.k] = d.b === undefined ? null : d.b;
     }
     const ka = a.kids || [], kb = b.kids || [];
@@ -430,7 +437,7 @@ export function instanceOf(tpl, target, { bind = {}, props = {}, vals = {}, nest
   const diff = instanceDiff(expandInstance(tpl, { bind, props, vals, ov: sorted }), target, { nested });
   return { ov: sorted, diff };
 }
-export const diffReason = (diff) => diff.slice(0, 3).map((d) => `${d.path || 'root'} ${d.key}: ${show(d.a)} in the component, ${show(d.b)} here${d.key === 'kids' ? ' (children)' : OVERRIDABLE.has(d.key) ? '' : ' (not overridable)'}`).join('; ') + (diff.length > 3 ? `; +${diff.length - 3} more` : '');
+export const diffReason = (diff, overridable = OVERRIDABLE) => diff.slice(0, 3).map((d) => `${d.path || 'root'} ${d.key}: ${show(d.a)} in the component, ${show(d.b)} here${d.key === 'kids' ? ' (children)' : overridable.has(d.key) ? '' : ' (not overridable)'}`).join('; ') + (diff.length > 3 ? `; +${diff.length - 3} more` : '');
 
 // an occurrence holding a detached occurrence is detached; a template holding one takes its variant (repeat)
 function cascade(components, skipped) {
@@ -512,7 +519,7 @@ function shapesOf(occ, instOf) {
   return [...byPart.keys()].sort(cmpStr).flatMap((k) => byPart.get(k).map((members, i) => ({ idx: i + 1, members })));
 }
 
-function build(g, instOf, skipped) {
+function build(g, instOf, skipped, overridable) {
   const stateAxis = g.occ.some((r) => r.ident.states.length);
   const modAxes = Object.keys(g.dc.variants || {}).sort(cmpStr).filter((ax) => g.occ.some((r) => (r.ident.mods[ax] || 'default') !== 'default'));
   // shapes: occurrences clustered by structure, largest first; each joins the first shape whose template it embeds in
@@ -596,8 +603,8 @@ function build(g, instOf, skipped) {
     const propsOf = Object.fromEntries([...registry].map(([name, x]) => [name, { type: x.type, default: x.default }]));
     const nodes = [];
     for (const r of occ) {
-      const { ov, diff } = instanceOf(tpl.sn, r.sn, { bind, props: propsOf, vals: vals.get(r), nested });
-      if (diff.length) { detached.push({ ...ref(r), reason: diffReason(diff) }); continue; }
+      const { ov, diff } = instanceOf(tpl.sn, r.sn, { bind, props: propsOf, vals: vals.get(r), nested, overridable });
+      if (diff.length) { detached.push({ ...ref(r), reason: diffReason(diff, overridable) }); continue; }
       nodes.push(Object.keys(ov).length ? { ...ref(r), vals: vals.get(r), ov } : { ...ref(r), vals: vals.get(r) });
     }
     if (nodes.length) variants.push({ props: v.props, template: ref(tpl), bind, nested, nodes });

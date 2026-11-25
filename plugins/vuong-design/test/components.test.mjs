@@ -364,3 +364,12 @@ test('an occurrence holding a detached occurrence is detached too; a template ho
   assert.equal(r.components.find((c) => c.name === 'card'), undefined);
   assert.deepEqual(r.skipped.filter((x) => x.reason === 'detached').map((x) => [x.key, x.count]), [['c:div.card', 3]]);
 });
+
+test('a measured override (opts.overridable) keeps a use that the safe default detaches', () => {
+  const s = [scr('s1', row('A', F('dot', { bg: 'rgb(0, 0, 0)' })), row('B', F('dot', { bg: 'rgb(0, 0, 0)' })))];
+  for (const [id, x] of [['n.0.1', 4], ['n.1.1', 30]]) nodeAt(s[0].spec, id).abs = { x, y: 0, c: 'L' };
+  assert.equal(findComponents(s).components[0].detached.length, 1);
+  const c = findComponents(s, { overridable: new Set(['abs.x']) }).components[0];
+  assert.equal(c.detached, undefined);
+  assert.deepEqual(allNodes(c)[1].ov, { 1: { 'abs.x': 30 } });
+});

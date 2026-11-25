@@ -21,7 +21,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { findComponents, componentsDraft, readComponentsFile } from './components.mjs';
+import { findComponents, componentsDraft, readComponentsFile, overridableFrom } from './components.mjs';
+import { loadFacts } from './figma-probe.mjs';
 import { componentStates, statesDraft, stateRules } from './states.mjs';
 import { readRules } from './rules-file.mjs';
 import { renderComponents, componentsSummary } from './components-report.mjs';
@@ -37,7 +38,7 @@ const readJson = (p, what) => {
   try { return JSON.parse(readFileSync(p, 'utf8').replace(/^﻿/, '')); } catch (e) { throw new UsageError(`${p}: not valid JSON (${e.message})`); }
 };
 
-export function runComponents(dsDir, { decl, rules, fontMap = defaultFontMap(), generated = '' } = {}) {
+export function runComponents(dsDir, { decl, rules, fontMap = defaultFontMap(), generated = '', facts = loadFacts() } = {}) {
   const ir = readJson(join(dsDir, 'ir.json'), 'ir.json (pass the --out folder of ds.mjs)');
   const screens = (ir.screens || []).map((s) => {
     const id = String(s.id ?? s.name);
@@ -46,7 +47,7 @@ export function runComponents(dsDir, { decl, rules, fontMap = defaultFontMap(), 
   if (!screens.length) throw new UsageError(`${dsDir}/ir.json has no screens`);
   const tokens = existsSync(join(dsDir, 'tokens.json')) ? readJson(join(dsDir, 'tokens.json')) : null;
   const specs = Object.fromEntries(screens.map((s) => [String(s.screen.id ?? s.screen.name), s.spec]));
-  const cmps = findComponents(screens, { decl });
+  const cmps = findComponents(screens, { decl, overridable: overridableFrom(facts && facts.cmp) });
   const states = componentStates(cmps, { specs, tokens, rules, decl });
   const draft = componentsDraft(screens);
   const rulesDraft = statesDraft(rules);

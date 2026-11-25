@@ -155,7 +155,7 @@ test('readCmpFacts: a full good result gives own data, every property, ok layout
   assert.deepEqual(readCmpFacts(cmpBase(), '2026-11-24'), {
     measured: '2026-11-24', data: 'own', idPattern: true,
     props: { text: true, bool: true, swap: true, variant: true, override: true },
-    layout: 'ok', layoutMax: 0.004, bind: 'ok', timeMs: { inst: 40, plain: 90 },
+    layout: 'ok', layoutMax: 0.004, bind: 'ok', timeMs: { inst: 40, plain: 90 }, ov: null,
   });
 });
 
@@ -188,4 +188,21 @@ test('readCmpFacts: missing cases keep the defaults; loadFacts merges a partial 
   assert.equal(g.cmp.layout, 'no');
   assert.deepEqual(g.cmp.props, { text: true, bool: false, swap: false, variant: false, override: false });
   assert.equal(g.lineHeightFrac, 'keep');
+});
+
+test('readCmpFacts ov: each measured key, keys measured together share it, an error is false, kids is left out', async () => {
+  const { readCmpFacts, cmpProbePayload } = await import('../core/figma-probe.mjs');
+  assert.match(cmpProbePayload(), /await run\('ov'/);
+  const r = cmpBase();
+  r.cases.ov = { 'lay.p': true, 'lay.d': false, 'abs.x': 'Cannot move a layer in an instance', w: true, 'font.ff': true, kids: false };
+  assert.deepEqual(readCmpFacts(r).ov, { 'abs.x': false, 'abs.y': false, 'font.ff': true, 'font.fw': true, 'font.fst': true, h: true, 'lay.d': false, 'lay.p': true, w: true });
+});
+
+test('overridableFrom: measured keys are added or removed; without a measurement the safe default stays', async () => {
+  const { overridableFrom, OVERRIDABLE } = await import('../core/components.mjs');
+  assert.deepEqual([...overridableFrom(null)], [...OVERRIDABLE]);
+  const o = overridableFrom({ ov: { 'abs.x': true, 'lay.p': false } });
+  assert.equal(o.has('abs.x'), true);
+  assert.equal(o.has('lay.p'), false);
+  assert.equal(OVERRIDABLE.has('abs.x'), false, 'the default is not changed');
 });

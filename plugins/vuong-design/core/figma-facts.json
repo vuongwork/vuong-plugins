@@ -13,7 +13,7 @@
   },
   "baseline": "ok",
   "cmp": {
-    "measured": "2026-11-24",
+    "measured": "2026-11-25",
     "data": "own",
     "idPattern": true,
     "props": {
@@ -27,8 +27,48 @@
     "layoutMax": 0,
     "bind": "ok",
     "timeMs": {
-      "inst": 412,
-      "plain": 815
+      "inst": 299,
+      "plain": 343
+    },
+    "ov": {
+      "abs.x": false,
+      "abs.y": false,
+      "font.c": true,
+      "font.ff": true,
+      "font.fw": true,
+      "font.fst": true,
+      "font.fs": true,
+      "font.lh": true,
+      "font.ls": true,
+      "font.ta": true,
+      "font.td": true,
+      "font.tt": true,
+      "icon.color": true,
+      "icon.fill": true,
+      "icon.stroke": true,
+      "icon.sw": true,
+      "lay.ca": true,
+      "lay.cg": true,
+      "lay.d": false,
+      "lay.g": true,
+      "lay.p": true,
+      "lay.pa": true,
+      "lay.sb": true,
+      "lay.wrap": true,
+      "min": false,
+      "max": false,
+      "paint.bg": true,
+      "paint.bgImage": true,
+      "paint.border": true,
+      "paint.clip": true,
+      "paint.opacity": true,
+      "paint.radius": true,
+      "paint.shadow": true,
+      "paint.transform": false,
+      "runs": true,
+      "sz": true,
+      "w": false,
+      "h": false
     }
   }
 }

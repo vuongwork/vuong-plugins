@@ -36,6 +36,7 @@ export const DEFAULT_FACTS = Object.freeze({
     layoutMax: null, // the largest box difference measured (px)
     bind: 'no', // 'ok': a variable bound on the main is bound on the instance, and an instance override binds another
     timeMs: null, // { inst, plain }: 20 instances vs 20 plain trees of the same content
+    ov: null, // { <spec key>: true | false }: a direct override on an instance's child is kept (components.mjs overridableFrom)
   }),
 });
 
@@ -191,7 +192,7 @@ export function probePayload() { return PROBE_SRC.trim() + '\n'; }
 // cmpProbePayload(): like probePayload, on page `_vd-probe`, but it only touches what it creates: it first removes
 // its own leftovers (top-level nodes named `cmp-*`, variable collections named `vd-probe-tmp`), and removes every node
 // and the variable collection it made before it returns (`cleaned: true`). It returns
-// { cases: { data, props, layout, bind, time }, errors, cleaned }.
+// { cases: { data, props, layout, bind, time, ov }, errors, cleaned }.
 const CMP_PROBE_SRC = `
 const page = figma.root.children.find((p) => p.name === '_vd-probe') || figma.createPage();
 page.name = '_vd-probe';
@@ -341,6 +342,70 @@ try {
     for (let i = 0; i < 20; i++) { const a = row(figma.createFrame()); P4.appendChild(a); a.layoutSizingHorizontal = 'FILL'; a.children[1].characters = 'Task ' + i; }
     return { inst, plain: Date.now() - t0 };
   });
+  // ov: which properties of an instance's child take a direct override (set on the instance, read back, main unchanged)
+  await run('ov', async () => {
+    await figma.loadFontAsync({ family: 'Inter', style: 'Bold' });
+    const c = figma.createComponent(); top(c, 'cmp-ov', 120);
+    c.layoutMode = 'HORIZONTAL'; c.fills = [solid(0.9, 0.9, 0.9)]; c.clipsContent = false;
+    c.layoutSizingHorizontal = 'FIXED'; c.layoutSizingVertical = 'FIXED'; c.resize(240, 80);
+    const k = figma.createFrame(); k.name = 'k'; c.appendChild(k);
+    k.layoutMode = 'HORIZONTAL'; k.paddingLeft = 4; k.itemSpacing = 2; k.fills = [solid(1, 1, 1)]; k.clipsContent = false;
+    k.layoutSizingHorizontal = 'FIXED'; k.layoutSizingVertical = 'FIXED'; k.resize(80, 40);
+    const kt = txt('Ab', k); kt.name = 'kt';
+    const w = figma.createFrame(); w.name = 'w'; c.appendChild(w);
+    w.layoutMode = 'HORIZONTAL'; w.layoutWrap = 'WRAP'; w.counterAxisSpacing = 2; w.fills = []; w.resize(60, 40);
+    const ab = figma.createFrame(); ab.name = 'ab'; c.appendChild(ab); ab.layoutPositioning = 'ABSOLUTE'; ab.resize(10, 10); ab.x = 5; ab.y = 5;
+    const icm = figma.createComponent(); top(icm, 'cmp-ov-icon', 16); icm.resize(16, 16);
+    const vec = figma.createRectangle(); vec.name = 'vec'; icm.appendChild(vec); vec.resize(16, 16); vec.fills = [solid(0, 0, 0)];
+    const ii = icm.createInstance(); ii.name = 'ic'; k.appendChild(ii);
+    const inst = c.createInstance(); top(inst, 'cmp-ov-i', 120);
+    const I = (name) => inst.findOne((n) => n.name === name);
+    const M = (name) => c.findOne((n) => n.name === name);
+    const out = {};
+    // key: set on the instance child, ok: read back on it, same: the main still has its own value
+    const t = (key, set, ok, same) => {
+      try { set(); out[key] = !!ok() && !!same(); } catch (e) { out[key] = String((e && e.message) || e).slice(0, 80); }
+    };
+    const red = [solid(1, 0, 0)];
+    const isRed = (n) => n.fills[0] && n.fills[0].type === 'SOLID' && n.fills[0].color.r === 1 && n.fills[0].color.g === 0;
+    t('lay.d', () => { I('k').layoutMode = 'VERTICAL'; }, () => I('k').layoutMode === 'VERTICAL', () => M('k').layoutMode === 'HORIZONTAL');
+    I('k').layoutMode = 'HORIZONTAL';
+    t('lay.wrap', () => { I('k').layoutWrap = 'WRAP'; }, () => I('k').layoutWrap === 'WRAP', () => M('k').layoutWrap === 'NO_WRAP');
+    t('lay.p', () => { I('k').paddingLeft = 9; }, () => I('k').paddingLeft === 9, () => M('k').paddingLeft === 4);
+    t('lay.g', () => { I('k').itemSpacing = 7; }, () => I('k').itemSpacing === 7, () => M('k').itemSpacing === 2);
+    t('lay.cg', () => { I('w').counterAxisSpacing = 9; }, () => I('w').counterAxisSpacing === 9, () => M('w').counterAxisSpacing === 2);
+    t('lay.pa', () => { I('k').primaryAxisAlignItems = 'SPACE_BETWEEN'; }, () => I('k').primaryAxisAlignItems === 'SPACE_BETWEEN', () => M('k').primaryAxisAlignItems === 'MIN');
+    t('lay.ca', () => { I('k').counterAxisAlignItems = 'CENTER'; }, () => I('k').counterAxisAlignItems === 'CENTER', () => M('k').counterAxisAlignItems === 'MIN');
+    t('abs.x', () => { I('ab').x = 30; I('ab').y = 20; }, () => I('ab').x === 30 && I('ab').y === 20, () => M('ab').x === 5 && M('ab').y === 5);
+    t('paint.clip', () => { I('k').clipsContent = true; }, () => I('k').clipsContent === true, () => M('k').clipsContent === false);
+    t('paint.transform', () => { I('ab').rotation = 15; }, () => Math.abs(I('ab').rotation - 15) < 0.01, () => M('ab').rotation === 0);
+    t('paint.bg', () => { I('k').fills = red; }, () => isRed(I('k')), () => !isRed(M('k')));
+    t('paint.bgImage', () => {
+      const img = figma.createImage(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 0, 1, 0, 0, 5, 0, 1, 13, 10, 45, 180, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130]));
+      I('w').fills = [{ type: 'IMAGE', imageHash: img.hash, scaleMode: 'FILL' }];
+    }, () => I('w').fills[0] && I('w').fills[0].type === 'IMAGE', () => M('w').fills.length === 0);
+    t('paint.radius', () => { I('k').cornerRadius = 6; }, () => I('k').cornerRadius === 6, () => M('k').cornerRadius === 0);
+    t('paint.border', () => { I('k').strokes = red; I('k').strokeWeight = 2; }, () => I('k').strokes.length === 1 && I('k').strokeWeight === 2, () => M('k').strokes.length === 0);
+    t('paint.shadow', () => { I('k').effects = [{ type: 'DROP_SHADOW', color: { r: 0, g: 0, b: 0, a: 0.25 }, offset: { x: 0, y: 2 }, radius: 4, spread: 0, visible: true, blendMode: 'NORMAL' }]; },
+      () => I('k').effects.length === 1, () => M('k').effects.length === 0);
+    t('paint.opacity', () => { I('k').opacity = 0.5; }, () => Math.abs(I('k').opacity - 0.5) < 0.01, () => M('k').opacity === 1);
+    t('w', () => { I('k').resize(100, 44); }, () => I('k').width === 100 && I('k').height === 44, () => M('k').width === 80);
+    t('sz', () => { I('k').layoutSizingHorizontal = 'HUG'; }, () => I('k').layoutSizingHorizontal === 'HUG', () => M('k').layoutSizingHorizontal === 'FIXED');
+    t('min', () => { I('w').minWidth = 50; I('w').maxWidth = 200; }, () => I('w').minWidth === 50 && I('w').maxWidth === 200, () => M('w').minWidth == null);
+    const T1 = () => inst.findOne((n) => n.type === 'TEXT'), T0 = () => kt;
+    t('font.fs', () => { T1().fontSize = 20; }, () => T1().fontSize === 20, () => T0().fontSize === 13);
+    t('font.ff', () => { T1().fontName = { family: 'Inter', style: 'Bold' }; }, () => T1().fontName.style === 'Bold', () => T0().fontName.style === 'Regular');
+    t('font.lh', () => { T1().lineHeight = { unit: 'PIXELS', value: 22 }; }, () => T1().lineHeight.value === 22, () => T0().lineHeight.unit === 'AUTO');
+    t('font.ls', () => { T1().letterSpacing = { unit: 'PIXELS', value: 1 }; }, () => T1().letterSpacing.value === 1, () => T0().letterSpacing.value === 0);
+    t('font.tt', () => { T1().textCase = 'UPPER'; }, () => T1().textCase === 'UPPER', () => T0().textCase === 'ORIGINAL');
+    t('font.td', () => { T1().textDecoration = 'UNDERLINE'; }, () => T1().textDecoration === 'UNDERLINE', () => T0().textDecoration === 'NONE');
+    t('font.ta', () => { T1().textAlignHorizontal = 'CENTER'; }, () => T1().textAlignHorizontal === 'CENTER', () => T0().textAlignHorizontal === 'LEFT');
+    t('font.c', () => { T1().fills = red; }, () => isRed(T1()), () => !isRed(T0()));
+    t('runs', () => { T1().characters = 'Xy'; }, () => T1().characters === 'Xy', () => T0().characters === 'Ab');
+    t('icon.color', () => { inst.findOne((n) => n.name === 'vec').fills = red; }, () => isRed(inst.findOne((n) => n.name === 'vec')), () => !isRed(vec));
+    t('kids', () => { const x = figma.createFrame(); made.push(x); I('k').appendChild(x); }, () => I('k').children.length > 2, () => M('k').children.length === 2);
+    return out;
+  });
 } finally {
   for (const n of made.reverse()) { try { if (!n.removed) n.remove(); } catch (e) { errors.push('cleanup: ' + ((e && e.message) || e)); } }
   for (const c of cols) { try { c.remove(); } catch (e) { errors.push('cleanup: ' + ((e && e.message) || e)); } }
@@ -358,6 +423,8 @@ export function cmpProbePayload() { return CMP_PROBE_SRC.trim() + '\n'; }
 //  layout: the largest difference of 8 boxes (instance vs plain frames, relative to their column, at 300 and 360 px):
 //        <= 0.01 'ok', <= 0.5 'near', else 'no'
 //  bind: the main's fill and padding variables are bound on the instance, and an instance fill override binds another
+//  ov: per spec key, true when the value set on the instance's child reads back and the main keeps its own (an error
+//      message or false -> false); keys measured together share the result (OV_SHARED)
 export function readCmpFacts(result, measured = null) {
   const c = (result && result.cases) || {};
   const f = { ...DEFAULT_FACTS.cmp, props: { ...DEFAULT_FACTS.cmp.props }, measured };
@@ -375,8 +442,17 @@ export function readCmpFacts(result, measured = null) {
   }
   if (c.bind && typeof c.bind === 'object') f.bind = c.bind.fillInherit === true && c.bind.padInherit === true && c.bind.fillOverride === true ? 'ok' : 'no';
   if (has(c.time, 'inst', 'plain')) f.timeMs = { inst: c.time.inst, plain: c.time.plain };
+  if (c.ov && typeof c.ov === 'object') {
+    f.ov = {};
+    for (const k of Object.keys(c.ov).sort()) {
+      if (k === 'kids') continue;
+      for (const x of [k, ...(OV_SHARED[k] || [])]) f.ov[x] = c.ov[k] === true;
+    }
+  }
   return f;
 }
+// one measured property stands for these spec keys too
+const OV_SHARED = { 'lay.pa': ['lay.sb'], 'abs.x': ['abs.y'], w: ['h'], min: ['max'], 'font.ff': ['font.fw', 'font.fst'], 'icon.color': ['icon.fill', 'icon.stroke', 'icon.sw'] };
 
 const near = (a, b, tol) => Math.abs(a - b) <= tol;
 const has = (o, ...ks) => !!o && ks.every((k) => typeof o[k] === 'number' && Number.isFinite(o[k]));

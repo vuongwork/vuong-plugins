@@ -1,0 +1,12 @@
+{
+  "plugin": "plugins/vuong-test",
+  "fixture": "leave-request",
+  "copy": [["bench/suites/vuong-test/project/test.config.json", "test.config.json"]],
+  "setup": ["mklink /J node_modules \"E:\\vuongpq\\plugins\\vuong-plugins\\bench\\.devdeps\\node_modules\""],
+  "answers": "../t2-cases/answers.md",
+  "key": "../../keys/leave-request.json",
+  "budgetUsd": 8,
+  "timeoutSec": 3600,
+  "allowedTools": ["Read", "Write", "Edit", "Glob", "Grep", "Skill", "Bash(node *)", "Bash(npx *)", "Bash(npm *)", "Bash(git *)", "Bash(ls *)", "Bash(cat *)", "Bash(grep *)", "Bash(cd *)", "Bash(mkdir *)", "Bash(head *)", "Bash(tail *)", "Bash(wc *)"],
+  "arms": ["plugin", "baseline"]
+}

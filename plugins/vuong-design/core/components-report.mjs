@@ -11,8 +11,8 @@
 //   fillOpacity    the root fill's alpha multiplied by it;  strokeOpacity: each border colour's alpha multiplied by it
 //   ring           an outer box-shadow 0 0 0 <width> px in the colour (before any shadow the root has)
 //   stroke         a solid border of <width> px in the colour on all four sides
-//   spinner        each replaced text becomes a frame of the text's box (so the size does not change) with a ring
-//                  spinner of <size> px centred in it (a quarter of the ring faint)
+//   spinner        each replaced text becomes a frame of the text's box (so the size does not change) with a vector
+//                  spinner (spinnerSvg: faint ring + quarter arc) of <size> px centred in it
 //
 // renderComponents({ cmps, states, specs, screens, fontMap, draft?, rulesDraft?, title?, generated? }) -> HTML
 //  - cmps: findComponents() result; states: componentStates() result; specs: { [screen]: spec-norm root };
@@ -47,6 +47,9 @@ const rgba = (css, k) => {
 const hexA = (hex, a) => rgba(hex, a);
 const findNode = (n, id) => { if (n.id === id) return n; for (const k of n.kids || []) { const x = findNode(k, id); if (x) return x; } return null; };
 
+// spinner: a faint full ring and a quarter arc, stroke 2.5 on a 24 grid, round caps
+export const spinnerSvg = (color) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9.5" stroke="${color}" stroke-opacity="0.25" stroke-width="2.5"/><path d="M12 2.5a9.5 9.5 0 0 1 9.5 9.5" stroke="${color}" stroke-width="2.5" stroke-linecap="round"/></svg>`;
+
 export function stateSpec(root, patch) {
   const n = clone(root);
   const p = (n.paint = { ...(n.paint || {}) });
@@ -65,10 +68,10 @@ export function stateSpec(root, patch) {
       const id = path === '' ? n.id : `${n.id}.${path}`;
       const t = findNode(n, id);
       if (!t) continue;
-      const s = P.spinner.size, w = Math.max(1.5, r2(s / 8));
-      const ring = { w, style: 'solid', color: P.spinner.color };
-      const spin = { id: `${id}.spin`, t: 'F', w: s, h: s, sz: ['FIXED', 'FIXED'], abs: { x: r2((t.w - s) / 2), y: r2((t.h - s) / 2), c: 'L' },
-        paint: { radius: ['50%', '50%', '50%', '50%'], border: [{ ...ring, color: rgba(P.spinner.color, 0.25) }, ring, ring, ring] } };
+      const s = P.spinner.size;
+      // a vector icon (not a bordered frame: the proxy draws borders as inset shadows, uneven on a 13 px circle)
+      const spin = { id: `${id}.spin`, t: 'V', w: s, h: s, sz: ['FIXED', 'FIXED'], abs: { x: r2((t.w - s) / 2), y: r2((t.h - s) / 2), c: 'L' },
+        icon: { svg: spinnerSvg(P.spinner.color) } };
       for (const k of Object.keys(t)) if (!['id', 'w', 'h', 'sz'].includes(k)) delete t[k];
       Object.assign(t, { t: 'F', sz: ['FIXED', 'FIXED'], kids: [spin] });
     }

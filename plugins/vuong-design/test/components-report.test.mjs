@@ -95,6 +95,8 @@ test('stateSpec draws each patch on a copy of the template', () => {
   assert.deepEqual([l.kids[0].w, l.kids[0].h], [30, 16]);
   assert.equal(l.kids[0].runs, undefined);
   assert.deepEqual(l.kids[0].kids[0].abs, { x: 8, y: 1, c: 'L' });
+  assert.equal(l.kids[0].kids[0].t, 'V');
+  assert.match(l.kids[0].kids[0].icon.svg, /^<svg[^>]*viewBox="0 0 24 24".*stroke="#000000"/);
   assert.equal(JSON.stringify(root), before);
 });
 

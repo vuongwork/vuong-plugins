@@ -314,6 +314,44 @@ The preview has one section per component:
 
 Each cell is an `<iframe srcdoc>` that holds the proxy page (`proxy.mjs`) of one subtree. It is drawn on the fill behind the component in its screen. `stateSpec()` draws a proposed state's patch on a copy of the template. Planora run: 0.26 s, `components.html` 142 KB.
 
+### Figma components
+
+`figma.mjs plan` reads `components.json` from the ds folder when it exists (`--no-components` turns this off; `--cmp-page`, default `Components`). Without it every batch is the plan 3 batch, byte for byte.
+
+**Batches, in send order:** vars, `runtime`, `runtime-cmp`, `cmp-NN`, then the screen batches.
+
+- `runtime-cmp` installs `core/figma-runtime-cmp.js` once, like the runtime (≤ 16 384 B as installed; 6.7 KB now).
+- A batch that uses components gets a loader that inserts it into the screen runtime and patches three calls there (`CMP_PATCHES`). The screen runtime itself is unchanged.
+- `cmp-NN` batches build, in this order: the icon components (`icon/<ref>`, one per value an INSTANCE_SWAP property can take), then the components, each after the components its templates hold. A component's variants never split between batches.
+
+**A component** is its template built as a screen frame, then turned into a component.
+
+- Its readback goes into `state.json` under `components` (one entry per variant).
+- Variants become a component set named after the component. Each variant is named `axis=value, ...`.
+- The set (or the single component) gets the properties. TEXT binds `characters`, BOOLEAN binds `visible`, INSTANCE_SWAP binds the main of an icon instance.
+- Plugin data `vuongdesign/cmp` holds the name the runtime finds it by: `<name>` or `<name>/<axis=value, ...>`.
+
+**An instance** (an occurrence that Task 5 did not detach) keeps its full plan 3 encoding, plus a few marks (`core/figma-cmp.mjs` header):
+
+- `i`: the component. `p`: the property values. `j`: the layer index when a hidden BOOLEAN layer comes before it. `rc`: an icon whose colours are compared.
+- The runtime creates the instance (or swaps a nested one to its variant) and sets the properties. On each layer it then sets only what differs from the encoding. Every such set is an override.
+- It never sets layout direction, position or child size on a layer: Figma refuses those (probe case `ov`), and Task 5 detaches any use that would need them.
+- A nested main binds its own variables: where the readback shows other variables than the encoding's, each field is bound again to the encoded one.
+- The readback is the plan 3 one: every spec node has an entry, by the same id. So `check` reads instances as it reads layers.
+
+**A second build** (the data changed, or `--redo`) builds new components. The instances of each old one move to the new one of the same name (`swapComponent`), and the old one is removed: no duplicates. An unchanged `cmp-NN` is kept, as a vars batch is. A screen's hash covers the component items it uses.
+
+Planora on the fake (18 screens, 14 components, fixture `test/fixtures/figma-cmp-planora.json.gz`, 2026-11-25):
+
+| | |
+|---|---|
+| Component batches | 1 (19.3 KB) |
+| Screen batches | 3 (44.0, 46.6 and 19.1 KB) |
+| Instance layers on the screens | 147 (127 occurrences, plus their nested and icon instances) |
+| Nodes read back as encoded | 1 335 of 1 335 |
+
+Not yet: the proposed states (pressed, disabled, loading) as variants, and the state variables (plan Task 6, second part).
+
 ## Figma encoding
 
 `core/figma-encode.mjs` (plan 3 Task 4) turns each target spec (`spec-norm-<s>.json`) into compact data for the Figma builder: one-letter keys, Figma defaults left out, shared tables (`C` colours, `F` fonts, `I` icons, `V` variable names, `S` style names, `M` image sources), variable bindings as indices into `V` from `token-map.json`, and the spec id `o` on every node. The full format is in the file's header comment. `planBatches` packs screens in order into `use_figma` calls of at most 50 000 bytes (UTF-8, builder + data). Each batch carries only the table entries it uses. A screen too big to fit on its own throws `OversizeError` (screen, bytes); it is never cut.
@@ -396,7 +434,7 @@ Numbers are rounded to 0.01.
 `core/figma.mjs` (plan 3 Task 7) turns a `ds.mjs` output folder into `use_figma` calls, takes the results back and checks the real Figma screens with the plan 1-2 verifier. The script never calls Figma itself: the AI sends each batch.
 
 ```
-node core/figma.mjs plan   --ds <ds output> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo]
+node core/figma.mjs plan   --ds <ds output> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo] [--no-components] [--cmp-page Components]
 node core/figma.mjs ingest --out <dir> --result <file> [--batch vars-NN | batch-NN | N]
 node core/figma.mjs shots --out <dir>    # then ingest-shots --out <dir> --result <file>, shots-clean --out <dir>
 node core/figma.mjs serve  --out <dir> [--file <Figma file name> [--renamed]] [--send <keys>|run|pending]... [--shots] [--port 8787] [--wait <s>]   # Figma bridge, below

@@ -120,6 +120,7 @@ const INDEX = new WeakMap();
 function intern(tables, T, value) {
   let idx = INDEX.get(tables);
   if (!idx) { idx = {}; INDEX.set(tables, idx); }
+  if (!Array.isArray(tables[T])) tables[T] = []; // K (components) only when used
   if (!idx[T] || idx[T].n !== tables[T].length) idx[T] = { m: new Map(tables[T].map((v, i) => [JSON.stringify(v), i])), n: tables[T].length };
   const k = JSON.stringify(value);
   let i = idx[T].m.get(k);
@@ -144,6 +145,9 @@ function mapRefs(e, fn) {
     one('F', o, 'f'); one('C', o, 'c'); one('S', o, 'ts');
     if (o.v) for (const k of Object.keys(o.v)) one('V', o.v, k);
   }
+  // plan 3b components (figma-cmp.mjs): the instance's component, INSTANCE_SWAP values
+  one('K', e, 'i');
+  if (e.p) for (const k of Object.keys(e.p)) if (typeof e.p[k] === 'number') one('K', e.p, k);
   if (e.k) for (const k of e.k) mapRefs(k, fn);
 }
 
@@ -671,45 +675,58 @@ export function encodeScreen(spec, ctx = {}) {
 }
 
 // ---------------- batches ----------------
-export function batchData(encs, n, page, force, prof) {
+export function batchData(encs, n, page, force, prof, extra) {
   const tb = newTables();
   const screens = encs.map((enc) => {
     const T = structuredClone(enc.T);
     mapRefs(T, (Tn, i) => intern(tb, Tn, enc.tables[Tn][i]));
-    return { screen: enc.screen, file: enc.file, W: enc.W, T };
+    if (!enc.cm) return { screen: enc.screen, file: enc.file, W: enc.W, T };
+    // a component batch item (figma-cmp.mjs): its K index and INSTANCE_SWAP defaults remapped too
+    const cm = structuredClone(enc.cm), K = (i) => intern(tb, 'K', enc.tables.K[i]);
+    cm.k = K(cm.k);
+    for (const p of Object.values(cm.p || {})) if (p[0] === 'INSTANCE_SWAP') p[1] = K(p[1]);
+    return { screen: enc.screen, file: enc.file, W: enc.W, T, cm };
   });
   const D = { batch: n, rd: 1 }; // rd: the runtime reads text decoration / case and the dash pattern back (figma-check)
   if (page !== undefined) D.page = page;
   const f = (force || []).filter((x) => encs.some((enc) => enc.screen === x));
   if (f.length) D.force = f;
   if (prof) D.prof = 1; // runtime phase timings (figma.mjs plan --prof); not in the per-screen hash
+  // extra (plan 3b): cm = 1 on a component batch, cp = the components page when the batch uses components
+  if (extra) for (const [k, v] of Object.entries(extra)) if (k !== 'cp' || tb.K) D[k] = v;
   Object.assign(D, tb, { screens });
   return D;
 }
 
 export function planBatches(encs, opts = {}) {
-  const { limit = PAYLOAD_LIMIT, runtime, page, force, wrap, first = 1, prof } = opts;
+  const { limit = PAYLOAD_LIMIT, runtime, page, force, wrap, first = 1, prof, extra } = opts;
   let pre = '', post = '';
   if (!wrap) {
     if (typeof runtime !== 'string' || runtime.split('__DATA__').length !== 2) throw new Error('planBatches: runtime must contain __DATA__ exactly once');
     [pre, post] = runtime.split('__DATA__');
   }
   const build = (group, n) => {
-    const data = batchData(group, n, page, force, prof);
+    const data = batchData(group, n, page, force, prof, extra);
     const code = wrap ? wrap(data) : pre + JSON.stringify(data) + post;
     return { n, screens: group.map((e) => e.screen), bytes: Buffer.byteLength(code, 'utf8'), code, data };
   };
   const out = [];
   let group = [], cur = null;
+  // unit (plan 3b): consecutive encodings with the same unit(enc) go into one batch together (a component's variants)
+  const units = [];
   for (const enc of encs) {
+    const u = opts.unit ? opts.unit(enc) : units.length;
+    if (units.length && units[units.length - 1].u === u) units[units.length - 1].encs.push(enc); else units.push({ u, encs: [enc] });
+  }
+  for (const { encs: us } of units) {
     const n = out.length + first;
-    const tryB = build([...group, enc], n);
-    if (tryB.bytes <= limit) { group.push(enc); cur = tryB; continue; }
-    if (!group.length) throw new OversizeError(enc.screen, tryB.bytes, limit);
+    const tryB = build([...group, ...us], n);
+    if (tryB.bytes <= limit) { group.push(...us); cur = tryB; continue; }
+    if (!group.length) throw new OversizeError(us[0].screen, tryB.bytes, limit);
     out.push(cur);
-    const alone = build([enc], n + 1);
-    if (alone.bytes > limit) throw new OversizeError(enc.screen, alone.bytes, limit);
-    group = [enc]; cur = alone;
+    const alone = build(us, n + 1);
+    if (alone.bytes > limit) throw new OversizeError(us[0].screen, alone.bytes, limit);
+    group = [...us]; cur = alone;
   }
   if (group.length) out.push(cur);
   return out;

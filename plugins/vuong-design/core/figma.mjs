@@ -2,7 +2,7 @@
 // Figma CLI (plan 3 Task 7). The script never calls Figma: it prepares `use_figma` calls, takes their results back, and
 // verifies the real Figma screens with the plan 1-2 verifier (README "Figma CLI").
 //
-//   node core/figma.mjs plan   --ds <ds.mjs output folder> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo] [--prof]
+//   node core/figma.mjs plan   --ds <ds.mjs output folder> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo] [--prof] [--no-components] [--cmp-page Components]
 //   node core/figma.mjs ingest --out <dir> --result <file> [--batch vars-NN | batch-NN | N]
 //   node core/figma.mjs shots --out <dir>; ingest-shots --out <dir> --result <file>; shots-clean --out <dir>
 //   node core/figma.mjs serve  --out <dir> [--file <Figma file name> [--renamed]] [--send <keys>|run|pending]... [--shots] [--port 8787] [--wait <s>]
@@ -61,6 +61,7 @@ import { encodeScreen, planBatches, newTables, OversizeError, batchData, compact
 import { varsPayload, varNames, varsPlan } from './figma-vars.mjs';
 import { ordOf, decode, expandNodes, figmaProxy, shotAtDsf, proxyVsFigma, effectNodes, pngSize } from './figma-check.mjs';
 import { startBridge, BRIDGE_PORT } from './figma-bridge.mjs';
+import { cmpEncode } from './figma-cmp.mjs';
 
 const RUNTIME = readFileSync(new URL('./figma-runtime.js', import.meta.url), 'utf8');
 const shaOf = (s) => createHash('sha1').update(s).digest('hex').slice(0, 16);
@@ -76,19 +77,39 @@ export const runtimeInstallCode = () => `const B=${JSON.stringify(RT_BODY)};
 figma.root.setSharedPluginData('${NS}','rt',B);figma.root.setSharedPluginData('${NS}','rtv','${RUNTIME_VERSION}');
 return{runtime:'${RUNTIME_VERSION}',bytes:B.length};
 `;
+// The component runtime (plan 3b Task 6) is installed the same way (rtc / rtcv). A batch that uses components (D.K: a
+// screen batch with instances, D.cm: a component batch) runs the screen runtime with CMP_PATCHES applied: each anchor
+// must be in the installed runtime exactly once (1 = insert the component runtime before the anchor). A batch without
+// components gets the plan 3 loader, byte for byte.
+const RUNTIME_CMP = readFileSync(new URL('./figma-runtime-cmp.js', import.meta.url), 'utf8');
+const RTC_BODY = RUNTIME_CMP.replace(/\r\n/g, '\n').replace(/^[ \t]*\/\/.*\n/gm, '');
+export const RUNTIME_CMP_VERSION = shaOf(RTC_BODY).slice(0, 12);
+export const CMP_PATCHES = [
+  ['mk=async(e,par,sc)=>{', 'mk=async(e,par,sc)=>{if(e.i!=U)return XI(e,par,sc);'],
+  ['root=S.root=await mk(sc.T,null,sc)', 'root=S.root=await CV(await mk(sc.T,null,sc),sc)'],
+  ['for(const sc of D.screens){S=', 1],
+  ["if(PR){pt('total',T0)", "await PO();if(PR){pt('total',T0)"],
+];
+export const runtimeCmpInstallCode = () => `const B=${JSON.stringify(RTC_BODY)};
+figma.root.setSharedPluginData('${NS}','rtc',B);figma.root.setSharedPluginData('${NS}','rtcv','${RUNTIME_CMP_VERSION}');
+return{runtime:'${RUNTIME_CMP_VERSION}',bytes:B.length,rtc:1};
+`;
 export function loaderCode(D) {
   const C = compactIds(D);
+  const cmp = !!(D.K || D.cm);
   return `const D=${jsLiteral(C)};
 const R=figma.root,G=k=>R.getSharedPluginData('${NS}',k),${FNV_JS};
 if(G('rtv')!='${RUNTIME_VERSION}')return{batch:D.batch,stale:'${RUNTIME_VERSION}',have:G('rtv')};
-if(h(JSON.stringify(D))!='${fnv(JSON.stringify(C))}')return{batch:D.batch,damaged:1};
-const out=await new(Object.getPrototypeOf(async function(){}).constructor)('D','figma',G('rt'))(D,figma);
+${cmp ? `if(G('rtcv')!='${RUNTIME_CMP_VERSION}')return{batch:D.batch,stale:'${RUNTIME_CMP_VERSION}',have:G('rtcv'),rtc:1};
+` : ''}if(h(JSON.stringify(D))!='${fnv(JSON.stringify(C))}')return{batch:D.batch,damaged:1};
+${cmp ? `let B=G('rt');for(const[a,b]of${JSON.stringify(CMP_PATCHES)}){const s=B.split(a);if(s.length!=2)return{batch:D.batch,damaged:1,anchor:a};B=s.join(b==1?G('rtc')+a:b)}
+` : ''}const out=await new(Object.getPrototypeOf(async function(){}).constructor)('D','figma',${cmp ? 'B' : "G('rt')"})(D,figma);
 out.h=h(JSON.stringify(out));return out;
 `;
 }
 // the hash the loader adds to a screen batch result (over the result without h, in its key order)
 export const resultHash = (res) => { const { h, ...r } = res; return fnv(JSON.stringify(r)); };
-export const USAGE = `usage: node core/figma.mjs plan --ds <ds output dir> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo] [--prof]
+export const USAGE = `usage: node core/figma.mjs plan --ds <ds output dir> --out <dir> [--page Screens] [--max-calls 40] [--force <screen>]... [--redo] [--prof] [--no-components] [--cmp-page Components]
        node core/figma.mjs ingest --out <dir> --result <file> [--batch vars-NN|batch-NN|N]
        node core/figma.mjs shots --out <dir> | ingest-shots --out <dir> --result <file> | shots-clean --out <dir>
        node core/figma.mjs serve --out <dir> [--file <Figma file name> [--renamed]] [--send <keys>|run|pending]... [--shots] [--port 8787] [--wait <s>]
@@ -136,25 +157,42 @@ function readDs(dsDir) {
 }
 
 // encodes every screen; hash per screen = its data alone (tables resolved), page and force included
-export function encodeAll(dsData, { page = 'Screens', force = [] } = {}) {
+// components (plan 3b Task 6): dsData.components (components.json) marks the occurrences as instances and adds the
+// component batch items (figma-cmp.mjs); a screen's hash then covers the component items it uses.
+export function encodeAll(dsData, { page = 'Screens', force = [], cmpPage = 'Components' } = {}) {
   const { ir, tokens, map, screens } = dsData;
   const tables = newTables(varNames(tokens));
   const styleTc = new Map(varsPlan(tokens).textStyles.map((t) => [t.name, t.tc]));
   const encs = screens.map((s) => encodeScreen(s.spec, { screen: s.id, file: ir.file, W: s.W, map, svgDefs: s.svgDefs, tables, tokens, styleTc }));
-  const hashes = Object.fromEntries(encs.map((e) => [e.screen, sha(JSON.stringify(batchData([e], 0, page, force)))]));
-  return { encs, hashes };
+  let cmp = null;
+  if (dsData.components && (dsData.components.components || []).length) {
+    cmp = cmpEncode(dsData.components, screens, { file: ir.file, map, tables, tokens, styleTc });
+    for (const e of encs) cmp.mark(e);
+  }
+  const itemHash = cmp ? new Map(cmp.items.map((x) => [tables.K[x.cm.k], sha(JSON.stringify(batchData([x], 0, cmpPage, [], false, { cm: 1 })))])) : null;
+  const hashes = Object.fromEntries(encs.map((e) => {
+    const base = JSON.stringify(batchData([e], 0, page, force, false, cmp ? { cp: cmpPage } : undefined));
+    const u = cmp ? cmp.used(e) : [];
+    return [e.screen, sha(u.length ? base + JSON.stringify(u.map((k) => itemHash.get(k) || k)) : base)];
+  }));
+  return { encs, hashes, cmp };
 }
 
-// the plan's items in send order: vars batches, the runtime, screen batches of the screens not in `keep` (numbered from `first`)
-export function planAll(dsData, { page = 'Screens', force = [], keep = new Set(), first = 1, encoded, prof = false } = {}) {
-  const { encs } = encoded || encodeAll(dsData, { page, force });
-  const batches = planBatches(encs.filter((e) => !keep.has(e.screen)), { wrap: loaderCode, page, force, first, prof });
+// the plan's items in send order: vars batches, the runtime, (with components: the component runtime and the
+// component batches cmp-NN, atoms first), screen batches of the screens not in `keep` (numbered from `first`)
+export function planAll(dsData, { page = 'Screens', force = [], keep = new Set(), first = 1, encoded, prof = false, cmpPage = 'Components' } = {}) {
+  const { encs, cmp } = encoded || encodeAll(dsData, { page, force, cmpPage });
+  const batches = planBatches(encs.filter((e) => !keep.has(e.screen)), { wrap: loaderCode, page, force, first, prof, ...(cmp ? { extra: { cp: cmpPage } } : {}) });
+  const cmpBatches = cmp ? planBatches(cmp.items, { wrap: loaderCode, page: cmpPage, prof, extra: { cm: 1 }, unit: (x) => x.cm.n }) : [];
+  const rtc = cmp ? runtimeCmpInstallCode() : null;
   // the text style variants of every screen (kept ones too: the vars batches are sent whole)
   const vars = varsPayload(dsData.tokens, { variants: [...new Map(encs.flatMap((e) => e.variants || []).map((v) => [v[0], v])).values()] });
   const rt = runtimeInstallCode();
   return [
     ...vars.map((code, i) => ({ key: `vars-${pad(i + 1)}`, kind: 'vars', code, bytes: Buffer.byteLength(code, 'utf8'), screens: [] })),
     { key: 'runtime', kind: 'runtime', code: rt, bytes: Buffer.byteLength(rt, 'utf8'), screens: [], hash: RUNTIME_VERSION },
+    ...(rtc ? [{ key: 'runtime-cmp', kind: 'runtime', code: rtc, bytes: Buffer.byteLength(rtc, 'utf8'), screens: [], hash: RUNTIME_CMP_VERSION }] : []),
+    ...cmpBatches.map((b) => ({ key: `cmp-${pad(b.n)}`, kind: 'cmp', n: b.n, code: b.code, data: b.data, bytes: b.bytes, screens: b.screens })),
     ...batches.map((b) => ({ key: `batch-${pad(b.n)}`, kind: 'screens', n: b.n, code: b.code, data: b.data, bytes: b.bytes, screens: b.screens })),
   ].map((b) => ({ ...b, hash: b.hash || sha(b.code) }));
 }
@@ -163,11 +201,17 @@ export function planAll(dsData, { page = 'Screens', force = [], keep = new Set()
 const callsOf = (b) => ({ useFigma: 1, screenshot: b.kind === 'screens' ? b.screens.length : 0 });
 
 async function plan(argv, log) {
-  const o = args(argv, { ds: { type: 'string' }, out: { type: 'string' }, page: { type: 'string' }, 'max-calls': { type: 'string' }, force: { type: 'string', multiple: true }, redo: { type: 'boolean' }, prof: { type: 'boolean' } });
+  const o = args(argv, { ds: { type: 'string' }, out: { type: 'string' }, page: { type: 'string' }, 'max-calls': { type: 'string' }, force: { type: 'string', multiple: true }, redo: { type: 'boolean' }, prof: { type: 'boolean' },
+    'no-components': { type: 'boolean' }, 'cmp-page': { type: 'string' } });
   if (!o.ds) throw new UsageError('--ds <ds.mjs output folder> is required');
   if (!o.out) throw new UsageError('--out <dir> is required');
   const maxCalls = num('max-calls', o['max-calls'], 40);
   const dsData = readDs(o.ds);
+  // components (plan 3b): components.json of cmp.mjs in the ds folder, unless --no-components
+  const cmpFile = join(dsData.ds, 'components.json');
+  if (!o['no-components'] && existsSync(cmpFile)) dsData.components = readJson(cmpFile, 'components.json');
+  const cmpPage = o['cmp-page'] || 'Components';
+  if (cmpPage === (o.page || 'Screens')) throw new UsageError(`--cmp-page ${cmpPage}: the components need a page of their own, not the screens page`);
   const ids = dsData.screens.map((s) => s.id);
   const force = [...new Set((o.force || []).flatMap((f) => f.split(',')).map((f) => f.trim()).filter(Boolean))];
   for (const f of force) if (!ids.includes(f)) throw new UsageError(`--force ${f}: no such screen (screens: ${ids.join(', ')})`);
@@ -176,24 +220,25 @@ async function plan(argv, log) {
   mkdirSync(F, { recursive: true });
   const prev = existsSync(statePath(o.out)) ? loadState(o.out) : null;
   const pb = (prev && prev.batches) || {}, ps = (prev && prev.screens) || {};
-  const filesOf = (key, kind) => ({ file: `${key}.js`, ...(kind === 'screens' ? { data: `${key}.data.json` } : {}) });
+  const filesOf = (key, kind) => ({ file: `${key}.js`, ...(kind === 'screens' || kind === 'cmp' ? { data: `${key}.data.json` } : {}) });
   const has = (key, kind) => Object.values(filesOf(key, kind)).every((f) => existsSync(join(F, f)));
   let all, encoded, keep;
   try {
-    encoded = encodeAll(dsData, { page, force });
+    encoded = encodeAll(dsData, { page, force, cmpPage });
     // a screen built (or kept as edited) from the same data is not sent again
     keep = new Set(o.redo ? [] : ids.filter((s) => {
       const p = ps[s];
       return p && (p.status === 'done' || p.status === 'skippedEdited') && p.hash === encoded.hashes[s] && pb[p.batch] && has(p.batch, 'screens');
     }));
     const first = Math.max(0, ...[...keep].map((s) => pb[ps[s].batch].n)) + 1;
-    all = planAll(dsData, { page, force, keep, first, encoded, prof: !!o.prof });
+    all = planAll(dsData, { page, force, keep, first, encoded, prof: !!o.prof, cmpPage });
   } catch (e) {
     if (e instanceof OversizeError) throw new UsageError(e.message);
     throw new UsageError(`cannot plan the batches: ${e.message}`);
   }
   const st = {
     version: 2, ds: dsData.ds, file: dsData.ir.file, page, source: dsData.source, force, runtime: RUNTIME_VERSION,
+    ...(encoded.cmp ? { cmpPage, runtimeCmp: RUNTIME_CMP_VERSION, components: (prev && prev.components) || {} } : {}),
     order: [], batches: {}, screens: {}, run: null,
     // the shots on disk stay recorded (with the frame each is of), so check can tell a shot of an earlier build
     ...(prev && prev.shots ? { shots: prev.shots } : {}),
@@ -250,10 +295,18 @@ async function plan(argv, log) {
   st.run = { maxCalls, ...(warnings.length ? { warnings } : {}), calls: { useFigma: tot.useFigma, screenshot: tot.screenshot, total: tot.useFigma + tot.screenshot }, kb: Math.round(tot.bytes / 100) / 10, send, sendCalls: used, stopBefore };
   writeFileSync(statePath(o.out), json(st));
   const skippedDone = st.order.length - todo.length;
-  log(`plan: ${st.order.length} batches (${st.order.filter((k) => st.batches[k].kind === 'vars').length} vars, ${st.order.filter((k) => st.batches[k].kind === 'screens').length} screen), ${ids.length} screens${skippedDone ? `; ${skippedDone} already done (kept)` : ''}`);
+  const nc = st.order.filter((k) => st.batches[k].kind === 'cmp').length;
+  log(`plan: ${st.order.length} batches (${st.order.filter((k) => st.batches[k].kind === 'vars').length} vars, ${nc ? `${nc} component, ` : ''}${st.order.filter((k) => st.batches[k].kind === 'screens').length} screen), ${ids.length} screens${skippedDone ? `; ${skippedDone} already done (kept)` : ''}`);
+  if (encoded.cmp) {
+    let inst = 0;
+    const w = (e) => { if (e.i !== undefined) inst++; (e.k || []).forEach(w); };
+    for (const e of encoded.encs) w(e.T);
+    const it = encoded.cmp.items;
+    log(`components: ${it.filter((x) => !x.cm.n.startsWith('icon/')).length} variants of ${new Set(it.map((x) => x.cm.n).filter((n) => !n.startsWith('icon/'))).size} components, ${it.filter((x) => x.cm.n.startsWith('icon/')).length} icon components, ${inst} instances on the screens (page ${cmpPage})`);
+  }
   if (changed.length) log(`changed since they were sent: ${changed.join(', ')} (pending again)`);
-  const nr = todo.includes('runtime') ? 1 : 0;
-  log(`estimate: ${tot.useFigma} use_figma calls (${nv} vars + ${nr} runtime + ${tot.useFigma - nv - nr} screen batches), ${tot.screenshot} get_screenshot calls, ${st.run.kb} KB to send`);
+  const nr = todo.filter((k) => st.batches[k].kind === 'runtime').length, ncb = todo.filter((k) => st.batches[k].kind === 'cmp').length;
+  log(`estimate: ${tot.useFigma} use_figma calls (${nv} vars + ${nr} runtime + ${ncb ? `${ncb} component + ` : ''}${tot.useFigma - nv - nr - ncb} screen batches), ${tot.screenshot} get_screenshot calls, ${st.run.kb} KB to send`);
   const ks = ids.filter((s) => keep.has(s));
   if (ks.length) log(`screens unchanged since they were built (not sent again): ${ks.join(', ')}`);
   log(`this run (--max-calls ${maxCalls}): send ${send.length ? send.join(', ') : 'nothing'} (${used} calls)${stopBefore ? `; stops before ${stopBefore}` : ''}`);
@@ -326,7 +379,9 @@ const keyOf = (st, res, given) => {
     if (!st.batches[k]) throw new UsageError(`--batch ${g}: no such batch (${st.order.join(', ')})`);
     return k;
   }
+  if (isObj(res) && typeof res.runtime === 'string' && res.rtc && st.batches['runtime-cmp']) return 'runtime-cmp';
   if (isObj(res) && typeof res.runtime === 'string' && st.batches.runtime) return 'runtime';
+  if (isObj(res) && isObj(res.cm) && Number.isInteger(res.batch)) return `cmp-${pad(res.batch)}`;
   if (isObj(res) && isArr(res.screens) && Number.isInteger(res.batch)) return `batch-${pad(res.batch)}`;
   if (isObj(res) && isObj(res.collections) && Number.isInteger(res.batch)) return `vars-${pad(res.batch + 1)}`;
   throw new UsageError('cannot tell which batch this result belongs to (no batch number); pass --batch');
@@ -339,25 +394,40 @@ async function ingest(argv, log) {
   const st = loadState(o.out), F = figDir(o.out);
   const res = readJson(resolve(o.result), 'result file');
   // the loader refused to build: nothing changed in Figma
-  if (isObj(res) && typeof res.stale === 'string') throw new UsageError(`batch ${res.batch}: the file has runtime ${res.have || '(none)'}, the batch needs ${res.stale}: send runtime.js, ingest its result, then send the batch again`);
+  if (isObj(res) && typeof res.stale === 'string') throw new UsageError(`batch ${res.batch}: the file has runtime ${res.have || '(none)'}, the batch needs ${res.stale}: send ${res.rtc ? 'runtime-cmp' : 'runtime'}.js, ingest its result, then send the batch again`);
   if (isObj(res) && res.damaged) throw new UsageError(`batch ${res.batch}: its data arrived changed (hash mismatch); nothing was built: send the file content verbatim`);
   const key = keyOf(st, res, o.batch);
   const b = st.batches[key];
   if (!b) throw new UsageError(`${key}: not in the plan (${st.order.join(', ')})`);
-  const D = b.kind === 'screens' ? readJson(join(F, b.data), `data of ${key}`) : null;
-  const bad = b.kind === 'screens' ? validateScreenBatch(res, b, D)
+  const built = b.kind === 'screens' || b.kind === 'cmp'; // a component batch returns screen-like results, one per variant
+  const D = built ? readJson(join(F, b.data), `data of ${key}`) : null;
+  const bad = built ? [...validateScreenBatch(res, b, D), ...(b.kind === 'cmp' && !isObj(res.cm) ? ['cm is missing (not the result of a component batch)'] : [])]
     : b.kind === 'runtime' ? (isObj(res) && res.runtime === b.hash ? [] : [`runtime is ${JSON.stringify(isObj(res) ? res.runtime : res)}, expected ${b.hash}`])
       : validateVarsBatch(res, b, st.order.filter((k) => st.batches[k].kind === 'vars').indexOf(key));
   // a screen batch result carries the hash the loader computed in Figma: a result retyped or cut on the way fails here
-  if (b.kind === 'screens' && !bad.length && res.h !== resultHash(res)) bad.push(res.h === undefined ? 'no result hash h (not the output of this batch\'s loader)' : `result hash h ${res.h} does not match its content (${resultHash(res)}): it was changed after Figma returned it; save the use_figma output verbatim`);
+  if (built && !bad.length && res.h !== resultHash(res)) bad.push(res.h === undefined ? 'no result hash h (not the output of this batch\'s loader)' : `result hash h ${res.h} does not match its content (${resultHash(res)}): it was changed after Figma returned it; save the use_figma output verbatim`);
   if (bad.length) throw new UsageError(`${o.result} is not a valid result of ${key}:\n  ${bad.slice(0, 20).join('\n  ')}${bad.length > 20 ? `\n  ... ${bad.length - 20} more` : ''}`);
   const file = `result-${key}.json`;
   // a compact screen result (z: 1) is kept expanded, so later steps read plain nodes
-  if (b.kind === 'screens' && res.z === 1) writeFileSync(join(F, file), JSON.stringify(expandNodes(res, D)));
+  if (built && res.z === 1) writeFileSync(join(F, file), JSON.stringify(expandNodes(res, D)));
   else copyFileSync(resolve(o.result), join(F, file));
   if (b.kind === 'runtime') {
     b.status = 'done'; b.result = file;
-    log(`runtime: done (${res.runtime}, ${res.bytes} chars installed)`);
+    log(`${key}: done (${res.runtime}, ${res.bytes} chars installed)`);
+  } else if (b.kind === 'cmp') {
+    // per variant: built (root = the component) or failed; set-level errors (combine, properties) fail the batch
+    let failed = res.cm.errors && res.cm.errors.length ? 1 : 0;
+    st.components ||= {};
+    for (const s of res.screens) {
+      const rec = { batch: key, result: file };
+      if (s.root === undefined) { failed++; Object.assign(rec, { status: 'failed', errors: s.errors, fontMissing: s.fontMissing.length }); }
+      else Object.assign(rec, { status: 'done', root: s.root, sig: s.sig, errors: s.errors.length, fontMissing: s.fontMissing.length });
+      st.components[s.screen.replace(/^cmp:/, '')] = rec;
+    }
+    b.status = failed ? 'failed' : 'done';
+    b.result = file;
+    if (res.cm.errors && res.cm.errors.length) b.errors = res.cm.errors; else delete b.errors;
+    log(`${key}: ${b.status}; ${res.screens.filter((s) => s.root !== undefined).length}/${res.screens.length} variants built, ${Object.keys(res.cm.sets || {}).length} components${res.cm.swapped ? `, ${res.cm.swapped} instances moved to the new build` : ''}${res.cm.oldKept ? `, ${res.cm.oldKept} old components kept (instances left)` : ''}${failed ? `; errors: ${[...(res.cm.errors || []).map((x) => `${x.o}: ${x.msg}`), ...res.screens.filter((s) => s.root === undefined).map((s) => s.screen)].slice(0, 3).join('; ')}` : ''}`);
   } else if (b.kind === 'vars') {
     b.status = res.errors.length ? 'failed' : 'done';
     b.result = file;

@@ -222,6 +222,7 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
     setBoundVariable(field, v) {
       this._ok();
       if (!NUM_FIELDS.has(field)) throw new Error('setBoundVariable: field ' + field + ' is not bindable');
+      if (v === null) { const b = { ...this.boundVariables }; delete b[field]; this.boundVariables = b; return; } // unbind, as real Figma
       if (!v || !VARS.includes(v)) throw new Error('setBoundVariable: unknown variable');
       // real Figma: a text field (VariableBindableTextField) of a TEXT node is a VariableAlias[] (one per range)
       this.boundVariables = { ...this.boundVariables, [field]: this.type === 'TEXT' && TEXT_FIELDS.has(field) ? [alias(v)] : alias(v) };
@@ -253,7 +254,7 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
       w(this); return out;
     }
   }
-  const isAL = (n) => !!n && n.type === 'FRAME' && n.layoutMode !== 'NONE';
+  const isAL = (n) => !!n && /^(FRAME|COMPONENT|INSTANCE)$/.test(n.type) && n.layoutMode !== 'NONE';
 
   class Parent extends Node {
     constructor(type) { super(type); this._kids = []; }
@@ -342,6 +343,7 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
       this._set(k, v, s, e);
     }
     setRangeFontName(s, e, f) { this._font(f); this._set('fontName', { ...f }, s, e); }
+    getRangeAllFontNames(s, e) { if (s < 0 || e > this._chars.length || s >= e) throw new Error('bad range'); return [...new Map(this._st.slice(s, e).map((x) => [fk(x.fontName), x.fontName])).values()]; }
     setRangeFontSize(s, e, v) { this._set('fontSize', v, s, e); }
     setRangeFills(s, e, v) { this._set('fills', checkPaints(v), s, e); }
     setRangeLineHeight(s, e, v) { this._rng('lineHeight', s, e, v); }
@@ -393,6 +395,163 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
     for (const k of ignore) { const v = n[k]; Object.defineProperty(n, k, { get: () => v, set: () => {}, configurable: true }); }
     current.appendChild(n); return n;
   };
+
+  // ---- components (plan 3b Task 6) ----
+  // createComponentFromNode(node): the node becomes a COMPONENT in its place (same id kept by its children; the root
+  // gets a new id), plugin data kept. combineAsVariants(components, parent): a COMPONENT_SET holding them; each name
+  // must be 'axis=value, ...' (variantProperties). addComponentProperty(name, type, default) on a set or a component
+  // outside a set (else it throws, as real Figma) -> '<name>#<n>'. componentPropertyReferences on a node inside a main
+  // must name a property of its main. createInstance(): a deep copy, root type INSTANCE (mainComponent), sublayer ids
+  // 'I<instance id>;<main node id>'. On a sublayer real Figma refuses (measured 2026-11-25, probe case ov): x / y /
+  // relativeTransform / rotation ("cannot be overridden in an instance"), layoutMode, appendChild / remove; resize and
+  // min / max width are kept unchanged without an error. Every other property set on a sublayer is recorded in its
+  // _ov (the overrides). setProperties({ key: value }): variant axes (no '#') pick the variant of the set; TEXT sets the
+  // referenced text's characters, BOOLEAN its visible, INSTANCE_SWAP swaps the referenced nested instance to the
+  // component of that id. swapComponent(c) rebuilds the instance from c. getInstancesAsync() on a component.
+  const DEFS = new WeakMap(); // set or component -> { key: { type, defaultValue } }
+  let propSeq = 0;
+  const NO_OV = new Set(['x', 'y', 'relativeTransform', 'rotation', 'layoutMode']);
+  const NO_OV_SILENT = new Set(['minWidth', 'maxWidth']);
+  const ownerOf = (n) => { for (let p = n; p; p = p.parent) if (p.type === 'COMPONENT' || p.type === 'COMPONENT_SET') return p.parent && p.parent.type === 'COMPONENT_SET' ? p.parent : p; return null; };
+  const allNodes = () => { const out = []; const w = (n) => { out.push(n); for (const k of n._kids || []) w(k); }; for (const p of root.children) w(p); return out; };
+  function guard(n) {
+    return new Proxy(n, {
+      set(t, k, v, r) {
+        if (typeof k === 'string' && !k.startsWith('_') && t._inInst && !t._building) {
+          if (NO_OV.has(k)) throw new Error(`${k} cannot be overridden in an instance`);
+          if (NO_OV_SILENT.has(k)) return true;
+          t._ov.add(k);
+        }
+        return Reflect.set(t, k, v, r);
+      },
+      get(t, k, r) {
+        if (t._inInst && !t._building) {
+          if (k === 'appendChild' || k === 'remove') return () => { throw new Error(`cannot ${k} inside an instance`); };
+          if (k === 'resize') return () => {};
+        }
+        return Reflect.get(t, k, r);
+      },
+    });
+  }
+  // deep copy of a main's subtree into an instance (arrays shallow-copied, so a sublayer never shares state with its main)
+  function instCopy(src, rootId, parent) {
+    const c = Object.create(Object.getPrototypeOf(src));
+    for (const k of Object.keys(src)) if (typeof src[k] !== 'function') c[k] = Array.isArray(src[k]) ? [...src[k]] : src[k];
+    c._pd = { ...src._pd }; c._ov = new Set(); c._building = true;
+    c.id = rootId ? `I${rootId};${String(src.id).replace(/^I/, '')}` : nid();
+    if (src.type === 'COMPONENT') { c.type = 'INSTANCE'; c._main = src; }
+    c._inInst = !!rootId;
+    const g = guard(c);
+    c.parent = parent;
+    if (src._kids) c._kids = src._kids.map((k) => instCopy(k, rootId || c.id, g));
+    c._building = false;
+    return g;
+  }
+  class InstanceApi {
+    get mainComponent() { return this._main; }
+    get componentProperties() {
+      const defs = DEFS.get(ownerOf(this._main)) || {}, out = {};
+      for (const [k, d] of Object.entries(defs)) out[k] = { type: d.type, value: (this._pv || {})[k] ?? d.defaultValue };
+      const set = this._main.parent && this._main.parent.type === 'COMPONENT_SET' ? this._main.parent : null;
+      if (set) for (const [a, v] of Object.entries(variantsOf(this._main.name))) out[a] = { type: 'VARIANT', value: v };
+      return out;
+    }
+    swapComponent(c) {
+      if (!c || c.type !== 'COMPONENT') throw new Error('swapComponent needs a component');
+      const base = this._inInst ? this.id.slice(1).split(';')[0] : this.id;
+      const t = this;
+      t._building = true;
+      t._kids = (c._kids || []).map((k) => instCopy(k, base, t));
+      t._main = c; t._pv = {}; t.name = c.name;
+      t._building = false;
+    }
+    setProperties(props) {
+      const defs = DEFS.get(ownerOf(this._main)) || {};
+      for (const [k, v] of Object.entries(props)) {
+        if (!k.includes('#')) {
+          const set = this._main.parent;
+          if (!set || set.type !== 'COMPONENT_SET') throw new Error(`Could not find a component property with name: '${k}'`);
+          const want = { ...variantsOf(this._main.name), [k]: v };
+          const m = set._kids.find((c) => JSON.stringify(variantsOf(c.name)) === JSON.stringify(want));
+          if (!m) throw new Error(`no variant ${JSON.stringify(want)}`);
+          const pv = this._pv; this.swapComponent(m); this._pv = pv;
+          continue;
+        }
+        const d = defs[k];
+        if (!d) throw new Error(`Could not find a component property with name: '${k}'`);
+        (this._pv ||= {})[k] = v;
+        const field = { TEXT: 'characters', BOOLEAN: 'visible', INSTANCE_SWAP: 'mainComponent' }[d.type];
+        const w = (n) => {
+          const r = n.componentPropertyReferences || {};
+          if (r[field] === k) {
+            if (d.type === 'INSTANCE_SWAP') { const c = allNodes().find((x) => x.id === v); n.swapComponent(c); } else n[field] = v;
+          }
+          if (n !== this && n.type === 'INSTANCE') return;
+          for (const c of n._kids || []) w(c);
+        };
+        w(this);
+      }
+    }
+  }
+  const variantsOf = (name) => Object.fromEntries(String(name).split(',').map((p) => p.trim()).filter(Boolean).map((p) => p.split('=').map((x) => x.trim())));
+  const mix = (cls) => { for (const k of Object.getOwnPropertyNames(InstanceApi.prototype)) if (k !== 'constructor') Object.defineProperty(cls.prototype, k, Object.getOwnPropertyDescriptor(InstanceApi.prototype, k)); };
+  mix(Node);
+  Object.defineProperty(Node.prototype, 'componentPropertyReferences', {
+    get() { return this._cpr || null; },
+    set(v) {
+      const o = ownerOf(this);
+      if (!o || o === this) throw new Error('componentPropertyReferences: only on a node inside a component');
+      const defs = DEFS.get(o) || {};
+      for (const [f, k] of Object.entries(v || {})) {
+        if (!defs[k]) throw new Error(`componentPropertyReferences: no property ${k}`);
+        if (f === 'mainComponent' && this.type !== 'INSTANCE') throw new Error('mainComponent reference needs an instance');
+      }
+      this._cpr = { ...v };
+    },
+    configurable: true,
+  });
+  const componentApi = () => ({
+    createComponentFromNode(node) {
+      node._ok();
+      const c = Object.create(Object.getPrototypeOf(node));
+      for (const k of Object.keys(node)) c[k] = node[k];
+      c.id = nid(); c.type = 'COMPONENT'; c._pd = { ...node._pd }; c._kids = [...(node._kids || [])];
+      for (const k of c._kids) k.parent = c;
+      const p = node.parent;
+      if (p) { p._kids.splice(p._kids.indexOf(node), 1, c); c.parent = p; }
+      node._kids = []; node.parent = null; node._removed = true;
+      c.addComponentProperty = function (name, type, def) {
+        if (this.parent && this.parent.type === 'COMPONENT_SET') throw new Error('Can only add component properties to component sets or non-variant components');
+        return addProp(this, name, type, def);
+      };
+      c.createInstance = function () { this._ok(); const i = instCopy(this, null, null); i._building = true; i.x = 0; i.y = 0; i._building = false; current.appendChild(i); return i; };
+      c.getInstancesAsync = async function () { return allNodes().filter((n) => n.type === 'INSTANCE' && n._main === this); };
+      return c;
+    },
+    combineAsVariants(comps, parent) {
+      if (!comps.length || comps.some((c) => c.type !== 'COMPONENT')) throw new Error('combineAsVariants needs components');
+      for (const c of comps) if (!/=/.test(c.name)) throw new Error(`variant name "${c.name}" is not axis=value`);
+      const s = new Frame(); s.type = 'COMPONENT_SET'; s.fills = []; s._pd = {};
+      parent.appendChild(s);
+      for (const c of comps) s.appendChild(c);
+      s.addComponentProperty = function (name, type, def) { return addProp(this, name, type, def); };
+      Object.defineProperty(s, 'componentPropertyDefinitions', { get: () => ({ ...(DEFS.get(s) || {}) }) });
+      return s;
+    },
+  });
+  function addProp(owner, name, type, def) {
+    if (!['TEXT', 'BOOLEAN', 'INSTANCE_SWAP'].includes(type)) throw new Error('bad property type ' + type);
+    if (type === 'BOOLEAN' && typeof def !== 'boolean') throw new Error('BOOLEAN default must be a boolean');
+    if (type === 'TEXT' && typeof def !== 'string') throw new Error('TEXT default must be a string');
+    if (type === 'INSTANCE_SWAP' && !allNodes().some((n) => n.id === def && n.type === 'COMPONENT')) throw new Error('INSTANCE_SWAP default must be a component id');
+    const defs = DEFS.get(owner) || {};
+    if (Object.keys(defs).some((k) => k.split('#')[0] === name)) throw new Error(`property ${name} exists`);
+    const key = `${name}#${++propSeq}:0`;
+    defs[key] = { type, defaultValue: def };
+    DEFS.set(owner, defs);
+    return key;
+  }
+  Page.prototype.loadAsync = async function () {};
 
   const figma = {
     mixed: MIXED,
@@ -457,6 +616,7 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
       },
     },
     notify() { throw new Error('figma.notify is not available in use_figma'); },
+    ...componentApi(),
     _log: log,
     _loads: loads,
   };

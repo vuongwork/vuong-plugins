@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>infer-noflags</title>
+<style>
+  body { margin: 0; font-family: Arial, sans-serif; }
+  .scr { width: 300px; background: #ffffff; }
+  /* horizontal scroll row: content overflows and is clipped, nothing is squeezed */
+  .chips { display: flex; gap: 8px; padding: 8px; overflow-x: auto; }
+  .c { flex: none; width: 80px; height: 30px; background: #dddddd; }
+  /* fixed-width box with nowrap text spilling out: expressible as FIXED + overflowing text */
+  .nowrap { width: 100px; white-space: nowrap; font-size: 14px; }
+  /* flex item with default shrink that fits: not squeezed */
+  .row { display: flex; gap: 8px; padding: 8px; }
+  .fit { width: 60px; height: 20px; background: #cccccc; }
+</style>
+</head>
+<body>
+<div class="scr">
+  <div class="chips"><div class="c"></div><div class="c"></div><div class="c"></div><div class="c"></div></div>
+  <div class="nowrap">Plain fixed box with long nowrap text spilling</div>
+  <div class="row"><div class="fit"></div><div class="fit"></div></div>
+</div>
+</body>
+</html>

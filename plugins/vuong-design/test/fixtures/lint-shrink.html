@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><title>lint</title><style>
+:root{--color-bg:#ffffff;--color-ink:#1a1a1a;--color-line:#dddddd;--color-accent:#3d6b5c;--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--radius-md:12px;--radius-full:999px;--font-sans:"Be Vietnam Pro",sans-serif;--size-body:14px;--size-title:20px}
+body{margin:0;background:var(--color-bg);color:var(--color-ink);font-family:var(--font-sans);font-size:var(--size-body)}
+.frame{width:360px}
+.screen{padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-3)}
+.row-bad,.row-good{display:flex;align-items:center;gap:var(--space-3)}
+.av{width:32px;height:32px;border-radius:var(--radius-full);background:var(--color-accent);flex:none}
+.row-good .t{min-width:0;flex:1}
+</style></head><body>
+<div class="frame" data-vd-widen>
+<div class="screen" data-vd-screen="A1">
+  <div class="row-bad"><div class="av"></div><div class="t">A very long block of text that does not fit on one line and so gets squeezed by flex-shrink until it wraps around</div></div>
+  <div class="row-good"><div class="av"></div><div class="t">A very long block of text that does not fit on one line and so gets squeezed by flex-shrink until it wraps around</div></div>
+  <div class="row-good"><div class="av"></div><div class="t">Short</div></div>
+</div>
+</div>
+</body></html>

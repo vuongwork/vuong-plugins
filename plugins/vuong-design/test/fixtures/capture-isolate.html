@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>capture-isolate</title>
+<style>
+  body { margin: 0; }
+  .wall { display: grid; grid-template-columns: 200px 200px; gap: 10px; padding: 10px; }
+  .scr { height: 100px; background: #ffffff; }
+  .scr.red { background: #ff0000; }
+</style>
+</head>
+<body>
+<!-- widening screen 0 by 120 overflows its 200px cell; screen 1 (later in the DOM) paints over its right part -->
+<div class="wall"><div class="scr"></div><div class="scr red"></div></div>
+</body>
+</html>

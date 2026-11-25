@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>infer-percent</title>
+<style>
+  body { margin: 0; font-family: Arial, sans-serif; }
+  .scr { width: 300px; padding: 10px; box-sizing: border-box; background: #ffffff; }
+  .bar { position: relative; height: 8px; margin-top: 10px; background: #d3e2d9; }
+  .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: #3a8a5a; }
+  .bar b { position: absolute; top: -4px; width: 2.5px; height: 16px; background: #2747a8; }
+  .nav { position: relative; height: 40px; margin-top: 20px; background: #eeeeee; }
+  .badge { position: absolute; top: -5px; left: 52%; background: #b33; color: #fff; font-size: 9px; font-weight: 700; padding: 1px 5px; }
+  .full { position: absolute; left: 0; right: 0; top: 20px; height: 4px; background: #333; }
+  .pin { position: absolute; left: 12px; top: 4px; width: 20px; height: 20px; background: #555; }
+</style>
+</head>
+<body>
+<div class="scr">
+  <!-- R47: width in % (fill), left in % with a fixed width (marker) -->
+  <div class="bar"><i class="fill" style="width:60%"></i><b class="mark" style="left:58%"></b></div>
+  <!-- left in % with an auto width (badge); px-only absolute nodes; .full overlaps .pin (so infer makes it absolute) and spans the parent (geometry alone
+       would fit SCALE, but nothing is authored in %) -->
+  <div class="nav"><span class="badge">3</span><span class="pin"></span><span class="full"></span></div>
+</div>
+</body>
+</html>

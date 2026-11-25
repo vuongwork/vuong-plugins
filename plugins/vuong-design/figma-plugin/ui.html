@@ -1,0 +1,64 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  body { font: 12px/1.45 Inter, system-ui, sans-serif; margin: 12px; color: var(--figma-color-text, #222); background: var(--figma-color-bg, #fff); }
+  b { font-weight: 600; }
+  #st { margin: 6px 0; min-height: 3em; white-space: pre-wrap; word-break: break-word; }
+  .err { color: var(--figma-color-text-danger, #c00); }
+  .ok { color: var(--figma-color-text-success, #080); }
+  small { color: var(--figma-color-text-secondary, #777); }
+  button { font: inherit; }
+</style>
+<div><b>vuong-design bridge</b> <small id="srv"></small></div>
+<div id="st">Waiting for figma.mjs serve…</div>
+<div><small id="last"></small></div>
+<button id="close">Close</button>
+<script>
+// Polls figma.mjs serve on localhost:8787 (the port the manifest allows). Stays open across runs: when one serve run
+// ends it waits for the next. One job at a time: fetch, run in the main thread, post the result, fetch again.
+const BASE = 'http://localhost:8787';
+const $ = (id) => document.getElementById(id);
+const say = (t, cls) => { $('st').textContent = t; $('st').className = cls || ''; };
+let pending = null; // { id, resolve }
+onmessage = (ev) => {
+  const m = ev.data.pluginMessage;
+  if (m && pending && m.id === pending.id) { const p = pending; pending = null; p.resolve(m); }
+};
+const runInMain = (msg) => new Promise((resolve) => { pending = { id: msg.id, resolve }; parent.postMessage({ pluginMessage: msg }, '*'); });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+$('close').onclick = () => parent.postMessage({ pluginMessage: { type: 'close' } }, '*');
+
+async function loop() {
+  let session = null, idle = 0;
+  for (;;) {
+    let j;
+    try {
+      const r = await fetch(BASE + '/next');
+      j = await r.json();
+      $('srv').textContent = '· connected';
+    } catch (e) {
+      $('srv').textContent = '· no server';
+      if (!session) say('Waiting for figma.mjs serve…');
+      await sleep(Math.min(3000, 800 + idle++ * 200));
+      continue;
+    }
+    idle = 0;
+    if (j.session !== session) { session = j.session; say('Connected to session ' + session); }
+    if (j.done) { say(j.ok ? 'Run finished.' : 'Run stopped (see the terminal).', j.ok ? 'ok' : 'err'); await sleep(2000); continue; }
+    if (j.wait) { await sleep(300); continue; }
+    say('Running ' + j.key + (j.of ? ' (' + j.n + '/' + j.of + ')' : ' (#' + j.n + ')') + '…');
+    const t0 = Date.now();
+    const m = await runInMain(j.kind === 'shot' ? { type: 'shot', id: j.id, root: j.root, scale: j.scale } : { type: 'code', id: j.id, code: j.code });
+    let ans;
+    try {
+      const r = m.type === 'shot'
+        ? await fetch(BASE + '/shot?id=' + j.id, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: m.bytes })
+        : await fetch(BASE + '/result?id=' + j.id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(m.ok ? { ok: true, text: m.text } : { ok: false, error: m.error }) });
+      ans = await r.json();
+    } catch (e) { ans = { ok: false, msg: 'could not post the result: ' + e.message }; }
+    $('last').textContent = j.key + ': ' + (ans.ok ? 'ok' : 'failed') + ' in ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s' + (ans.msg ? ' — ' + ans.msg : '');
+    if (!ans.ok) say(j.key + ' failed: ' + (ans.msg || ''), 'err');
+  }
+}
+loop();
+</script>

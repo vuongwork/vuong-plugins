@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>capture-pseudo-bp</title>
+<style>
+  body { margin: 0; }
+  /* No width: viewport-bound. Captured at viewport 300; min-width 310 leaves no safe delta, so B is 420. */
+  .scr { height: 100px; }
+  .row { display: flex; gap: 4px; }
+  .x { width: 20px; height: 20px; background: #888888; }
+  @media (min-width: 310px) {
+    .row::before { content: ""; width: 10px; height: 10px; background: #e53935; }
+  }
+</style>
+</head>
+<body>
+<div class="scr">
+  <div class="row"><div class="x"></div><div class="x"></div></div>
+</div>
+</body>
+</html>

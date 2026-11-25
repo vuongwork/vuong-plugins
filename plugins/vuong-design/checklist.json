@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "id": "visual",
+      "label": "Visual tokens",
+      "items": [
+        { "id": "color-roles", "label": "Colour roles (text, surface, border, accent)", "tag": "derived", "check": "colorRoles" },
+        { "id": "color-states", "label": "State colours (error, selected, disabled)", "tag": "derived", "check": "stateColors" },
+        { "id": "color-theme", "label": "Themes and dark mode", "tag": "ask", "check": "darkMode", "question": "project.darkMode" },
+        { "id": "type-scale", "label": "Type scale", "tag": "derived", "check": "typeScale" },
+        { "id": "space-scale", "label": "Spacing scale", "tag": "derived", "check": "spaceScale" },
+        { "id": "sizes", "label": "Fixed sizes (controls, icons, images)", "tag": "derived", "check": "sizes" },
+        { "id": "radius", "label": "Corner radius scale", "tag": "derived", "check": "radius" },
+        { "id": "shadow", "label": "Shadows and elevation", "tag": "derived", "check": "shadow", "question": "project.shadows" },
+        { "id": "border", "label": "Border widths", "tag": "derived", "check": "borderWidth" },
+        { "id": "opacity", "label": "Opacity levels", "tag": "derived", "check": "opacity" },
+        { "id": "motion", "label": "Motion (durations, easing)", "tag": "default" },
+        { "id": "layers", "label": "Layering (z-order of overlays, sheets, toasts)", "tag": "default" }
+      ]
+    },
+    {
+      "id": "layout",
+      "label": "Layout",
+      "items": [
+        { "id": "screen-sizes", "label": "Target screen sizes", "tag": "ask", "check": "screenSizes", "question": "project.screenSizes" },
+        { "id": "breakpoints", "label": "Breakpoints", "tag": "default" },
+        { "id": "grid", "label": "Column grid", "tag": "default" },
+        { "id": "margins", "label": "Screen margins", "tag": "derived" },
+        { "id": "density", "label": "Density", "tag": "ask", "question": "project.density" },
+        { "id": "orientation", "label": "Landscape orientation", "tag": "default" }
+      ]
+    },
+    {
+      "id": "assets",
+      "label": "Assets",
+      "items": [
+        { "id": "logo", "label": "Logo (variants, clear space, minimum size)", "tag": "ask", "question": "project.brandAssets" },
+        { "id": "app-icon", "label": "App icon", "tag": "ask" },
+        { "id": "icon-set", "label": "Icon set (style, grid, sizes)", "tag": "ask", "check": "icons", "question": "project.iconStyle" },
+        { "id": "illustration", "label": "Illustrations and mascot", "tag": "ask" },
+        { "id": "imagery", "label": "Photos and images", "tag": "derived", "check": "images" }
+      ]
+    },
+    {
+      "id": "components",
+      "label": "Components",
+      "items": [
+        { "id": "component-list", "label": "Component list", "tag": "derived" },
+        { "id": "anatomy", "label": "Anatomy of each component", "tag": "derived" },
+        { "id": "variants", "label": "Variants", "tag": "derived" },
+        { "id": "component-sizes", "label": "Component sizes", "tag": "derived" },
+        { "id": "component-states", "label": "States (default, pressed, focus, disabled, error, loading, empty)", "tag": "default" },
+        { "id": "usage", "label": "Usage guidance", "tag": "default" }
+      ]
+    },
+    {
+      "id": "patterns",
+      "label": "Patterns",
+      "items": [
+        { "id": "navigation", "label": "Navigation", "tag": "derived" },
+        { "id": "forms", "label": "Forms and validation", "tag": "default" },
+        { "id": "empty-error-loading", "label": "Empty, error and loading screens", "tag": "default" },
+        { "id": "feedback", "label": "Feedback (toasts, dialogs, confirmations)", "tag": "default" },
+        { "id": "lists-tables", "label": "Lists and tables", "tag": "derived" },
+        { "id": "search-filter", "label": "Search and filters", "tag": "default" },
+        { "id": "onboarding", "label": "Onboarding", "tag": "default" }
+      ]
+    },
+    {
+      "id": "content",
+      "label": "Content",
+      "items": [
+        { "id": "voice", "label": "Voice and tone", "tag": "ask", "question": "project.adjectives" },
+        { "id": "terminology", "label": "Terminology", "tag": "derived" },
+        { "id": "messages", "label": "Message templates", "tag": "default" },
+        { "id": "formats", "label": "Date, number and currency formats", "tag": "derived" },
+        { "id": "i18n", "label": "Languages", "tag": "ask", "question": "project.i18n" },
+        { "id": "text-expansion", "label": "Text expansion in translation", "tag": "default" }
+      ]
+    },
+    {
+      "id": "accessibility",
+      "label": "Accessibility",
+      "items": [
+        { "id": "contrast", "label": "WCAG 2.2 AA text contrast", "tag": "derived", "check": "contrast" },
+        { "id": "touch-target", "label": "Touch targets (44 x 44 px)", "tag": "derived", "check": "touch" },
+        { "id": "focus-order", "label": "Focus order", "tag": "default" },
+        { "id": "screen-reader", "label": "Screen-reader labels", "tag": "default" },
+        { "id": "text-scaling", "label": "Text scaling", "tag": "default" },
+        { "id": "reduced-motion", "label": "Reduced motion", "tag": "default" },
+        { "id": "color-blind", "label": "Safe for colour blindness (not colour alone)", "tag": "default" }
+      ]
+    },
+    {
+      "id": "governance",
+      "label": "Governance",
+      "items": [
+        { "id": "naming", "label": "Token naming convention", "tag": "derived", "check": "naming" },
+        { "id": "ids", "label": "ID convention", "tag": "default" },
+        { "id": "versioning", "label": "Versioning", "tag": "default" },
+        { "id": "change-process", "label": "Change process", "tag": "default" },
+        { "id": "code-mapping", "label": "Mapping to code (CSS variables, Compose, SwiftUI)", "tag": "derived", "check": "codeMapping" },
+        { "id": "deprecation", "label": "Deprecation", "tag": "default" }
+      ]
+    }
+  ]
+}

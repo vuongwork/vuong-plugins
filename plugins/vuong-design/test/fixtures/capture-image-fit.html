@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><title>capture-image-fit</title>
+<!-- R59: Figma image fills reproduce object-fit cover / contain / fill at the centre only. object-fit none or
+     scale-down, or an object-position other than the centre, is paint capture cannot carry: unsupported
+     'image fit/position'. -->
+<style>
+body{margin:0}
+.scr{width:300px;background:#fff;display:flex;flex-wrap:wrap;gap:4px;padding:4px}
+img{width:60px;height:40px;display:block}
+.cover{object-fit:cover}.contain{object-fit:contain}.fill{object-fit:fill}.mid{object-fit:cover;object-position:center}
+.none{object-fit:none}.sd{object-fit:scale-down}.tl{object-fit:cover;object-position:0 0}.right{object-fit:contain;object-position:right center}
+</style></head><body><div class="scr">
+<img class="cover" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='40'%3E%3Crect width='60' height='40' fill='%23e53935'/%3E%3Crect x='60' width='60' height='40' fill='%231e88e5'/%3E%3C/svg%3E">
+<img class="contain" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='40'%3E%3Crect width='120' height='40' fill='%23e53935'/%3E%3C/svg%3E">
+<img class="fill" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='40'%3E%3Crect width='120' height='40' fill='%231e88e5'/%3E%3C/svg%3E">
+<img class="mid" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='40'%3E%3Crect width='120' height='40' fill='%2343a047'/%3E%3C/svg%3E">
+<img class="none" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='40'%3E%3Crect width='120' height='40' fill='%23fb8c00'/%3E%3C/svg%3E">
+<img class="sd" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='40'%3E%3Crect width='120' height='40' fill='%238e24aa'/%3E%3C/svg%3E">
+<img class="tl" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='40'%3E%3Crect width='120' height='40' fill='%23546e7a'/%3E%3C/svg%3E">
+<img class="right" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='40'%3E%3Crect width='120' height='40' fill='%23000'/%3E%3C/svg%3E">
+</div></body></html>

@@ -15,6 +15,11 @@
       "name": "vuong-trans",
       "source": "./plugins/vuong-trans",
       "description": "Translate pptx, xlsx and pdf between Japanese, Vietnamese and English, keeping the layout, including text inside images"
+    },
+    {
+      "name": "vuong-design",
+      "source": "./plugins/vuong-design",
+      "description": "HTML tĩnh → design system → Figma có biến, component, ID; kiểm tra từng node"
     }
   ]
 }

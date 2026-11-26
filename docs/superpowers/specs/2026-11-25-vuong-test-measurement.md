@@ -206,3 +206,27 @@ Kết luận đo được:
 
 Giới hạn của vòng này: mỗi ô 1 lần chạy (chưa có độ dao động); một app mẫu; điểm `lint-*` dùng công cụ của chính
 plugin nên baseline không biết luật trước.
+
+## 12. Vòng tối ưu 1 (2026-11-26)
+
+Thay đổi `9d8a945`: `kit/README.md` (API đầy đủ của kit, SKILL.md bước 6 dặn không đọc mã kit) và gợi ý dòng
+`Not covered` trong `next.mjs`. Mỗi ô 1 lần chạy.
+
+| Ca | Model | USD | Phút | Lượt | Token ra | Cache đọc | Điểm | Ghi chú |
+|---|---|---|---|---|---|---|---|---|
+| t2-cases | Opus (gốc) | 2,41 | 7,8 | 18 | 56,1k | 1,58M | 1,00 | 93 case |
+| t2-cases | **Sonnet** | **1,43** | 7,9 | 15 | 79,3k | 0,84M | 1,00 | 144 case, 0 assumption |
+| t4-tests | Opus (gốc) | 3,28 | 13,4 | 33 | 62,0k | 3,35M | 1,00 | |
+| t4-tests | Opus + kit README | 3,34 | 17,9 | 38 | 62,3k | 3,82M | 1,00 | |
+| t4-tests | **Sonnet** + kit README | **1,50** | 8,7 | 35 | 58,4k | 3,44M | 1,00 | |
+
+Kết luận:
+- Kit README có tác dụng đúng chỗ: agent t4 chỉ `cat kit/README.md` (5 kB) thay vì mã kit và reference
+  (37 kB). Lượt đọc đó giảm từ 0,235 xuống 0,126 USD; lệnh Write `e2e.mjs` giảm từ 26k xuống 19k token ra.
+  Nhưng tổng chi phí không giảm, vì lần chạy này có thêm khoảng 10 lượt sửa test và chạy lại. Mỗi lượt cuối phiên
+  tốn khoảng 0,08 USD, chủ yếu do đọc lại 150–180k token context từ cache. Độ dao động giữa các lần chạy (±0,5 USD)
+  lớn hơn phần tiết kiệm.
+- Sonnet giữ nguyên điểm ở cả t2 và t4: đủ flow, đủ 6/6 lỗi cài sẵn (có case theo spec, test FAIL trước và PASS sau
+  khi sửa), lint sạch, `run.mjs` chạy được. Chi phí giảm 41% ở t2 và 54% ở t4; t4 nhanh hơn 5–9 phút.
+- Sonnet viết nhiều case hơn ở t2 (144 so với 93) nên tốn nhiều token ra hơn, nhưng giá token rẻ hơn một nửa.
+- Đòn bẩy lớn nhất là chọn model. Các tối ưu nhỏ trong prompt (vài phần trăm) không đo được với 1 lần chạy mỗi ô.

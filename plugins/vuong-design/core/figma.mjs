@@ -90,6 +90,7 @@ export const CMP_PATCHES = [
   ['root=S.root=await mk(sc.T,null,sc)', 'root=S.root=await CV(await mk(sc.T,null,sc),sc)'],
   ['for(const sc of D.screens){S=', 1],
   ["if(PR){pt('total',T0)", "await PO();if(PR){pt('total',T0)"],
+  ['root.x=x;root.y=y;', 'root.x=x;root.y=y;if(XLP[0]){const q=XLP[0];XLP[0]=0;await XD(q)}'],
   ['const d=read(n,e,ov)', 'const d=await XK(n,e,read(n,e,ov))'],
 ];
 export const runtimeCmpInstallCode = () => `const B=${JSON.stringify(RTC_BODY)};

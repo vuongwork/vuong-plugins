@@ -58,7 +58,7 @@ q('layoutWrap',l.wr?'WRAP':'NO_WRAP');if(l.wr)q('counterAxisSpacing',l.cg||0)}
 if(e.rc&&e.ic&&e.ic.i!=U){const t=F.createNodeFromSvg(svg(e)),a=t.findAll(()=>1),b=n.findAll(()=>1),B={fills:gv(o,'vf',v.vf),strokes:gv(o,'vs',v.vs)},Q={fills:e.ic.f,strokes:e.ic.s};
 // colours and the colour variables (vf / vs, bound as mk binds them) of each vector
 const Y=ps=>J([pl(ps),ps==MX?0:(ps||[]).map(z=>BC(z)&&BC(z).id)]);
-if(a.length==b.length)a.forEach((y,i)=>{for(const k of['fills','strokes'])if(y[k]!=MX){let w=y[k];if(B[k]&&Q[k]!=U&&Q[k]!=-1)w=w.map(z=>z.type=='SOLID'&&HX(z.color)==D.C[Q[k]].slice(0,7).toLowerCase()?bv(o,k=='fills'?'vf':'vs',B[k],z):z);if(Y(w)!=Y(b[i][k]))b[i][k]=w}});
+if(a.length==b.length)a.forEach((y,i)=>{for(const k of['fills','strokes'])if(Array.isArray(y[k])&&Array.isArray(b[i][k])){let w=y[k];if(B[k]&&Q[k]!=U&&Q[k]!=-1)w=w.map(z=>z.type=='SOLID'&&HX(z.color)==D.C[Q[k]].slice(0,7).toLowerCase()?bv(o,k=='fills'?'vf':'vs',B[k],z):z);if(Y(w)!=Y(b[i][k]))b[i][k]=w}});
 else ub(o,'rc','','icon layers differ');t.remove()}}
 if(d.op)n.opacity=e.op!=U?e.op:1;
 if(!top&&p)XZ(n,e,!!p.layoutMode&&p.layoutMode!='NONE',T)},
@@ -67,14 +67,15 @@ if(!top&&p)XZ(n,e,!!p.layoutMode&&p.layoutMode!='NONE',T)},
 // documentAccess dynamic-page
 XK=async(n,e,d)=>{const x=e.i!=U?e.i:e.mi;if(x!=U&&n.type=='INSTANCE'){const m=await n.getMainComponentAsync(),k=m?gd(m,'cmp'):'';if(k!=D.K[x])(d=d||{}).mc=k}return d},
 // component batch (D.cm): a built template root becomes a component (CV); once the last variant of a name is built
-// (a component's variants are consecutive and never split between batches) they form a set and the set (or the
-// component) gets its properties (XD), before a later component uses it; after the loop (PO) the components of an
+// (a component's variants are consecutive and never split between batches) and placed (XLP: screen() names the root
+// after its screen key first, a name that breaks a set) they form a set and the set (or the component) gets its
+// properties (XD), before a later component uses it; after the loop (PO) the components of an
 // earlier build of the same names hand their instances to the new ones and go
-XR={},XE=[],XF2=new Set,
-CV=async(n,sc)=>{const c=sc.cm;if(!c||!n)return n;const m=F.createComponentFromNode(n),k=D.K[c.k],L=D.screens,i=L.indexOf(sc);
+XR={},XE=[],XF2=new Set,XLP=[0],
+CV=async(n,sc)=>{const c=sc.cm;XLP[0]=0;if(!c||!n)return n;const m=F.createComponentFromNode(n),k=D.K[c.k],L=D.screens,i=L.indexOf(sc);
 pd(m,'id',sc.T.o);pd(m,'screen',sc.screen);pd(m,'file',sc.file);pd(m,'cmp',k);
 for(const r of S.reg)if(r[1]==n)r[1]=m;for(const l of S.late)if(l[2]==n)l[2]=m;
-XM.set(k,m);XC.push([m,sc]);if(!L[i+1]||L[i+1].cm.n!=c.n)await XD(c.n);return m},
+XM.set(k,m);XC.push([m,sc]);if(!L[i+1]||L[i+1].cm.n!=c.n)XLP[0]=c.n;return m},
 XD=async nm=>{const L=XC.filter(x=>x[1].cm.n==nm);let o=L[0][0];XF2.add(nm);
 for(const[m,sc]of L){const e=sc.T,s=e.s||'XX';m.name=sc.cm.v||nm;if(e.l)XA.forEach((f,i)=>{if(s[i]=='H')m['layoutSizing'+f]='HUG'})}
 try{if(L[0][1].cm.v){o=F.combineAsVariants(L.map(x=>x[0]),pg);o.name=nm;pd(o,'cmp',nm)}

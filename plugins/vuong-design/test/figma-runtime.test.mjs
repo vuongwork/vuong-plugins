@@ -187,7 +187,7 @@ test('every built node has vd/id; the root has vd/screen, vd/file and vd/sig; ev
   assert.match(root.getSharedPluginData('vuongdesign', 'sig'), /^[0-9a-f]{8}$/);
   assert.equal(s.sig, root.getSharedPluginData('vuongdesign', 'sig'));
   assert.equal(s.root, root.id);
-  const w = (n) => { if (n.type !== 'VECTOR') assert.ok(n.getSharedPluginData('vuongdesign', 'id'), `${n.type} ${n.name} has vd/id`); (n.children || []).forEach(w); };
+  const w = (n) => { if (n.type !== 'VECTOR' && n.type !== 'GROUP') assert.ok(n.getSharedPluginData('vuongdesign', 'id'), `${n.type} ${n.name} has vd/id`); (n.children || []).forEach(w); };
   w(root);
   assert.deepEqual(Object.keys(s.N).sort(), [...allIds(enc.T), 'n.0#stroke'].sort());
   for (const [o, r] of Object.entries(s.N)) {
@@ -590,7 +590,8 @@ test('multi-colour sprite icon: children with their own fill keep it; only the i
   assert.deepEqual(s.errors, []);
   const icon = byVd(page(fig).children[0])['n.6'];
   const hex = (p) => '#' + [p.color.r, p.color.g, p.color.b].map((c) => Math.round(c * 255).toString(16).padStart(2, '0')).join('');
-  const [a, b, c] = icon.children;
+  // a <g> of the svg is a GROUP (no fills) in Figma: the vectors are its leaves
+  const [a, b, c] = icon.findAll((n) => n.type === 'VECTOR');
   assert.equal(hex(a.fills[0]), '#26335c');
   assert.equal(hex(b.fills[0]), '#c9683f');
   assert.equal(a.fills[0].boundVariables, undefined, 'own colour is not bound');
@@ -604,8 +605,9 @@ test('single-colour inheriting icon still binds the icon fill on every child', a
   const [s] = (await runOne(fig, [iconEnc('i-plain')])).screens;
   assert.deepEqual(s.errors, []);
   const icon = byVd(page(fig).children[0])['n.6'];
-  assert.equal(icon.children.length, 2);
-  for (const k of icon.children) assert.ok(k.fills[0].boundVariables && k.fills[0].boundVariables.color, 'bound');
+  const vs = icon.findAll((n) => n.type === 'VECTOR');
+  assert.equal(vs.length, 2);
+  for (const k of vs) assert.ok(k.fills[0].boundVariables && k.fills[0].boundVariables.color, 'bound');
 });
 
 test('compact bindings: v.r binds all four corners; a corner bound to a variable is not compared by value', async () => {

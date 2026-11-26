@@ -372,6 +372,15 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
   }
 
   class Vector extends Node { constructor() { super('VECTOR'); this._born = true; } }
+  // a GROUP (createNodeFromSvg makes one per <g>) has no fills / strokes, as in real Figma (measured 2026-11-26: the
+  // icon recolour read them on every layer and failed with "cannot read property 'map' of undefined")
+  class Group extends Parent {
+    constructor() { super('GROUP'); this._born = true; }
+    get fills() { return undefined; }
+    set fills(v) { throw new Error('a group has no fills'); }
+    get strokes() { return undefined; }
+    set strokes(v) { throw new Error('a group has no strokes'); }
+  }
 
   class Page extends Parent {
     constructor(name) { super('PAGE'); this.name = name; }
@@ -469,6 +478,9 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
       t._building = false;
     }
     setProperties(props) {
+      // real Figma (2026-11-26): a set whose variants do not all name the same axes once each (one named after its
+      // screen key while the batch runs) refuses every instance of it
+      if (this._main.parent && this._main.parent.type === 'COMPONENT_SET' && setBroken(this._main.parent)) throw new Error('in get_componentProperties: Component set for node has existing errors');
       const defs = DEFS.get(ownerOf(this._main)) || {};
       for (const [k, v] of Object.entries(props)) {
         if (!k.includes('#')) {
@@ -496,6 +508,12 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
       }
     }
   }
+  const setBroken = (s) => {
+    const vs = s._kids.map((c) => String(c.name).split(',').map((p) => p.trim()));
+    if (vs.some((v) => v.some((p) => !/^[^=:/]+=[^=]+$/.test(p)))) return true;
+    const keys = vs.map((v) => v.map((p) => p.split('=')[0].trim()).sort().join('|')), combos = s._kids.map((c) => JSON.stringify(variantsOf(c.name)));
+    return new Set(keys).size > 1 || new Set(combos).size !== combos.length;
+  };
   const variantsOf = (name) => Object.fromEntries(String(name).split(',').map((p) => p.trim()).filter(Boolean).map((p) => p.split('=').map((x) => x.trim())));
   const mix = (cls) => { for (const k of Object.getOwnPropertyNames(InstanceApi.prototype)) if (k !== 'constructor') Object.defineProperty(cls.prototype, k, Object.getOwnPropertyDescriptor(InstanceApi.prototype, k)); };
   mix(Node);
@@ -573,9 +591,10 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
       const paint = (h) => { const x = parseInt(h.slice(1), 16); return [{ type: 'SOLID', color: { r: (x >> 16 & 255) / 255, g: (x >> 8 & 255) / 255, b: (x & 255) / 255 } }]; };
       // one vector per <path>; a path's own fill / stroke wins over the one inherited from the <g>
       const own = (tag, k) => { const m = new RegExp('\\s' + k + '="(#[0-9a-fA-F]{6})"', 'i').exec(tag); return m ? paint(m[1]) : null; };
-      const g = /<g\b[^>]*>/.exec(svg);
+      const g = /<g\b[^>]*>/.exec(svg), into = g ? new Group() : f;
+      if (g) f.appendChild(into);
       for (const pt of svg.match(/<path\b[^>]*>/g) || ['<path>']) {
-        const v = new Vector(); f.appendChild(v);
+        const v = new Vector(); into.appendChild(v);
         v.fills = own(pt, 'fill') || (g && own(g[0], 'fill')) || []; v.strokes = own(pt, 'stroke') || (g && own(g[0], 'stroke')) || [];
       }
       return f;

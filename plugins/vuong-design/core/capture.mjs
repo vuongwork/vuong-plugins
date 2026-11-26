@@ -869,7 +869,9 @@ function measurePage({ rootSel, widenSel, extras, nameOf, vars: wantVars }) {
     const svgDefs = {};
     for (const ref of iconRefs) { const d = document.getElementById(ref); if (d) svgDefs[ref] = d.outerHTML; }
     const cx = new Set(); for (const [d, el] of complexHits) if (root.contains(el)) cx.add(d);
-    return { W: rnd(R.width), H: rnd(R.height), tree, excluded, fonts: [...fonts], fontsRendered, name, svgDefs, varsComplex: cx.size };
+    // vd-html profile: the screen's own id (data-vd-screen) names it, as lint does
+    const vdScreen = (root.getAttribute('data-vd-screen') || '').trim();
+    return { W: rnd(R.width), H: rnd(R.height), tree, excluded, fonts: [...fonts], fontsRendered, name, vdScreen, svgDefs, varsComplex: cx.size };
   });
   const out = { count: roots.length, screens, mediaTexts, unreadable, fontCss };
   if (wantVars) {
@@ -1282,7 +1284,8 @@ export async function captureScreens(htmlPath, opts = {}) {
       const mapB = new Map();
       const index = (n) => { mapB.set(n.id, n); (n.kids || []).forEach(index); };
       index(sB.tree);
-      let id = sA.name ? slug(sA.name) : '';
+      // data-vd-screen (profile files) first, as lint ids it; then the --name text; then s<i>
+      let id = sA.vdScreen ? (/^[A-Za-z0-9_-]{1,40}$/.test(sA.vdScreen) ? sA.vdScreen : slug(sA.vdScreen)) : sA.name ? slug(sA.name) : '';
       if (!id || usedIds.has(id)) id = id ? `${id}-${i}` : `s${i}`;
       usedIds.add(id);
       const seen = new Set(sA.excluded.map((e) => e.path));

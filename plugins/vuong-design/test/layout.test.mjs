@@ -529,6 +529,9 @@ test('lint gate: a profile file runs without --root; report.json has every scree
   assert.equal(report.screens.length, 2);
   assert.equal(report.args.root, '[data-vd-screen]');
   assert.equal(report.args.widen, '[data-vd-widen]');
+  // screens are named by their data-vd-screen, as lint names them (not s0, s1)
+  assert.deepEqual(report.screens.map((s) => s.summary.screen), ['A1', 'A2']);
+  assert.ok(existsSync(join(out, 'spec-A1.json')));
   assert.ok(code === 0 || code === 1, `exit ${code}`);
   assert.ok(q.lines.some((l) => /^lint lint-clean\.html: 2 screens, 0 errors, 0 warnings/.test(l)));
 });

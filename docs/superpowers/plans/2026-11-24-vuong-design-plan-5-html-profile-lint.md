@@ -151,9 +151,9 @@ Hai lượt `spec-to-html` (Sonnet 5.5, đề trong `$VD_CORPUS_DIR/specs/`):
 
 Việc cho pipeline, làm **sau khi merge kế hoạch 3** (không thuộc lint):
 
-- [ ] **Chuẩn hoá (kế hoạch 2, `normalize.mjs`): GRID4 không hỏi kích thước theo dữ liệu.** Hẹn Khám: 39 câu GRID4, nhiều câu là chiều cao cột biểu đồ (63,59; 104,39 px…) và khoảng lệch avatar chồng nhau (7,2x px). Câu gộp "áp dụng mọi giá trị lưới 4 px" sẽ làm tròn cột và **sai số liệu**. Bỏ qua: phần tử absolute có kích thước/inset %, giá trị suy ra từ căn giữa (padding lẻ do `height` cố định), con của vùng biểu đồ. Test: biểu đồ cột tỉ lệ không sinh GRID4.
-- [ ] **Crop (kế hoạch 1/3, `verify.mjs`):** Hẹn Khám F1 vòng radio viền 2 px (ratio 0,063 > 0,05, peak 10) và F3 chữ `line-through` (ratio 0,10, peak 29–30). Tìm nguyên nhân (khử răng cưa vòng tròn, vị trí/độ dày gạch ngang) trước khi nghĩ đến nới ngưỡng.
-- [ ] **Mã màn:** `layout`/`ds` đặt `s0…` thay vì giá trị `data-vd-screen` (lint đã dùng `M1`, `F1`…). Capture/pipeline nên lấy id từ thuộc tính khi có.
+- [x] **Chuẩn hoá (kế hoạch 2, `normalize.mjs`): GRID4 không hỏi kích thước theo dữ liệu.** Hẹn Khám: 39 câu GRID4, nhiều câu là chiều cao cột biểu đồ (63,59; 104,39 px…) và khoảng lệch avatar chồng nhau (7,2x px). Câu gộp "áp dụng mọi giá trị lưới 4 px" sẽ làm tròn cột và **sai số liệu**. Bỏ qua: phần tử absolute có kích thước/inset %, giá trị suy ra từ căn giữa (padding lẻ do `height` cố định), con của vùng biểu đồ. Test: biểu đồ cột tỉ lệ không sinh GRID4.
+- [x] **Crop (kế hoạch 1/3, `verify.mjs`):** Hẹn Khám F1 vòng radio viền 2 px (ratio 0,063 > 0,05, peak 10) và F3 chữ `line-through` (ratio 0,10, peak 29–30). Tìm nguyên nhân (khử răng cưa vòng tròn, vị trí/độ dày gạch ngang) trước khi nghĩ đến nới ngưỡng.
+- [x] **Mã màn:** `layout`/`ds` đặt `s0…` thay vì giá trị `data-vd-screen` (lint đã dùng `M1`, `F1`…). Capture/pipeline nên lấy id từ thuộc tính khi có.
 
 ### Lượt 3: Góc Đọc (ảnh, chữ dài, cài đặt)
 
@@ -202,3 +202,14 @@ Sonnet 5.5, 18,2k token output (lượt 4: 25,2k), 2,7 phút, **1 vòng lint s�
 - `session-log.mjs` không tìm thấy transcript khi skill `cd` vào thư mục output → nay dò ngược lên thư mục cha, cuối cùng lấy transcript mới nhất (≤ 10 phút) của mọi dự án.
 - Lint 8–15 s ở file này là thời gian tải Google Fonts (thêm Roboto Mono, trình duyệt mới không cache); phần tính trong trang ~30 ms. `lint.json` nay có `timing` từng phần.
 - Nhánh lint chưa đọc được `vd-rules.json` có khoá `states` (thêm ở nhánh figma): hết khi merge.
+
+### Việc pipeline sau merge (2026-11-27, nhánh `feat/vuong-design-pipeline`)
+
+Hồi quy trên 6 mẫu (`layout.mjs`, bản HTML lượt đầu trong `$VD_CORPUS_DIR/samples-out/`): trước 16/30 màn đạt, sau **20/30**. Mọi màn còn trượt đều có cảnh báo lint đúng chỗ (W3, W5, W12–W18): đó là bản nháp đầu của skill, không phải lỗi pipeline.
+
+- **Offset % trên phần tử absolute:** đã hết từ d868a7e (anchor % có offset, node % ngoài luồng). Mẫu Trời Hôm Nay v2: 5/5.
+- **Crop vòng viền:** bản mô phỏng vẽ viền bốn cạnh giống nhau bằng một bóng spread (bốn bóng một cạnh vẽ hình lưỡi liềm trên khung tròn). Radio 2 px và núm trượt hết lệch crop.
+- **Crop chữ gạch ngang:** `text-decoration` không kế thừa, nên gạch ngang đặt trên flex container đọc ra `none` ở chữ con. Capture nay lấy cả đường trang trí mà tổ tiên vẽ xuyên qua (không vào inline-block hay phần tử ngoài luồng).
+- **Mã màn:** màn theo profile lấy `data-vd-screen` làm id, giống lint (`F2`, không còn `s1`).
+- **GRID4 (R84):** capture ghi phần đệm tác giả viết (padding + viền, cộng margin của con); padding do infer suy ra từ hình học (căn giữa trong chiều cao cố định, chồng avatar) được giữ (`DERIVED`), không hỏi. Mẫu Hẹn Khám: 28 → 12 câu GRID4. Trên bộ nghiệm thu 18 màn: không đổi quyết định nào đã trả lời hay tự động, chỉ bớt câu GRID4 đang mở.
+- **Chưa làm:** gap suy ra (198 px, 118 px) vẫn hỏi GRID4; padding lẻ do viền (12 + 1 px) vẫn hỏi; lệch 2 px bề rộng chữ và hàng `space-between` một nút lẻ là cách Figma làm tròn bề rộng chữ (đã thấy trên Figma thật), cần người dùng chọn: duyệt từng chỗ như hiện nay hay tự chấp nhận dưới một ngưỡng.

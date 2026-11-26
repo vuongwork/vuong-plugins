@@ -18,6 +18,17 @@ a dev can ask the same at any time with `/vuong-test:next [scope]`.
 Files others read (`cases.md`, `diff.md`, `data-plan.md`) must read row by row without another file open: spec by
 file name + cell, flow refs with their name, rules in words; codes (`R12`, `S2`, `B3`) only in brackets.
 
+**Delegate the writing steps.** Step 4 (cases.md + data-plan.md) and step 6 (write + dry-run tests) go to the
+`vuong-test:writer` agent (runs on Sonnet: same quality measured, about half the cost) — one agent per scope, or
+one per group when step 6 is split. First write what the user answered into the step files where it belongs
+(BA answers in `spec-sources.md`, decisions in `diff.md`, approval in the `cases.md` header) — the agent reads
+answers from files only. Its prompt is only: `PLUGIN`, `W`, the step, the scope, the input paths (step 6: case
+IDs, test file, out dir); no answers, no rulings on what counts as a source, no file contents. Do not read its
+output files again except to show the user what this flow says to show, and do not fix them yourself: gaps from
+`cases-summary.mjs`, lint errors or failing dry runs go back to the same agent (SendMessage, else a new writer with
+the list) in one message. You keep everything that talks to the user: steps 1–3, its open questions, the
+approval gate (5), the run and report (7). No Agent tool available → do the step yourself.
+
 `/vuong-test:vuong-test help` (or `/vuong-test:help [word]`): run `node $PLUGIN/core/help.mjs [word]` and show its output as is; do nothing else.
 
 **Review existing tests** (`/vuong-test:review-tests <tests> [scope]`, or "review the UT that dev / TDD tooling
@@ -144,7 +155,7 @@ Follow `$PLUGIN/references/stacks/<stack>.md` and `$PLUGIN/references/review-tes
   `keep` / `tag <ID>` covers its case, so write new tests only for the cases still without one.
 - Self-review the tests against `$PLUGIN/references/review-tests.md` before the real run, and run
   `node $PLUGIN/core/lint-tests.mjs <test dirs>` (fixed waits, hard-coded secrets) until it passes.
-- Parallel work: split the approved cases by area/flow group and **suggest** a number of parallel agents
+- Parallel work: split the approved cases by area/flow group and **suggest** a number of parallel `vuong-test:writer` agents
   to the user before starting — about 1 agent per 15–25 E2E cases (1 per 40–60 UT cases), max 5. Show the
   split and start only after the user agrees. Fixed template, one row per agent `<group>`:
   | Agent | Cases | Test file (own) | Out dir (own) | Notes (own) | Data |

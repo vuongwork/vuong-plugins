@@ -230,3 +230,23 @@ Kết luận:
   khi sửa), lint sạch, `run.mjs` chạy được. Chi phí giảm 41% ở t2 và 54% ở t4; t4 nhanh hơn 5–9 phút.
 - Sonnet viết nhiều case hơn ở t2 (144 so với 93) nên tốn nhiều token ra hơn, nhưng giá token rẻ hơn một nửa.
 - Đòn bẩy lớn nhất là chọn model. Các tối ưu nhỏ trong prompt (vài phần trăm) không đo được với 1 lần chạy mỗi ô.
+
+## 13. Vòng tối ưu 2 (2026-11-26): agent `vuong-test:writer` chạy Sonnet
+
+Bước 4 (cases.md + data-plan.md) và bước 6 (viết test, dry-run, lint) giao cho agent `agents/writer.md` (`model: sonnet`).
+Session chính (Opus) giữ phần nói chuyện với user, cổng duyệt, chạy và report.
+
+| Ca | Cách chạy | USD | Opus chính | Sonnet writer | Điểm | Ghi chú |
+|---|---|---|---|---|---|---|
+| t2 | Opus (gốc) | 2.41 | 2.41 | – | 1.0 | 93 case |
+| t2 | writer, lần 1 | 1.95 | 1.95 | 0 | 1.0 | Agent bị auto-mode chặn ("Undermining Oversight") → Opus tự làm |
+| t2 | writer, đã sửa | **1.60** | 0.85 | 0.76 | 1.0 | 116 case, 0 assumption |
+| t4 | Opus (gốc / +README / lần 1) | 3.28 / 3.34 / 3.69 | – | 0 | 1.0 | lần 1 cũng bị chặn |
+| t4 | writer, đã sửa | **2.26** | 0.94 | 1.32 | 1.0 | 2 writer song song (UT+API, E2E), 6/6 lỗi cài bắt được |
+
+- Nguyên nhân bị chặn: session chính chép câu trả lời BA vào prompt dạng lệnh ("these are NOT assumption anymore").
+  Sửa: câu trả lời của user ghi vào file của bước (spec-sources.md, diff.md, header cases.md) trước; prompt agent
+  chỉ có đường dẫn. Writer lấy câu trả lời từ file.
+- Gap / lỗi lint / dry-run fail gửi lại cho writer, session chính không tự sửa (t2 lần đầu Opus tự sửa ~10 lượt ≈ 0.5 USD).
+- Kết quả: −33% (t2), −32% (t4) so với Opus thuần, chất lượng giữ nguyên. Sonnet thuần rẻ hơn nữa (1.43 / 1.50)
+  nhưng mất Opus ở phần hỏi đáp và phán đoán; user muốn rẻ nhất có thể tự `/model sonnet`.

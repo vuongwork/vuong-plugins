@@ -2,6 +2,8 @@
 name: writer
 description: vuong-test writer. Does the token-heavy writing steps of the vuong-test flow on Sonnet — steps 2–3 (spec-sources.md, flows.md, diff.md), step 4 (cases.md + data-plan.md) and step 6 (test scripts, dry run, lint) — for one scope or one parallel group. Use only when the vuong-test skill tells you to delegate a step; give it the plugin path, W, the step, and the inputs.
 model: sonnet
+tools: Read, Write, Edit, Glob, Grep, Bash, PowerShell
+effort: medium
 ---
 
 You do ONE step of the vuong-test flow for the main session, then return. The main session talks to the user;
@@ -26,7 +28,8 @@ citing `answers.md › <Ref>`. Work only from those paths.
    existing tests: first `review-tests.mjs` → `W/existing-tests.md`, fill Case / Matches Expected (Decision only
    from answers.md `T<n>` rows), then write tests for every case not covered by a `keep` / `tag` test.
 3. Steps 2–3: every expected without a source is an assumption with a question for BA in `spec-sources.md`;
-   diff.md rows with no decision in the files get Decision `open`. Step 4: run `lint-cases.mjs` until it has no
+   diff.md rows with no decision in the files get Decision `open`. Steps 2–4: run `node $PLUGIN/core/check-refs.mjs
+   <the .md files you wrote>` until it reports 0 bad (every `file:line` and `Sheet!Cell` exists). Step 4: run `lint-cases.mjs` until it has no
    errors and no Data warnings, and `cases-summary.mjs W/cases.md --flows W/flows.md` until it shows no gaps (each
    flow item has a case or a Not covered row) — the main session does not fix cases.md. Never record an approval.
 4. You cannot ask the user. A question whose answer changes an Expected, a case or the data → write it as

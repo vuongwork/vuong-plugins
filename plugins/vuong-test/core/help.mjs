@@ -24,6 +24,7 @@ const GROUPS = [
     [`node ${P}/core/next.mjs [scope | W]`, "In ra dev cần đọc file nào, dòng / ID nào ở giai đoạn hiện tại (lệnh /vuong-test:next gọi script này)"],
     [`node ${P}/core/import-cases.mjs <file tester> --scope <màn> --out W/cases.md`, "File test case của tester (xlsx/xlsm) → cases.md nháp, theo caseTemplates của project; giữ số + dòng gốc"],
     [`node ${P}/core/cases-summary.mjs W/cases.md --flows W/flows.md`, "Tổng quan trước khi duyệt: mỗi vùng (entry point + nhánh) có bao nhiêu case, layer nào, flow nào còn thiếu case"],
+    [`node ${P}/core/check-refs.mjs W/flows.md W/diff.md ...`, "Kiểm trích dẫn: mọi file:line có dòng đó, mọi Sheet!Cell có trong spec đã chuyển (test-work/_spec) — 0 token, khỏi soát tay"],
     [`node ${P}/core/lint-cases.mjs W/cases.md [--require-approval]`, "Kiểm tra cases.md: thiếu nguồn, thiếu data, layer, ID trùng, Pre sai thứ tự, chưa duyệt"],
   ]],
   ["Viết test (bước 6)", [

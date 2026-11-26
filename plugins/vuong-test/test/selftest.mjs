@@ -954,6 +954,22 @@ section("manual runbook / collect --manual / Pre");
 }
 
 // ── next (what to read now) + self-contained rows ─────────────────────────────
+section("check-refs");
+{
+  const R = path.join(T, "refs");
+  w("refs/src/app.js", "a\nb\nc\n");
+  w("refs/lib/app.js", "x\n");
+  w("refs/server.js", "1\n2\n3\n4\n5\n");
+  w("refs/test-work/_spec/S.xlsx.md", "# S\n\n## Sheet: Giao dien\n\n- **Giao dien!A9** text\n- **Giao dien!A22** Mã | **B22** Trạng thái\n\n## Sheet: Item\n\n- **Item!E10** x\n");
+  w("refs/test-work/L/flows.md", "| E1 | server.js:2-4 | yes (S.xlsx › Giao dien!A9) | Item!E10 | Giao dien!B22 |\n| E2 | src/app.js:3 | xem Item!E10 |\n");
+  let r = run("core/check-refs.mjs", ["test-work/L/flows.md"], { cwd: R });
+  check("check-refs: lines, ranges, cell labels and row cells found → exit 0", r.code === 0 && /2 file:line, 3 spec cells — 0 bad/.test(r.out), r.all);
+  w("refs/test-work/L/diff.md", "| D1 | server.js:9 | gone.js:1 | app.js:1 | Giao dien!A99 | Item!E10-E12 |\n");
+  r = run("core/check-refs.mjs", ["test-work/L/diff.md"], { cwd: R });
+  check("check-refs: line past end, missing file, missing cell, range end → exit 1; same-name file ambiguous", r.code === 1 && /server\.js:9: server\.js has 5 lines/.test(r.out) && /gone\.js:1: no such file/.test(r.out) && /Giao dien!A99: no such cell/.test(r.out) && /Item!E12: no such cell/.test(r.out) && /2 files named app\.js/.test(r.out), r.out);
+  check("check-refs: no files → exit 2", run("core/check-refs.mjs", [], { cwd: R }).code === 2);
+}
+
 section("next / readable rows");
 {
   const lint = run("core/lint-cases.mjs", [w("wi/codes.md", casesMd([["A-001", "e2e", "E1 New", "s", "3 rows", "R12", "record R1 open", "N"], ["A-002", "e2e", "E1 New", "s", "3 rows", "S2 › Items!C14", "record R1 open", "N"], ["A-003", "e2e", "E1 New", "s", "3 rows", "SRS_v3.xlsx › Items!C14 (R12)", "record R1 open", "N"]]))]);

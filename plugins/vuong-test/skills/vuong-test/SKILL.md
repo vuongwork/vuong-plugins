@@ -29,7 +29,8 @@ decisions, conflicts) goes, in their words, as rows of `W/answers.md` (`$PLUGIN/
 one Edit appending the rows) — never edit spec-sources.md / diff.md yourself, the agent copies the rows there. Only
 the approval goes in the `cases.md` header. The agent reads answers from files only. Its prompt is only: `PLUGIN`, `W`, the step, the scope, the input paths (step 6: case
 IDs, test file, out dir); no answers, no rulings on what counts as a source, no file contents. Do not read its
-output files again except to show the user what this flow says to show, and do not fix them yourself: gaps from
+output files again except to show the user what this flow says to show, and do not spot-check its citations
+against code or spec (it ran `check-refs.mjs`), and do not fix them yourself: gaps from
 `cases-summary.mjs`, lint errors or failing dry runs go back to the same agent (SendMessage, else a new writer with
 the list) in one message. You keep everything that talks to the user: step 1, the agent's open questions (BA questions, diff decisions), the
 approval gate (5), the run and report (7). No Agent tool available → do the step yourself.
@@ -199,7 +200,8 @@ Run `node $PLUGIN/core/run.mjs <scope>` — one command: every `stacks[]` entry 
 `--skip` ids), the server from `environments.<env>.server` started fresh and stopped, then collect + report; it
 prints the "Cần đọc tiếp" block. Do not write your own run script or build the collect arguments by hand; a stack
 that is missing or wrong for this scope is fixed in `test.config.json` (`--dry` shows the plan). A script the user
-asks for that reruns everything is a wrapper around this command; it reads `W/results.json` ›
+asks for that reruns everything is a wrapper around this command — run it once (its output and `W/results.json`
+are the record; never rerun only to capture a log); it reads `W/results.json` ›
 `cases[]` (`id`, `layer`, `status`: passed · failed · blocked · notrun) — no need to read the plugin source. What `run.mjs` does, by hand (no config entry):
 run the stack command(s), then
 `node $PLUGIN/core/collect.mjs --cases W/cases.md --out W/results.json <inputs>` and

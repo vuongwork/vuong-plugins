@@ -1,0 +1,26 @@
+<!doctype html><html><head><meta charset="utf-8"><title>lint</title><style>
+:root{--color-bg:#ffffff;--color-ink:#1a1a1a;--color-card:#f2f2f2;--color-accent:#3d6b5c;--space-2:8px;--space-3:12px;--space-4:16px;--space-6:24px;--radius-md:12px;--font-sans:"Be Vietnam Pro",sans-serif;--size-body:14px;--size-body-lh:20px}
+body{margin:0;background:var(--color-bg);color:var(--color-ink);font-family:var(--font-sans);font-size:var(--size-body);line-height:var(--size-body-lh)}
+.frame{width:360px}
+.screen{padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-3)}
+.split{display:flex;gap:var(--space-2)}
+.split div{padding:var(--space-2);background:var(--color-card);border-radius:var(--radius-md)}
+.two{flex:2}.one{flex:1}
+.eq{flex:1 1 0;min-width:0}
+.wrap{display:flex;justify-content:center;padding:0 var(--space-6)}
+.dialog{box-sizing:border-box;width:100%;max-width:312px;padding:var(--space-4);background:var(--color-card);border-radius:var(--radius-md)}
+.note svg{width:14px;height:14px}
+.just{text-align:justify}
+</style></head><body>
+<div class="frame" data-vd-widen><div class="screen" data-vd-screen="A1">
+  <div class="split"><div class="eq">Một</div><div class="eq">Hai dài hơn</div></div>
+  <div class="row-ok" style="display:flex;align-items:center;gap:var(--space-2)"><svg width="14" height="14"><rect width="14" height="14"/></svg><span>Icon trong hàng flex</span></div>
+</div></div>
+<div class="frame" data-vd-widen><div class="screen" data-vd-screen="A2">
+  <div class="split"><div class="two">Phần trái</div><div class="one">Phải</div></div>
+  <div class="wrap"><div class="dialog">Hộp thoại rộng tối đa</div></div>
+  <p class="note">Cập nhật mỗi 30 phút <svg><rect width="14" height="14"/></svg> từ trạm gần nhất.</p>
+  <p class="just">Đoạn văn căn đều hai bên, đủ dài để xuống dòng vài lần trong khung màn hẹp này.</p>
+  <p>Ô nhiễm O<sub>3</sub> trong ngày.</p>
+</div></div>
+</body></html>

@@ -32,7 +32,7 @@ test('parseCli: plan flags, extras and defaults', () => {
   assert.deepEqual(o, {
     html: 'a.html', root: '.sc', widen: '.ph', nameOf: 'h2', widenBy: 80, viewport: 1200,
     verify: { tolFrame: 0.75, tolText: 1.5, tolModel: 3 }, webFonts: false, out: 'o', allowlist: undefined,
-    mutate: true, mutateSample: 2, corpus: undefined, corpusDir: undefined,
+    noLint: false, mutate: true, mutateSample: 2, corpus: undefined, corpusDir: undefined,
   });
   const d = parseCli(['--html', 'a.html', '--root', '.sc', '--out', 'o']);
   assert.deepEqual(d.verify, {});
@@ -48,7 +48,6 @@ test('parseCli: plan flags, extras and defaults', () => {
 test('parseCli: usage errors', () => {
   const bad = [
     [['--root', '.sc', '--out', 'o'], /--html/],
-    [['--html', 'a.html', '--out', 'o'], /--root/],
     [['--html', 'a.html', '--root', '.sc'], /--out/],
     [['--html', 'a.html', '--root', '.sc', '--out', 'o', '--tol-frame', 'x'], /--tol-frame/],
     [['--html', 'a.html', '--root', '.sc', '--out', 'o', '--tol-text', '-1'], /--tol-text/],
@@ -65,8 +64,8 @@ test('parseCli: usage errors', () => {
 
 test('main: usage error and missing file exit 2 without a browser', async () => {
   const q = quiet();
-  assert.equal(await main(['--html', 'a.html', '--out', 'o'], { log: q.log }), 2);
-  assert.match(q.lines.join('\n'), /--root/);
+  assert.equal(await main(['--html', 'a.html'], { log: q.log }), 2);
+  assert.match(q.lines.join('\n'), /--out/);
   const q2 = quiet();
   assert.equal(await main(['--html', join(FIX, 'nope.html'), '--root', '.scr', '--out', tmp()], { log: q2.log }), 2);
   assert.match(q2.lines.join('\n'), /not found/);
@@ -183,7 +182,7 @@ test('corpus.json: the 5 acceptance files with their roots; the allowlist holds 
 
 test('CLI: a passing fixture exits 0 and writes ir.json, spec-<id>.json, report.json, report.html', { skip }, async () => {
   const out = tmp();
-  const code = await main(['--html', join(FIX, 'capture-basic.html'), '--root', '.scr', '--no-webfonts', '--out', out], { fontMap: fm, browser, log: () => {} });
+  const code = await main(['--html', join(FIX, 'capture-basic.html'), '--root', '.scr', '--no-webfonts', '--no-lint', '--out', out], { fontMap: fm, browser, log: () => {} });
   assert.equal(code, 0);
   const ir = JSON.parse(readFileSync(join(out, 'ir.json'), 'utf8'));
   assert.equal(ir.screens.length, 1);
@@ -501,4 +500,39 @@ test('M-b (probe-paint2): a run colour or run font family planted in the spec is
     if (!want) { assert.equal(e.report.pass, true, `${name}: ${JSON.stringify({ data: e.report.data, crop: e.report.crop, roots: e.report.roots })}`); continue; }
     assert.ok(e.report.data.some((d) => d.id === want[0] && d.kind === 'font-style' && d.prop === want[1]), `${name}: ${JSON.stringify(e.report.data)}`);
   }
+});
+
+// ---------------- lint gate (plan 5) ----------------
+
+const fmLint = { available: ['Inter', 'Georgia', 'Be Vietnam Pro'], substitute: () => 'Georgia' };
+
+test('lint gate: errors stop the run before any output but lint.json; --no-lint skips the gate', { skip }, async () => {
+  const out = tmp();
+  const q = quiet();
+  const code = await main(['--html', join(FIX, 'lint-errors.html'), '--root', '.screen', '--no-webfonts', '--out', out], { fontMap: fmLint, browser, log: q.log });
+  assert.equal(code, 1);
+  assert.ok(existsSync(join(out, 'lint.json')));
+  assert.ok(!existsSync(join(out, 'ir.json')));
+  assert.match(q.lines.join('\n'), /lint: \d+ errors?, fix them or pass --no-lint/);
+  const out2 = tmp();
+  await main(['--html', join(FIX, 'lint-errors.html'), '--root', '.screen', '--no-webfonts', '--no-lint', '--out', out2], { fontMap: fmLint, browser, log: () => {} });
+  assert.ok(existsSync(join(out2, 'ir.json')));
+  assert.ok(!existsSync(join(out2, 'lint.json')));
+});
+
+test('lint gate: a profile file runs without --root; report.json has every screen', { skip }, async () => {
+  const out = tmp();
+  const q = quiet();
+  const code = await main(['--html', join(FIX, 'lint-clean.html'), '--no-webfonts', '--out', out], { fontMap: fmLint, browser, log: q.log });
+  assert.ok(existsSync(join(out, 'lint.json')));
+  const report = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'));
+  assert.equal(report.screens.length, 2);
+  assert.equal(report.args.root, '[data-vd-screen]');
+  assert.equal(report.args.widen, '[data-vd-widen]');
+  assert.ok(code === 0 || code === 1, `exit ${code}`);
+  assert.ok(q.lines.some((l) => /^lint lint-clean\.html: 2 screens, 0 errors, 0 warnings/.test(l)));
+});
+
+test('lint gate: a selector that matches nothing is still a usage error (exit 2) from the pipeline', { skip }, async () => {
+  assert.equal(await main(['--html', join(FIX, 'lint-clean.html'), '--root', '.nothing', '--no-webfonts', '--out', tmp()], { fontMap: fmLint, browser, log: () => {} }), 2);
 });

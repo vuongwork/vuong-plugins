@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 // Layout CLI (Task 8): HTML -> inferred auto-layout spec, verified node by node (spec §14), with a report to approve.
 //
-//   node core/layout.mjs --html <file> --root <selector> --out <dir> [--widen <selector>] [--name <selector>]
-//        [--widen-by <px>] [--viewport <px>] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>] [--no-webfonts]
+//   node core/layout.mjs --html <file> [--root <selector>] --out <dir> [--widen <selector>] [--name <selector>]
+//        [--no-lint] [--widen-by <px>] [--viewport <px>] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>] [--no-webfonts]
 //        [--allowlist <json>] [--mutate [--mutate-sample <n>]]
 //   node core/layout.mjs --corpus <corpus.json> [--corpus-dir <dir>] --out <dir> [same options]
 //     corpus mode: every file of the corpus (paths relative to --corpus-dir, default $VD_CORPUS_DIR) with its own
 //     root / widen; the corpus's `allowlist` is used unless --allowlist is given.
 //
+// Without --root the file follows the vd-html profile (PROFILE.md): screens are [data-vd-screen], widened through
+//   [data-vd-widen] when the file has one. --html mode first runs lint.mjs (the gate): its summary goes to the log,
+//   lint.json to --out; errors stop the run (exit 1, no ir.json) unless --no-lint. --corpus mode never lints.
 // Pipeline: pipeline.mjs runFile (capture with png, font override R10, line-height R14 -> infer -> layout proxy +
 // modelled proxy at A and B with the source pixel origin -> verifyScreenWithImages).
 // Writes: ir.json (captured screens without PNGs), spec-<id>.json (modelled spec, compact JSON: specBytes is its
@@ -23,20 +26,21 @@ import { parseArgs } from 'node:util';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { basename, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { lintFile, summarize as lintSummary, DEFAULT_ROOT, DEFAULT_WIDEN } from './lint.mjs';
 import { runFile, gate, summarize, loadCorpus, specJson, allowlistEntry } from './pipeline.mjs';
 
 export class UsageError extends Error {}
 
-export const USAGE = `usage: node core/layout.mjs --html <file> --root <selector> --out <dir> [options]
+export const USAGE = `usage: node core/layout.mjs --html <file> [--root <selector>] --out <dir> [options]
        node core/layout.mjs --corpus <corpus.json> [--corpus-dir <dir>] --out <dir> [options]
-options: --widen <sel> --name <sel> --widen-by <px> --viewport <px> --tol-frame <px> --tol-text <px> --tol-model <px>
+options: --no-lint --widen <sel> --name <sel> --widen-by <px> --viewport <px> --tol-frame <px> --tol-text <px> --tol-model <px>
          --no-webfonts --allowlist <json> --mutate --mutate-sample <n>`;
 
 const OPTIONS = {
   html: { type: 'string' }, root: { type: 'string' }, widen: { type: 'string' }, name: { type: 'string' },
   'widen-by': { type: 'string' }, viewport: { type: 'string' },
   'tol-frame': { type: 'string' }, 'tol-text': { type: 'string' }, 'tol-model': { type: 'string' },
-  'no-webfonts': { type: 'boolean' }, out: { type: 'string' }, allowlist: { type: 'string' },
+  'no-webfonts': { type: 'boolean' }, 'no-lint': { type: 'boolean' }, out: { type: 'string' }, allowlist: { type: 'string' },
   mutate: { type: 'boolean' }, 'mutate-sample': { type: 'string' },
   corpus: { type: 'string' }, 'corpus-dir': { type: 'string' }, help: { type: 'boolean', short: 'h' },
 };
@@ -59,8 +63,7 @@ export function parseCli(argv, env = process.env, extra = null) {
   if (values.help) return { help: true };
   if (!values.out) throw new UsageError('--out <dir> is required');
   if (values.html && values.corpus) throw new UsageError('use either --html or --corpus, not both');
-  if (!values.html && !values.corpus) throw new UsageError('--html <file> (with --root) or --corpus <corpus.json> is required');
-  if (values.html && !values.root) throw new UsageError('--root <selector> is required with --html');
+  if (!values.html && !values.corpus) throw new UsageError('--html <file> or --corpus <corpus.json> is required');
   if (values.corpus && (values.root || values.widen || values.name)) throw new UsageError('--root / --widen / --name come from the corpus file in --corpus mode');
   if (values['mutate-sample'] != null && !values.mutate) throw new UsageError('--mutate-sample needs --mutate');
   const verify = {};
@@ -74,7 +77,7 @@ export function parseCli(argv, env = process.env, extra = null) {
     html: values.html, root: values.root, widen: values.widen, nameOf: values.name,
     widenBy: number('widen-by', values['widen-by'], { positive: true }),
     viewport: number('viewport', values.viewport, { positive: true }),
-    verify, webFonts: !values['no-webfonts'], out: values.out, allowlist: values.allowlist,
+    verify, webFonts: !values['no-webfonts'], noLint: !!values['no-lint'], out: values.out, allowlist: values.allowlist,
     mutate: !!values.mutate, mutateSample: number('mutate-sample', values['mutate-sample'], { positive: true, int: true }),
     corpus: values.corpus, corpusDir,
     ...(extra ? Object.fromEntries(Object.keys(extra.options || {}).map((k) => [k, values[k]])) : {}),
@@ -133,6 +136,28 @@ export async function main(argv, deps = {}, ext = null) {
   const results = [];
   try {
     if (!browser) { const { launchBrowser } = await import('./browser.mjs'); browser = await launchBrowser(); own = true; }
+    if (!o.corpus && !o.noLint) {
+      // lint gate: one page load on the shared browser; errors stop the run before any output but lint.json
+      const j = jobs[0];
+      const lr = await lintFile(j.path, { root: j.root, widen: j.widen, browser, fontMap: deps.fontMap });
+      mkdirSync(o.out, { recursive: true });
+      writeFileSync(join(o.out, 'lint.json'), JSON.stringify(lr, null, 1));
+      for (const l of lintSummary(lr, { outPath: join(o.out, 'lint.json') })) log(l);
+      // E1 (no screen for the selector) is left to the pipeline, which reports it as a usage error (exit 2)
+      if (lr.findings.some((f) => f.level === 'error' && f.code !== 'E1')) {
+        log(`lint: ${lr.counts.error} error${lr.counts.error === 1 ? '' : 's'}, fix them or pass --no-lint`);
+        if (own) await browser.close();
+        return 1;
+      }
+    }
+    if (!o.corpus) {
+      // profile defaults (PROFILE.md): screens [data-vd-screen], widened through [data-vd-widen] when the file has one
+      const j = jobs[0];
+      if (!j.root) {
+        j.root = DEFAULT_ROOT;
+        if (!j.widen && /data-vd-widen/.test(readFileSync(j.path, 'utf8'))) j.widen = DEFAULT_WIDEN;
+      }
+    }
     for (const j of jobs) {
       log(`${j.file}: capturing ${j.root}`);
       const res = await runFile(browser, j.path, {
@@ -172,7 +197,7 @@ export async function main(argv, deps = {}, ext = null) {
     }
     const { pass, missed } = runVerdict(screensOut);
     const seconds = Math.round((Date.now() - t0) / 100) / 10;
-    const args = { ...(o.corpus ? { corpus: o.corpus } : { html: o.html, root: o.root }), ...(state && state.args ? state.args : {}), ...(o.widen ? { widen: o.widen } : {}), webFonts: o.webFonts, tol: o.verify, mutate: o.mutate, allowlistApproved: allowlist.filter((e) => e && e.approved === true).length };
+    const args = { ...(o.corpus ? { corpus: o.corpus } : { html: o.html, root: jobs[0].root }), ...(state && state.args ? state.args : {}), ...(!o.corpus && jobs[0].widen ? { widen: jobs[0].widen } : {}), webFonts: o.webFonts, tol: o.verify, mutate: o.mutate, allowlistApproved: allowlist.filter((e) => e && e.approved === true).length };
     writeFileSync(join(o.out, 'report.json'), JSON.stringify({ generated: new Date().toISOString(), seconds, args, pass, ...(o.mutate ? { mutationsMissed: missed } : {}), screens: screensOut }, null, 1));
     writeFileSync(join(o.out, 'report.html'), renderReportHtml({ generated: `${new Date().toISOString()} · ${seconds} s`, args, screens: views }));
     const failed = screensOut.filter((s) => !s.summary.pass).length;

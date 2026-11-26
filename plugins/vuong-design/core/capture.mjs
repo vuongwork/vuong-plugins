@@ -495,8 +495,20 @@ function measurePage({ rootSel, widenSel, extras, nameOf, vars: wantVars }) {
     if (attr === null) el.removeAttribute('style'); else if (had) st.setProperty('display', had, pri); else st.removeProperty('display');
     return Object.keys(out).length ? out : null;
   };
-  const font = (cs) => ({ ff: cs.fontFamily, fs: cs.fontSize, fw: cs.fontWeight, fst: cs.fontStyle, lh: lhPx(cs), ls: cs.letterSpacing,
-    c: cs.color, td: cs.textDecorationLine, tt: cs.textTransform, ta: cs.textAlign, ws: cs.whiteSpace });
+  // text-decoration-line is not inherited, but an ancestor's decoration is drawn through its in-flow descendants (CSS
+  // Text Decoration 3 §2.1: not into out-of-flow or atomic inline ones): a line-through on a flex container strikes its
+  // item's text, whose own computed value is 'none'. The text carries the lines it is drawn with.
+  const tdOf = (el, cs) => {
+    const set = new Set();
+    for (let x = el, s = cs; x && x.nodeType === 1; ) {
+      for (const v of (s.textDecorationLine || 'none').split(/\s+/)) if (v !== 'none') set.add(v);
+      if (/^(absolute|fixed)$/.test(s.position) || s.float !== 'none' || /^inline-(block|flex|grid|table)$/.test(s.display)) break;
+      x = x.parentElement; s = x && getComputedStyle(x);
+    }
+    return set.size ? [...set].join(' ') : 'none';
+  };
+  const font = (cs, el) => ({ ff: cs.fontFamily, fs: cs.fontSize, fw: cs.fontWeight, fst: cs.fontStyle, lh: lhPx(cs), ls: cs.letterSpacing,
+    c: cs.color, td: el ? tdOf(el, cs) : cs.textDecorationLine, tt: cs.textTransform, ta: cs.textAlign, ws: cs.whiteSpace });
   const isIconFont = (cs) => /Material (Symbols|Icons)/i.test(cs.fontFamily);
   const isInlineNoBox = (el) => {
     const cs = getComputedStyle(el);
@@ -657,7 +669,7 @@ function measurePage({ rootSel, widenSel, extras, nameOf, vars: wantVars }) {
       const rec = (node, path) => {
         node.childNodes.forEach((ch, i) => {
           if (ch.nodeType === 3) {
-            const f = useFont(font(getComputedStyle(node))); const d = {};
+            const f = useFont(font(getComputedStyle(node), node)); const d = {};
             for (const k of FKEY) if (f[k] !== base[k]) d[k] = f[k];
             runs.push({ t: ch.textContent, ...(Object.keys(d).length ? { s: d } : {}) });
           } else if (ch.nodeType === 1) {
@@ -684,7 +696,7 @@ function measurePage({ rootSel, widenSel, extras, nameOf, vars: wantVars }) {
     };
     const base = (id, kind, tag, cls, r, p) => ({ id, kind, tag, cls, r, paint: p });
     const textNode = (id, kind, tag, cls, el, cs, r, p, lines, tw, elPath) => {
-      const f = useFont(font(cs));
+      const f = useFont(font(cs, el));
       return { ...base(id, kind, tag, cls, r, p), font: f, runs: runsOf(el, f, elPath), lines, tw };
     };
     const outside = (b, clip) => b.width > 0 && b.height > 0 &&
@@ -825,7 +837,7 @@ function measurePage({ rootSel, widenSel, extras, nameOf, vars: wantVars }) {
         if (ch.nodeType === 3) {
           if (!ch.textContent.trim() || cs.visibility !== 'visible') return; // hidden text is covered by its element's entry
           const rb = rangeBox(ch, cs); if (!rb) return;
-          const f = useFont(font(cs));
+          const f = useFont(font(cs, el));
           const t = /pre/.test(cs.whiteSpace) ? ch.textContent : ch.textContent.replace(/\s+/g, ' ').trim();
           const tn = { ...base(cid, 'text', '#text', '', rb.box, {}), font: f, runs: [{ t }], lines: rb.lines, tw: rb.tw };
           const tt = wantVars && pickTok(tokOf(el), TEXT_TOK); if (tt) tn.tok = tt;

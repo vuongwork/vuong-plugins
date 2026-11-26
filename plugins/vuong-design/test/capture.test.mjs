@@ -403,3 +403,13 @@ test('M-e: page CSS on inlined sprite targets is carried (paint) or reported (tr
   assert.equal(mixed.paint.unsupported, undefined, JSON.stringify(mixed.paint.unsupported));
   assert.deepEqual((tw.paint.unsupported || []).map((u) => u.prop), ['svg rect transform']);
 });
+
+test('text decoration drawn through from an ancestor is the text\'s own td; not into atomic inline or out-of-flow nodes', { skip }, async () => {
+  const s = (await captureScreens(join(FIX, 'capture-decoration.html'), { root: '.scr', fontOverride: false })).screens[0];
+  const td = (cls) => { const n = walk(s.tree).find((x) => x.cls === cls); return (n.font || n.kids[0].font).td; };
+  assert.equal(td('in'), 'line-through');
+  assert.equal(td('chip'), 'none');
+  assert.equal(td('pin'), 'none');
+  assert.deepEqual(td('own').split(' ').sort(), ['line-through', 'underline']);
+  assert.equal(td('plain'), 'none');
+});

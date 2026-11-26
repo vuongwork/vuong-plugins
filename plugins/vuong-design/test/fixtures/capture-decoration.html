@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+body{margin:0;font:14px/20px sans-serif}
+.scr{width:300px;display:flex;flex-direction:column;gap:8px;padding:8px;position:relative}
+.slot{display:flex;justify-content:center;height:40px;align-items:center;text-decoration:line-through}
+.chip{display:inline-block;padding:2px 6px}
+.pin{position:absolute;right:4px;top:4px}
+.own{text-decoration:underline}
+.blk{text-decoration:line-through}
+</style></head><body>
+<div class="scr">
+  <!-- a flex container's line-through strikes its item's text (computed value 'none' on the span) -->
+  <div class="slot"><span class="in">08:30</span></div>
+  <!-- not into an atomic inline (inline-block in a block: a flex item would be blockified) or an out-of-flow one -->
+  <div class="blk">a <span class="chip">full</span><span class="pin">x</span></div>
+  <!-- an own decoration adds to the inherited one -->
+  <div class="slot"><span class="own">both</span></div>
+  <p class="plain">plain</p>
+</div>
+</body></html>

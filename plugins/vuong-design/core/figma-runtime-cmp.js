@@ -55,11 +55,11 @@ if(l&&n.layoutMode!='NONE'){const P=l.p||[0,0,0,0];['paddingTop','paddingRight',
 if(!l.sb)q('itemSpacing',l.g||0);q('primaryAxisAlignItems',l.sb?'SPACE_BETWEEN':AX[l.pa]||'MIN');q('counterAxisAlignItems',AX[l.ca]||'MIN');
 q('layoutWrap',l.wr?'WRAP':'NO_WRAP');if(l.wr)q('counterAxisSpacing',l.cg||0)}
 // an icon bound to INSTANCE_SWAP or with an icon override: its colours as its own svg draws them
-if(e.rc&&e.ic&&e.ic.i!=U){const t=F.createNodeFromSvg(svg(e)),a=t.findAll(()=>1),b=n.findAll(()=>1),B={fills:gv(o,'vf',v.vf),strokes:gv(o,'vs',v.vs)},Q={fills:e.ic.f,strokes:e.ic.s};
+if(e.rc&&e.ic&&e.ic.i!=U){const t=F.createNodeFromSvg(svg(e));try{const a=t.findAll(()=>1),b=n.findAll(()=>1),B={fills:gv(o,'vf',v.vf),strokes:gv(o,'vs',v.vs)},Q={fills:e.ic.f,strokes:e.ic.s};
 // colours and the colour variables (vf / vs, bound as mk binds them) of each vector
 const Y=ps=>J([pl(ps),ps==MX?0:(ps||[]).map(z=>BC(z)&&BC(z).id)]);
 if(a.length==b.length)a.forEach((y,i)=>{for(const k of['fills','strokes'])if(Array.isArray(y[k])&&Array.isArray(b[i][k])){let w=y[k];if(B[k]&&Q[k]!=U&&Q[k]!=-1)w=w.map(z=>z.type=='SOLID'&&HX(z.color)==D.C[Q[k]].slice(0,7).toLowerCase()?bv(o,k=='fills'?'vf':'vs',B[k],z):z);if(Y(w)!=Y(b[i][k]))b[i][k]=w}});
-else ub(o,'rc','','icon layers differ');t.remove()}}
+else ub(o,'rc','','icon layers differ')}finally{t.remove()}}}
 if(d.op)n.opacity=e.op!=U?e.op:1;
 if(!top&&p)XZ(n,e,!!p.layoutMode&&p.layoutMode!='NONE',T)},
 // readback (CMP_PATCHES): an instance (i) or an icon an INSTANCE_SWAP value sets (mi) whose main component is not the

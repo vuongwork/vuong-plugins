@@ -400,6 +400,24 @@ Planora on the fake (18 screens, 14 components, fixture `test/fixtures/figma-cmp
 
 Planora with its states (fixture `test/fixtures/figma-cmp-planora-states.json.gz`, 2026-11-26): 22 state variants (btn: pressed, disabled and loading on each of its 4 variants; chip, ck, fab, tog: disabled; fab: pressed). The component batch is 29.5 KB; all 1 398 nodes are read back as encoded.
 
+**Real-Figma acceptance (plan 3b, 2026-11-26, Planora 18 screens, bridge, file "Planora").** Sent in steps the user approved: `vars-01`, `runtime`, `runtime-cmp`, `cmp-01` and `batch-03` (s14-s17) first, then `cmp-01` again after the fixes below, then `batch-04` (s0-s6) and `batch-05` (s7-s13).
+
+| What | Number |
+|---|---|
+| Components on the page | 18 (14 from the HTML + 4 icons), 54 variants (22 of them proposed states), 9 component properties |
+| Instances on the screens | 127 occurrences in 18 screens (s4 13, s13 1); 215 of the 1 155 encoded screen nodes (18.6 %) are instance roots or their overrides |
+| Detached uses (built as layers) | 4, all one reason: a child's width or x differs from the component and is not overridable |
+| Skipped candidates | 6 (`div.card`, `div.li`, `div.nav`, `div.set`: shapes differ; `div.kb`, `span.badge`: nested) |
+| Screens | **18/18 pass** with the user-approved allowlist (`docs/design/vd-allowlist.json`, s4 and s11, no new entry); 16/18 without it, the same two as plan 3 |
+| Components | **54/54 variants pass** (`check`, readback against the encoding) |
+| Mutations | 141 caught, **0 missed**, 39 skipped (no candidate) on the screens: figMove, figText, figFill, figDrop, figCase, figCmp 18 each; figHide 13; figIconPx 8; figDash 6; figSwap 6. Components: figCmp caught |
+| Time in Figma | vars + runtime 2.4 s; `cmp-01` 4.2 s; screen batches 3.7 s (7 screens) and 4.4 s (7 screens); 18 shots 2.9 s. The first `batch-03` took 89.7 s (4 screens, first send to a new file) and was not repeated |
+| Sent | about 212 KB for one full pass (vars 46.5, runtime 16.7, runtime-cmp 8.7, cmp-01 29.7, batches 19.3 + 44.4 + 46.9 KB); plan 3: 25.8 s, 167.5 KB |
+| `check --mutate` | 198 s for 18 screens (about 11 s each) |
+| Model tokens | 0 |
+
+Found on real Figma and fixed (fake-Figma tests for the first four; the overlay growth and the scratch SVG have none yet): an SVG `<g>` comes back as a GROUP without fills (icon recolour); a set formed before its last variant is placed breaks `setProperties` on its instances, so it forms after placement; a COMPONENT root is auto layout too, so state overlays and badges go ABSOLUTE in it; a text bound to a TEXT property shows the set's default in every variant (`propertyTexts`, and a state overlay grows with its grown parent); HUG frames take the 1 px text tolerance (Figma rounds text widths); the recolour's scratch SVG is removed even when the recolour throws (the first send left two on the page). The mutation `baseline` in `report.json` is the raw report before the allowlist (s4 and s11 show `pass: false` there); a mutation counts only failures not in it, so the allowlist does not hide one.
+
 ## Figma encoding
 
 `core/figma-encode.mjs` (plan 3 Task 4) turns each target spec (`spec-norm-<s>.json`) into compact data for the Figma builder: one-letter keys, Figma defaults left out, shared tables (`C` colours, `F` fonts, `I` icons, `V` variable names, `S` style names, `M` image sources), variable bindings as indices into `V` from `token-map.json`, and the spec id `o` on every node. The full format is in the file's header comment. `planBatches` packs screens in order into `use_figma` calls of at most 50 000 bytes (UTF-8, builder + data). Each batch carries only the table entries it uses. A screen too big to fit on its own throws `OversizeError` (screen, bytes); it is never cut.

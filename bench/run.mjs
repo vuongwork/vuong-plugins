@@ -186,7 +186,7 @@ async function runOnce(c, arm, i, opts) {
   return row;
 }
 
-// Recompute totals / steps / docs of every row of a suite from its kept trace (after a parser fix). Grades are kept.
+// Recompute cost / time / turns / totals / steps / docs of every row of a suite from its kept trace (after a parser fix). Grades are kept.
 export function rebuild(suite) {
   const file = join(RESULTS(), suite, 'runs.jsonl');
   const rows = readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -197,6 +197,7 @@ export function rebuild(suite) {
     if (!existsSync(trace) || !caseDir) continue;
     const sum = summarize(loadCase(caseDir), readTrace(readFileSync(trace, 'utf8')));
     Object.assign(r, { totals: sum.totals, steps: sum.steps, docs: sum.docs, skillLoaded: sum.skillLoaded, usedSkill: sum.usedSkill });
+    if (sum.result) Object.assign(r, { costUsd: sum.result.costUsd, durationMs: sum.result.durationMs, turns: sum.result.turns });
     n++;
   }
   writeFileSync(file, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');

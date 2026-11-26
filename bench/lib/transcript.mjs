@@ -21,7 +21,15 @@ const weight = (u) => u.input * WEIGHT.input + u.output * WEIGHT.output + u.cach
 
 export function parseTrace(events) {
   const init = events.find((e) => e.type === 'system' && e.subtype === 'init') || {};
-  const result = events.find((e) => e.type === 'result') || null;
+  // A run that starts background agents emits one result per resumed turn: the time is the last one's,
+  // turns add up, cost is cumulative (take the highest).
+  const results = events.filter((e) => e.type === 'result');
+  const result = results.length ? { ...results[results.length - 1] } : null;
+  if (results.length > 1) {
+    result.num_turns = results.reduce((a, e) => a + (e.num_turns || 0), 0);
+    result.total_cost_usd = Math.max(...results.map((e) => e.total_cost_usd ?? 0));
+    result.is_error = results.some((e) => e.is_error);
+  }
   const byId = new Map();
   const messages = [];
   const toolResults = new Map();
@@ -80,7 +88,9 @@ export function parseTrace(events) {
     init: { model: init.model, plugins: (init.plugins || []).map((p) => p.name), skills: init.skills || [], tools: init.tools || [] },
     messages,
     result: result && {
-      isError: !!result.is_error, text: result.result || '', costUsd: result.total_cost_usd ?? null, durationMs: result.duration_ms ?? null,
+      isError: !!result.is_error, text: result.result || '', costUsd: result.total_cost_usd ?? null,
+      // wall clock when the result arrived (stamped by run.mjs); the CLI's duration_ms undercounts runs with subagents
+      durationMs: typeof result.t === 'number' ? result.t : result.duration_ms ?? null, cliDurationMs: result.duration_ms ?? null,
       turns: result.num_turns ?? null, terminalReason: result.terminal_reason || result.subtype || null,
       denials: (result.permission_denials || []).map((d) => ({ tool: d.tool_name, input: d.tool_input })),
       modelUsage,

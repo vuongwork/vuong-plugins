@@ -58,7 +58,7 @@ const eq = (a, b, name) => ok(JSON.stringify(a) === JSON.stringify(b), name, `\n
   const rows = readFileSync(join(results, 'selftest', 'runs.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   eq(rows.map((r) => r.arm), ['plugin', 'baseline'], 'run: one row per arm');
   const [p, b] = rows;
-  eq([p.costUsd, p.turns, p.durationMs, p.denials, p.error], [0.5, 6, 4200, 1, null], 'run: result fields');
+  eq([p.costUsd, p.turns, typeof p.durationMs, p.denials, p.error], [0.5, 6, 'number', 1, null], 'run: result fields (durationMs = stamped wall clock)');
   eq([p.totals.apiCalls, p.totals.output, p.totals.cacheRead], [6, 690, 14800], 'run: usage once per message id');
   ok(Math.abs(p.totals.costUsd - 0.5) < 0.001, 'run: per-message cost adds up to the reported cost', p.totals.costUsd);
   eq(p.steps.map((s) => [s.step, s.apiCalls]), [['3 flows', 3], ['4 cases', 2], ['end', 1]], 'steps: next-signal attribution');

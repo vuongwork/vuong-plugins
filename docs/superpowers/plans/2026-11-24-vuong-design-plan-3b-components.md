@@ -216,12 +216,12 @@ Component được dựng từ spec của lần xuất hiện đầu tiên (theo
 
 ### Task 8: Nghiệm thu trên Figma thật (Planora)
 
-- [ ] **Step 1: Hỏi người dùng** phạm vi ghi (file "Planora Design", trang Components, các màn dựng lại bằng instance) và báo ước tính tổng thời gian từ `figma.mjs plan` (lô cmp, lô màn, ảnh, check). Chỉ làm tiếp khi được duyệt.
-- [ ] **Step 2: Chạy** `ds.mjs` → `components.mjs` → `figma.mjs plan` → `serve --send pending --shots` → `check --mutate`.
-- [ ] **Step 3: Ghi số** vào README: số component / biến thể / thuộc tính / instance, tỉ lệ node trong instance, số `detached` theo lý do, màn đạt (mục tiêu 18/18 với allowlist hiện có, không thêm mục allowlist mới nếu người dùng chưa duyệt), lỗi cài bắt / sót (mục tiêu 0 sót), thời gian trong Figma và KB gửi so với kế hoạch 3 (25,8 s, 167,5 KB).
-- [ ] **Step 4: Chạy lại không đổi gì** → không component, frame, biến trùng; sửa tay một component → `skippedEdited`, rồi `--force` đưa về.
-- [ ] **Step 5: Cập nhật** `figma-plan.md` của Planora (dòng kế hoạch 3b, danh sách component thật so với danh sách dự kiến). Không ghi thông tin cá nhân.
-- [ ] **Step 6: Commit** plugin `docs(vuong-design): plan 3b acceptance on real Figma` và Planora `docs(design): Planora components on Figma (plan 3b)`.
+- [x] **Step 1: Hỏi người dùng** phạm vi ghi (file "Planora Design", trang Components, các màn dựng lại bằng instance) và báo ước tính tổng thời gian từ `figma.mjs plan` (lô cmp, lô màn, ảnh, check). Chỉ làm tiếp khi được duyệt.
+- [x] **Step 2: Chạy** `ds.mjs` → `components.mjs` → `figma.mjs plan` → `serve --send pending --shots` → `check --mutate`.
+- [x] **Step 3: Ghi số** vào README: số component / biến thể / thuộc tính / instance, tỉ lệ node trong instance, số `detached` theo lý do, màn đạt (mục tiêu 18/18 với allowlist hiện có, không thêm mục allowlist mới nếu người dùng chưa duyệt), lỗi cài bắt / sót (mục tiêu 0 sót), thời gian trong Figma và KB gửi so với kế hoạch 3 (25,8 s, 167,5 KB).
+- [x] **Step 4: Chạy lại không đổi gì** → không component, frame, biến trùng; sửa tay một component → `skippedEdited`, rồi `--force` đưa về.
+- [x] **Step 5: Cập nhật** `figma-plan.md` của Planora (dòng kế hoạch 3b, danh sách component thật so với danh sách dự kiến). Không ghi thông tin cá nhân.
+- [x] **Step 6: Commit** plugin `docs(vuong-design): plan 3b acceptance on real Figma` và Planora `docs(design): Planora components on Figma (plan 3b)`.
 
 ## Quyết định của người dùng (2026-11-24)
 

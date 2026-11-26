@@ -86,7 +86,7 @@ if (!C || !C.cases.length) {
   const unasked = assumption.filter((c) => !asked.has(c.id)).map((c) => c.id);
   out.push(`[${scope}] Giai đoạn: DUYỆT CASE (bước 5) — ${C.cases.length} case, chưa duyệt. Đọc theo thứ tự:`);
   let n = 0;
-  if (gaps.length) step(++n, `Luồng chưa có case (${rel("flows.md")})`, `${gaps.join("; ")} — mỗi cái: thêm case, hoặc ghi vào Not covered kèm lý do`);
+  if (gaps.length) step(++n, `Luồng chưa có case (${rel("flows.md")})`, `${gaps.join("; ")} — mỗi cái: thêm case (ghi ref vào cột Flow), hoặc thêm một dòng vào bảng "## Not covered" cuối cases.md: \`| <ref> | <lý do> |\` (ô Flow ref chỉ chứa đúng một ref)`);
   step(
     ++n,
     rel("cases.md"),

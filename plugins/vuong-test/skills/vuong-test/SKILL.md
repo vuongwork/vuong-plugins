@@ -132,7 +132,8 @@ the data now; cases whose data is still missing at run time are BLOCKED, not imp
 
 ## 6. Write and dry-run tests
 
-Follow `$PLUGIN/references/stacks/<stack>.md` and `$PLUGIN/references/review-tests.md`.
+Follow `$PLUGIN/references/stacks/<stack>.md` and `$PLUGIN/references/review-tests.md`. Kit options and helpers:
+`$PLUGIN/kit/README.md` is the complete API — do not read the kit source.
 - Test names start with the case tag: `[<ID>] ...` (any language) — this links results to cases.
 - You may change HOW a result is reached (selector, data, helper) without re-approval; log each change
   in `W/run-notes.md`. You may NOT change an expected result or add/remove cases — go back to step 5.

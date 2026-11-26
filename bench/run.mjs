@@ -86,7 +86,8 @@ export function claudeArgs(c, arm, ws, opts) {
     '--setting-sources', '', '--strict-mcp-config',
     '--max-budget-usd', String(opts.budget ?? c.budgetUsd),
     '--permission-mode', c.permissionMode || 'auto',
-    '--disallowed-tools', ['AskUserQuestion', ...(c.disallowedTools || [])].join(',')];
+    // headless: no one answers, and a run must end (no wake-ups / cron that keep it waiting, e.g. past a usage limit)
+    '--disallowed-tools', ['AskUserQuestion', 'ScheduleWakeup', 'CronCreate', 'CronDelete', 'CronList', ...(c.disallowedTools || [])].join(',')];
   if (c.allowedTools?.length) a.push('--allowed-tools', c.allowedTools.join(','));
   const model = opts.model || c.model;
   if (model) a.push('--model', model);

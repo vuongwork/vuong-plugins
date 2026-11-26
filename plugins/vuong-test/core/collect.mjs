@@ -11,7 +11,7 @@
 // Parallel agents: --e2e-dir W picks up every W/e2e*/e2e-results.json (and W/e2e-results.json);
 // --api-dir W every W/api*/api-results.json (kit/api-kit.mjs); --jest-dir D every *.json Jest output in D; --notes-dir W every W/run-notes*.md.
 // --manual: a runbook from manual-runbook.mjs filled by a person; each row with a status becomes a test (stack "manual").
-// Pre (cases.md): a case with no result whose Pre case failed or is blocked is reported BLOCKED, along the whole chain.
+// Pre (cases.md): a case whose Pre case failed or is blocked is reported BLOCKED (own result kept as detail), along the whole chain.
 import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { execSync } from "node:child_process";
 import path from "node:path";
@@ -120,15 +120,16 @@ for (const f of opt.manual) {
   }
 }
 
-// Pre: a case with no result whose Pre failed / is blocked is blocked too (repeat for chains A → B → C)
+// Pre: a case whose Pre failed / is blocked is blocked too, whatever its own result (its setup did not hold; the
+// own result stays listed). Repeat for chains A → B → C; Pre in another test file / group works the same.
 for (let changed = true; changed; ) {
   changed = false;
   const st = Object.fromEntries(casesWithStatus({ cases: spec.cases, tests }).map((c) => [c.id, c]));
   for (const c of spec.cases) {
-    if (st[c.id].tests.length) continue;
+    if (st[c.id].tests.some((t) => t.stack === "pre")) continue;
     const bad = c.pre.filter((p) => st[p] && ["failed", "blocked"].includes(st[p].status));
     if (!bad.length) continue;
-    tests.push({ file: "cases.md (Pre)", name: `[${c.id}] blocked by Pre`, ids: [c.id], status: "blocked", duration: 0, error: null, note: `Pre ${bad.map((p) => `${p} ${st[p].status === "failed" ? "FAIL" : "BLOCKED"}`).join(", ")} — not run`, stack: "pre", shots: [] });
+    tests.push({ file: "cases.md (Pre)", name: `[${c.id}] blocked by Pre`, ids: [c.id], status: "blocked", duration: 0, error: null, note: `Pre ${bad.map((p) => `${p} ${st[p].status === "failed" ? "FAIL" : "BLOCKED"}`).join(", ")} — ${st[c.id].tests.length ? `own result ${st[c.id].status.toUpperCase()} not counted` : "not run"}`, stack: "pre", shots: [] });
     changed = true;
   }
 }

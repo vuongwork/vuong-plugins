@@ -22,9 +22,10 @@ citing `answers.md › <Ref>`. Work only from those paths.
 2. Step 6: use `$PLUGIN/kit/README.md` as the complete kit API — never read the kit source. Write each file with
    the Write tool in as few large Writes as you can (never a shell heredoc: one quote breaks it and the whole file
    is lost). Make `test.config.json` `stacks[]` run your files (`node $PLUGIN/core/run.mjs <scope> --dry`), dry-run
-   with `node $PLUGIN/core/run.mjs <scope>` (it starts / stops the server), fix, rerun only the failing cases with
+   with `node $PLUGIN/core/run.mjs <scope> --only <your stacks>` (it starts / stops the server; an E2E group: `--only e2e
+   --files W/e2e-<g>.mjs`, out `W/e2e-<g>/`, and leave test.config.json to the main session), fix, rerun only the failing cases with
    `--merge`, and run `lint-tests.mjs` until it passes. Do not write your own run script, never start a server
-   yourself or move to another port: parallel writers' runs queue on run.mjs's lock (Bash timeout 600000). When the prompt names
+   yourself or move to another port: run.mjs queues parallel runs or gives each its own port (Bash timeout 600000). When the prompt names
    existing tests: first `review-tests.mjs` → `W/existing-tests.md`, fill Case / Matches Expected (Decision only
    from answers.md `T<n>` rows), then write tests for every case not covered by a `keep` / `tag` test.
 3. Steps 2–3: every expected without a source is an assumption with a question for BA in `spec-sources.md`;

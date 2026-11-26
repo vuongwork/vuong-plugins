@@ -86,9 +86,11 @@
       "id": "e2e",
       "stack": "playwright",
       "dir": ".",
-      "run": "node test-work/<scope>/e2e.mjs",
+      "$comment": "each: one run per file (parallel groups W/e2e-a.mjs …), {file} = that file; results in W/<file name>/",
+      "each": "test-work/<scope>/e2e*.mjs",
+      "run": "node {file}",
       "results": {
-        "e2e-json": "test-work/<scope>/e2e-results.json"
+        "e2e-json": "test-work/<scope>/e2e/e2e-results.json"
       }
     },
     {
@@ -107,7 +109,7 @@
       "writesAllowed": true,
       "writable": true,
       "apiBase": "http://localhost:8080/api",
-      "server": { "$comment": "optional: core/run.mjs starts this before the stacks that need it and stops it after; fresh = per-stack | once | none", "start": "npm start", "ready": "http://localhost:3000/", "fresh": "per-stack" }
+      "server": { "$comment": "optional: core/run.mjs starts this before the stacks that need it and stops it after; fresh = per-stack | once | none; portEnv = env var the server reads its port from (own server on a free port per run, parallel runs do not wait; only when its data is per instance)", "start": "npm start", "ready": "http://localhost:3000/", "fresh": "per-stack" }
     },
     "test": {
       "baseUrl": "<url>",

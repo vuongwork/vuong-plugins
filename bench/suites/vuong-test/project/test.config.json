@@ -29,13 +29,14 @@
       "id": "e2e",
       "stack": "playwright",
       "dir": ".",
-      "run": "node test-work/<scope>/e2e.mjs",
-      "results": { "e2e-json": "test-work/<scope>/e2e-results.json" }
+      "each": "test-work/<scope>/e2e*.mjs",
+      "run": "node {file}",
+      "results": { "e2e-json": "test-work/<scope>/e2e/e2e-results.json" }
     }
   ],
   "environments": {
     "local": { "baseUrl": "http://localhost:3210", "apiBase": "http://localhost:3210/api", "writesAllowed": true, "writable": true,
-      "server": { "start": "npm start", "ready": "http://localhost:3210/", "env": { "LEAVE_TODAY": "2026-11-25" } } }
+      "server": { "start": "npm start", "ready": "http://localhost:3210/", "portEnv": "PORT", "env": { "LEAVE_TODAY": "2026-11-25" } } }
   },
   "accounts": { "env": [] },
   "dataRules": "Local server, data in memory: restart the server (npm start) to reset. User is sent as header X-User (E001 owns the sample leaves, E002 owns LV-20261124-003).",

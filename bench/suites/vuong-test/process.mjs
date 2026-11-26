@@ -21,7 +21,11 @@ export default function processChecks(events) {
   if (arm === 'plugin') {
     const writes = main.filter((t) => ['Write', 'Edit'].includes(t.name) || (t.name === 'Bash' && /cat\s*>|sed -i/.test(t.input.command || '')));
     const mainWritesOwned = writes.filter((t) => isWriterOwned(norm(t.input.file_path || (t.input.command || '').match(/(?:cat\s*>|sed -i[^>]*?)\s*"?([^\s"]+\.(?:md|m?js))/)?.[1])));
-    out.push({ name: 'process: writer agents spawned', score: 1, detail: String(main.filter((t) => /writer/.test(t.input?.subagent_type || '')).length), by: 'code', info: true });
+    const nWriters = main.filter((t) => /writer/.test(t.input?.subagent_type || '')).length;
+    out.push({ name: 'process: writer agents spawned', score: 1, detail: String(nWriters), by: 'code', info: true });
+    // more than one writer for step 6 → the split comes from core/split.mjs, not by hand
+    const step6 = main.filter((t) => /writer/.test(t.input?.subagent_type || '') && /step:?\s*6|step 6/i.test(t.input.prompt || t.input.description || ''));
+    if (step6.length > 1) add('parallel split from core/split.mjs', main.some((t) => t.name === 'Bash' && /split\.mjs/.test(t.input.command || '')) ? [] : [1], () => 'split by hand');
     add('main session does not write writer-owned files after delegating', mainWritesOwned.filter((t) => afterSpawn.includes(t)), (b) => b.map((t) => short(t.input.file_path || t.input.command)).join(', '));
     // user answers go to answers.md in one Write / Edit; the writer copies them into spec-sources.md / diff.md
     add('answers recorded in answers.md, not by editing spec-sources.md / diff.md', mainWritesOwned.filter((t) => /(spec-sources|diff)\.md$/.test(norm(t.input.file_path))), (b) => Object.entries(b.reduce((n, t) => { const f = norm(t.input.file_path).split('/').pop(); n[f] = (n[f] || 0) + 1; return n; }, {})).map(([f, k]) => `${f} ×${k}`).join(', '));

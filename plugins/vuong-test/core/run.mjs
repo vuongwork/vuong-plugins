@@ -16,7 +16,8 @@
 // A failing test is a result, not an error: exit 0 when the report was written; 1 = a stack could not run or
 // collect failed; 2 = usage / config error. --merge: rerun of a subset (E2E_MERGE=1 / API_MERGE=1, results kept).
 // --dry prints the plan (commands + collect arguments) and runs nothing. Runs that need the server take a lock
-// (<workDir>/_out/run.lock): a second run waits for the first (server.lockWaitSec, default 1800).
+// (<workDir>/_out/run.lock): a second run waits for the first (server.lockWaitSec, default 1800) — unless
+// server.portEnv is set: each run then gets its own server on a free port and none waits.
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, mkdirSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
@@ -24,14 +25,15 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, ConfigError } from "./config.mjs";
 
 const PLUGIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const HELP = `run.mjs <scope | W> [--env <name>] [--only ids] [--skip ids] [--merge] [--manual <runbook.xlsx>]... [--keep] [--no-report] [--dry] [--config f]
+const HELP = `run.mjs <scope | W> [--env <name>] [--only ids] [--skip ids] [--files f,…] [--merge] [--manual <runbook.xlsx>]... [--keep] [--no-report] [--dry] [--config f]
   Runs every stacks[] entry of test.config.json (in order), with a fresh server from environments.<env>.server for
   the stacks that need it, then collect → W/results.json (cases[].status) and W/report/index.html.
   Each stack gets env BASE_URL (environments.<env>.baseUrl), API_BASE (apiBase, else baseUrl), VT_ENV, VT_SCOPE.
   --only/--skip: stack ids · --merge: rerun a subset, keep other results (E2E_MERGE=1 / API_MERGE=1) · --dry: print the plan.
-  One server run at a time per repo (lock <workDir>/_out/run.lock; others wait). Exit 0 = report written (failing tests are results).`;
+  A stack with "each": "<glob>" runs once per matching file ({file} in run); --files a,b runs only those (a parallel group's dry run).
+  One server run at a time per repo (lock <workDir>/_out/run.lock; others wait), unless server.portEnv: own server on a free port per run. Exit 0 = report written (failing tests are results).`;
 const argv = process.argv.slice(2);
-const opt = { merge: false, only: null, skip: [], manual: [], keep: false, report: true, dry: false, env: null, config: "test.config.json", target: null };
+const opt = { merge: false, files: null, only: null, skip: [], manual: [], keep: false, report: true, dry: false, env: null, config: "test.config.json", target: null };
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   const next = () => {
@@ -42,6 +44,7 @@ for (let i = 0; i < argv.length; i++) {
   if (a === "--only") opt.only = next().split(",");
   else if (a === "--skip") opt.skip = next().split(",");
   else if (a === "--manual") opt.manual.push(next());
+  else if (a === "--files") opt.files = next().split(",");
   else if (a === "--env") opt.env = next();
   else if (a === "--config") opt.config = next();
   else if (a === "--keep") opt.keep = true;
@@ -84,9 +87,25 @@ const envs = Array.isArray(cfg.environments)
   : cfg.environments || {};
 const envName = opt.env || (Object.keys(envs).length === 1 ? Object.keys(envs)[0] : "local");
 if (opt.env && !envs[opt.env]) die(`--env ${opt.env}: not in test.config.json environments (${Object.keys(envs).join(", ")})`, 2);
-const server = envs[envName]?.server || null;
+let server = envs[envName]?.server || null;
 // what a test file needs to know, so it never reads the config or this script: env vars set for every stack
-const E = envs[envName] || {};
+let E = envs[envName] || {};
+// server.portEnv ("PORT"): every run starts its own server on a free port (that env var set, the port in
+// baseUrl / apiBase / ready rewritten), so parallel runs never wait for each other — no lock. Only for a server
+// whose data is its own (in memory, per-instance test DB); one sharing a DB keeps the lock (leave portEnv out).
+const own = !!server?.portEnv && !opt.dry;
+if (own) {
+  const net = await import("node:net");
+  const port = await new Promise((ok, ko) => {
+    const s = net.createServer().once("error", ko).listen(0, "127.0.0.1", () => {
+      const p = s.address().port;
+      s.close(() => ok(p));
+    });
+  });
+  const at = (u) => u && String(u).replace(/^(\w+:\/\/[^/:?#]+)(:\d+)?/, `$1:${port}`);
+  server = { ...server, ready: at(server.ready), env: { ...(server.env || {}), [server.portEnv]: String(port) } };
+  E = { ...E, baseUrl: at(E.baseUrl), apiBase: at(E.apiBase) };
+}
 const stackEnv = {
   ...process.env,
   VT_ENV: envName,
@@ -181,12 +200,25 @@ function collectArgs() {
 }
 const node = (script, args) => spawnSync(process.execPath, [path.join(PLUGIN, "core", script), ...args], { cwd: ROOT, stdio: "inherit" });
 
+// ── "each": one run per matching file (parallel groups W/e2e-a.mjs, W/e2e-b.mjs …), {file} in `run` ──────────
+const globFiles = (pattern) => {
+  const abs = path.resolve(ROOT, sub(pattern));
+  const dir = path.dirname(abs);
+  const re = new RegExp(`^${path.basename(abs).replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`);
+  return isDir(dir) ? readdirSync(dir).filter((f) => re.test(f)).sort().map((f) => path.join(dir, f)) : [];
+};
+// [null] = a plain stack (one run); --files keeps only those files of an "each" stack
+const filesOf = (s) => (!s.each ? [null] : globFiles(s.each).filter((f) => !opt.files || opt.files.some((x) => path.resolve(ROOT, x) === f)));
+// the kit's `out` for a file: W/e2e-a.mjs → W/e2e-a/ (file name without extension, next to it)
+const outDirOf = (f) => path.join(path.dirname(f), path.basename(f).replace(/\.[^.]+$/, ""));
+
 // ── run ─────────────────────────────────────────────────────────────────────
 const needs = (s) => !!server && s.server !== false;
 if (opt.dry) {
   const short = (x) => (path.isAbsolute(x) ? path.relative(ROOT, x) || "." : x);
   log(`scope ${scope} · W ${path.relative(ROOT, W) || "."} · env ${envName}${server ? ` · server "${server.start}" (${fresh})` : ""}`);
-  for (const s of stacks) log(`${s.id}: (${sub(s.dir || ".")}) ${sub(s.run)}${needs(s) ? " [server]" : ""}`);
+  for (const s of stacks)
+    for (const f of filesOf(s)) log(`${s.id}: (${sub(s.dir || ".")}) ${f ? sub(s.run).replace(/\{file\}/g, path.relative(path.resolve(ROOT, sub(s.dir || ".")), f).replace(/\\/g, "/")) : sub(s.run)}${needs(s) ? " [server]" : ""}`);
   log(`collect ${collectArgs().map(short).map((x) => (/\s/.test(x) ? `"${x}"` : x)).join(" ")}`);
   if (opt.report) log(`render-html ${short(path.join(W, "results.json"))} --out ${short(path.join(W, "report"))}${opt.keep ? " --keep" : ""}`);
   process.exit(0);
@@ -226,7 +258,7 @@ async function takeLock() {
   }
 }
 process.on("exit", () => ownLock() && rmSync(LOCK, { force: true }));
-if (stacks.some(needs)) await takeLock();
+if (stacks.some(needs) && !own) await takeLock();
 
 let broken = 0;
 const status = [];
@@ -236,28 +268,46 @@ try {
       log(`stack ${s.id}: no "run" command — skipped`);
       continue;
     }
-    // stale results must not be reported as this run's: the configured files, and for results inside W the
-    // parallel-group files collect picks up (W/e2e*/e2e-results.json, W/api*/api-results.json)
-    for (const [k, rel] of Object.entries(s.results || {})) {
+    const files = filesOf(s);
+    if (s.each && !files.length) {
+      log(`stack ${s.id}: no file matches ${sub(s.each)}${opt.files ? ` among --files` : ""} — skipped`);
+      continue;
+    }
+    // stale results must not be reported as this run's (--merge keeps them: the kit merges into them).
+    // "each" stack: only the result files of the files run now (W/e2e-a.mjs → W/e2e-a/e2e-results.json), so a
+    // parallel group's dry run leaves the other groups' results alone. Otherwise: the configured files, and for
+    // results inside W the parallel-group files collect picks up (W/e2e*/e2e-results.json, W/api*/api-results.json).
+    for (const [k, rel] of opt.merge ? [] : Object.entries(s.results || {})) {
       const p = path.resolve(ROOT, sub(rel));
+      const file = k === "e2e-json" ? "e2e-results.json" : k === "api-json" ? "api-results.json" : null;
+      if (s.each) {
+        if (file) for (const f of files) rmSync(path.join(outDirOf(f), file), { force: true });
+        continue;
+      }
       rmSync(p, { force: true });
-      if ((k === "e2e-json" || k === "api-json") && inW(p)) {
-        const [pre, file] = k === "e2e-json" ? ["e2e", "e2e-results.json"] : ["api", "api-results.json"];
+      if (file && inW(p)) {
+        const pre = file.split("-")[0];
         rmSync(path.join(W, file), { force: true });
         for (const d of readdirSync(W)) if (d.startsWith(pre) && isDir(path.join(W, d))) rmSync(path.join(W, d, file), { force: true });
       }
     }
-    if (needs(s) && (fresh === "per-stack" || !proc)) {
-      await stopServer();
-      await startServer();
-    } else if (!needs(s)) await stopServer();
     const cwd = path.resolve(ROOT, sub(s.dir || "."));
     mkdirSync(path.join(ROOT, cfg.workDir || "test-work", "_out"), { recursive: true });
-    log(`${s.id}: ${sub(s.run)}`);
     const t0 = Date.now();
-    const r = spawnSync(sub(s.run), { cwd, shell: true, stdio: "inherit", env: stackEnv, windowsHide: true });
+    let r;
+    for (const f of files) {
+      if (needs(s) && (fresh === "per-stack" || !proc)) {
+        await stopServer();
+        await startServer();
+      } else if (!needs(s)) await stopServer();
+      const cmd = f ? sub(s.run).replace(/\{file\}/g, path.relative(cwd, f).replace(/\\/g, "/")) : sub(s.run);
+      log(`${s.id}: ${cmd}`);
+      r = spawnSync(cmd, { cwd, shell: true, stdio: "inherit", env: stackEnv, windowsHide: true });
+    }
     const sec = ((Date.now() - t0) / 1000).toFixed(0);
-    const made = Object.values(s.results || {}).some((rel) => existsSync(path.resolve(ROOT, sub(rel))));
+    const made = s.each
+      ? files.every((f) => ["e2e-results.json", "api-results.json"].some((x) => existsSync(path.join(outDirOf(f), x))))
+      : Object.values(s.results || {}).some((rel) => existsSync(path.resolve(ROOT, sub(rel))));
     status.push(`${s.id}: exit ${r.status ?? r.error?.message} · ${sec}s${made ? "" : " · NO RESULTS FILE"}`);
     // a non-zero exit with a results file = tests failed (a result); without one = the stack did not run
     if (!made && Object.keys(s.results || {}).length) broken++;

@@ -9,7 +9,8 @@
 //
 // Playwright is resolved from the project (cwd or opts.from), so the plugin itself has no dependencies.
 // Env: E2E_HEADED=1 (show browser), E2E_SLOWMO=<ms> (only to watch), E2E_MERGE=1 (rerun of a subset:
-// replace those cases in e2e-results.json, keep the rest).
+// replace those cases in e2e-results.json, keep the rest), E2E_TIMEOUT=<ms> (action / wait timeout; default
+// 5000 when BASE_URL is localhost, else 30000; opts.timeout too).
 //
 // Options (all optional):
 //   api:      RegExp of requests `settle` waits for (default /\/api\//)
@@ -67,7 +68,15 @@ export async function createRun(opts = {}) {
   const inflight = new Set();
   const started = new WeakMap();
 
-  const newContext = () => browser.newContext({ viewport: opts.viewport || { width: 1600, height: 1000 } });
+  // action / wait timeout: a missing element fails in 5 s on a local app (Playwright's 30 s × every broken
+  // selector made a draft run take minutes); 30 s elsewhere. Navigation keeps 30 s (cold dev-server compile).
+  const actionMs = Number(opts.timeout || process.env.E2E_TIMEOUT) || (/\/\/(localhost|127\.0\.0\.1)\b/.test(process.env.BASE_URL || "") ? 5000 : 30000);
+  const newContext = async () => {
+    const c = await browser.newContext({ viewport: opts.viewport || { width: 1600, height: 1000 } });
+    c.setDefaultTimeout(actionMs);
+    c.setDefaultNavigationTimeout(Math.max(actionMs, 30000));
+    return c;
+  };
   const wire = async (c) => {
     c.on("request", (r) => {
       if (!apiRe.test(r.url())) return;

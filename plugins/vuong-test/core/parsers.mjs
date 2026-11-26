@@ -232,6 +232,8 @@ export function casesWithStatus(R) {
   const status = (ts) => {
     // not run is not blocked: an assumption case is only blocked when its test says so
     if (!ts.length) return "notrun";
+    // a failed / blocked Pre (collect adds stack "pre") outranks the case's own result: its setup did not hold
+    if (ts.some((t) => t.stack === "pre")) return "blocked";
     if (ts.some((t) => t.status === "failed")) return "failed";
     if (ts.some((t) => t.status === "blocked")) return "blocked";
     if (ts.every((t) => t.status === "skipped")) return "notrun";

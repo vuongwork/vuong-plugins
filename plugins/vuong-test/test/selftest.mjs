@@ -945,6 +945,12 @@ section("manual runbook / collect --manual / Pre");
   r = run("core/collect.mjs", ["--cases", chain, "--out", path.join(T, "rb/chain-results.json"), "--e2e-json", path.join(T, "rb/chain.json")]);
   const C = r.code === 0 ? readJson(path.join(T, "rb/chain-results.json")) : { tests: [] };
   check("collect: Pre blocking follows the chain", ["C-2", "C-3"].every((id) => C.tests.some((x) => x.ids.includes(id) && x.status === "blocked")), r.all);
+  // the dependent case ran anyway (another file / group, no gate in the script) → still BLOCKED, own result kept
+  j("rb/chain2.json", { tests: [{ name: "[C-1] a", status: "failed", error: "x" }, { name: "[C-2] b", status: "passed" }, { name: "[C-3] c", status: "failed", error: "y" }] });
+  r = run("core/collect.mjs", ["--cases", chain, "--out", path.join(T, "rb/chain2-results.json"), "--e2e-json", path.join(T, "rb/chain2.json")]);
+  const C2 = r.code === 0 ? readJson(path.join(T, "rb/chain2-results.json")) : { cases: [], tests: [] };
+  const cs = Object.fromEntries((C2.cases || []).map((c) => [c.id, c.status]));
+  check("collect: a case run despite a failed Pre is BLOCKED (chain too), own result noted", cs["C-1"] === "failed" && cs["C-2"] === "blocked" && cs["C-3"] === "blocked" && C2.tests.some((x) => x.ids.includes("C-2") && /own result PASSED not counted/.test(x.note || "")), JSON.stringify(cs));
   r = run("core/render-html.mjs", [path.join(T, "rb/results.json"), "--out", path.join(T, "rb/report")]);
   // render-html exits non-zero when cases failed; the file is still written
   const html = existsSync(path.join(T, "rb/report")) ? readFileSync(path.join(T, "rb/report", readdirSync(path.join(T, "rb/report"))[0]), "utf8") : "";
@@ -968,6 +974,18 @@ section("check-refs");
   r = run("core/check-refs.mjs", ["test-work/L/diff.md"], { cwd: R });
   check("check-refs: line past end, missing file, missing cell, range end → exit 1; same-name file ambiguous", r.code === 1 && /server\.js:9: server\.js has 5 lines/.test(r.out) && /gone\.js:1: no such file/.test(r.out) && /Giao dien!A99: no such cell/.test(r.out) && /Item!E12: no such cell/.test(r.out) && /2 files named app\.js/.test(r.out), r.out);
   check("check-refs: no files → exit 2", run("core/check-refs.mjs", [], { cwd: R }).code === 2);
+}
+
+section("split");
+{
+  const row = (id, layer, writes = "N") => [id, layer, "F1", "s", "e", "spec.xlsx › A1", "-", writes];
+  const num = (p, n) => Array.from({ length: n }, (_, i) => `${p}${String(i + 1).padStart(2, "0")}`);
+  const big = [...num("S-U", 18).map((x) => row(x, "ut")), ...num("S-A", 27).map((x) => row(x, "api")), ...num("S-E", 45).map((x) => row(x, "e2e", "Y")), row("S-M01", "manual")];
+  let r = run("core/split.mjs", [w("sp/W/cases.md", casesMd(big))]);
+  check("split: 90 cases → 3 agents (core 45, e2e 23 + 22), manual left out", r.code === 0 && /→ 3 writer agents · 1 manual/.test(r.out) && /\| `core` \| 45 \(ut 18, api 27\): S-U01\.\.S-U18, S-A01\.\.S-A27/.test(r.out) && /\| `e2e-a` \| 23 .*S-E01\.\.S-E23 \|.*e2e-a\.mjs/.test(r.out) && /\| `e2e-b` \| 22 .*S-E24\.\.S-E45/.test(r.out), r.out);
+  r = run("core/split.mjs", [w("sp/W2/cases.md", casesMd([...num("T-U", 5).map((x) => row(x, "ut")), ...num("T-E", 6).map((x) => row(x, "e2e"))]))]);
+  check("split: small scope → one agent for every layer", r.code === 0 && /→ 1 writer agent/.test(r.out) && /\| `all` \| 11 /.test(r.out), r.out);
+  check("split: no file → exit 2", run("core/split.mjs", []).code === 2);
 }
 
 section("next / readable rows");
@@ -1193,6 +1211,35 @@ section("run");
   rmSync(LOCK);
   const utOnly = run("core/run.mjs", ["S1", "--only", "ut"], { cwd: R });
   check("run: stacks without the server take no lock", utOnly.code === 0 && !existsSync(LOCK), utOnly.all);
+  // server.portEnv: own server on a free port (env var set, BASE_URL rewritten), a held lock is not waited for
+  w("runrepo/srvp.js", `require("http").createServer((q, s) => s.end("ok")).listen(+process.env.PORT);\n`);
+  w("runrepo/apip.js", `const u = process.env.BASE_URL; fetch(u).then(() => { require("fs").mkdirSync("out", { recursive: true }); require("fs").writeFileSync("out/api.json", ${JSON.stringify(JSON.stringify(jestOut("S1-A01", "passed")))}); console.log("BASE " + u); }, () => process.exit(3));\n`);
+  const cfgP = readJson(path.join(R, "test.config.json"));
+  cfgP.stacks = cfgP.stacks.map((s) => (s.id === "api" ? { ...s, run: "node apip.js" } : s));
+  cfgP.environments.local.server = { start: "node srvp.js", ready: url, portEnv: "PORT", lockWaitSec: 1 };
+  j("runrepo/test.config.port.json", cfgP);
+  w("runrepo/test-work/_out/run.lock", `${process.pid} S1 live`);
+  const own = run("core/run.mjs", ["S1", "--only", "api", "--config", "test.config.port.json"], { cwd: R });
+  const ownPort = (own.out.match(/BASE http:\/\/127\.0\.0\.1:(\d+)\//) || [])[1];
+  check("run portEnv: own server on a free port, no wait on a held lock", own.code === 0 && ownPort && +ownPort !== port && !/waiting/.test(own.out) && existsSync(LOCK), own.all);
+  rmSync(LOCK);
+  // "each": one run per group file, results in W/<file name>/; --files runs one group and keeps the others' results
+  const grp = (id, status) => `const fs=require("fs"),p=require("path");const d=p.join(__dirname,p.basename(__filename).replace(/\\.[^.]+$/,""));fs.mkdirSync(d,{recursive:true});fs.writeFileSync(p.join(d,"e2e-results.json"),${JSON.stringify(JSON.stringify({ tests: [{ name: `[${id}] t`, status }] }))});\n`;
+  w("runrepo/test-work/S1/e2e-a.cjs", grp("S1-U01", "passed"));
+  w("runrepo/test-work/S1/e2e-b.cjs", grp("S1-A01", "passed"));
+  j("runrepo/test.config.each.json", { workDir: "test-work", stacks: [{ id: "e2e", dir: ".", server: false, each: "test-work/<scope>/e2e*.cjs", run: "node {file}", results: { "e2e-json": "test-work/<scope>/e2e/e2e-results.json" } }] });
+  const eDry = run("core/run.mjs", ["S1", "--config", "test.config.each.json", "--dry"], { cwd: R });
+  check("run each --dry: one line per group file", /e2e: \(\.\) node test-work\/S1\/e2e-a\.cjs/.test(eDry.out) && /node test-work\/S1\/e2e-b\.cjs/.test(eDry.out), eDry.all);
+  const each = run("core/run.mjs", ["S1", "--config", "test.config.each.json", "--no-report"], { cwd: R });
+  const rs = () => (existsSync(path.join(R, "test-work/S1/results.json")) ? readJson(path.join(R, "test-work/S1/results.json")).cases : []);
+  const cst = (id) => rs().find((c) => c.id === id)?.status;
+  check("run each: every group file run, results collected from W/e2e-*/", each.code === 0 && cst("S1-U01") === "passed" && cst("S1-A01") === "passed", each.all);
+  w("runrepo/test-work/S1/e2e-b.cjs", grp("S1-A01", "failed"));
+  const one = run("core/run.mjs", ["S1", "--config", "test.config.each.json", "--no-report", "--files", "test-work/S1/e2e-b.cjs"], { cwd: R });
+  check("run --files: only that group rerun, the other group's results kept", one.code === 0 && !/e2e-a\.cjs/.test(one.out) && cst("S1-U01") === "passed" && cst("S1-A01") === "failed", one.all);
+  w("runrepo/test-work/S1/e2e-b.cjs", "process.exit(0);\n"); // writes nothing: --merge must keep the old results
+  run("core/run.mjs", ["S1", "--config", "test.config.each.json", "--no-report", "--files", "test-work/S1/e2e-b.cjs", "--merge"], { cwd: R });
+  check("run --merge: results not deleted before the rerun", existsSync(path.join(R, "test-work/S1/e2e-b/e2e-results.json")));
   j("runrepo/test.config.env.json", { workDir: "test-work", stacks: [{ id: "envs", dir: ".", server: false, run: `node -e "require('fs').mkdirSync('out',{recursive:true});require('fs').writeFileSync('out/env.txt',[process.env.BASE_URL,process.env.API_BASE,process.env.VT_ENV,process.env.VT_SCOPE].join('|'))"` }], environments: { local: { baseUrl: url, apiBase: "http://api:1/x" } } });
   run("core/run.mjs", ["S1", "--config", "test.config.env.json", "--no-report"], { cwd: R });
   const envTxt = existsSync(path.join(R, "out/env.txt")) ? readFileSync(path.join(R, "out/env.txt"), "utf8") : "";

@@ -32,7 +32,8 @@ IDs, test file, out dir); no answers, no rulings on what counts as a source, no 
 output files again except to show the user what this flow says to show, and do not spot-check its citations
 against code or spec (it ran `check-refs.mjs`), and do not fix them yourself: gaps from
 `cases-summary.mjs`, lint errors or failing dry runs go back to the same agent (SendMessage, else a new writer with
-the list) in one message. You keep everything that talks to the user: step 1, the agent's open questions (BA questions, diff decisions), the
+the list) in one message. Failing tests in the real run are results (step 7 report), not fixes; Pre is applied by
+collect (a case whose Pre failed is BLOCKED), so never add Pre gates to the tests. You keep everything that talks to the user: step 1, the agent's open questions (BA questions, diff decisions), the
 approval gate (5), the run and report (7). No Agent tool available → do the step yourself.
 
 `/vuong-test:vuong-test help` (or `/vuong-test:help [word]`): run `node $PLUGIN/core/help.mjs [word]` and show its output as is; do nothing else.
@@ -173,17 +174,15 @@ Follow `$PLUGIN/references/stacks/<stack>.md` and `$PLUGIN/references/review-tes
   <scope> --dry` lists every test file of the scope.
 - Self-review the tests against `$PLUGIN/references/review-tests.md` before the real run, and run
   `node $PLUGIN/core/lint-tests.mjs <test dirs>` (fixed waits, hard-coded secrets) until it passes.
-- Parallel work: split the approved cases by area/flow group and **suggest** a number of parallel `vuong-test:writer` agents
-  to the user before starting — about 1 agent per 15–25 E2E cases (1 per 40–60 UT cases), max 5; groups of about
-  equal weight (1 E2E case ≈ 2 API / mount ≈ 3 UT): the E2E cases are split first, never one group with all the
-  E2E cases and another layer on top while a second agent gets only UT. Show the
-  split and start only after the user agrees. Fixed template, one row per agent `<group>`:
-  | Agent | Cases | Test file (own) | Out dir (own) | Notes (own) | Data |
-  |---|---|---|---|---|---|
-  | `<group>` | IDs | `W/e2e-<group>.mjs` / `W/api-<group>.mjs` | `W/e2e-<group>/` / `W/api-<group>/` (`out`) | `W/run-notes-<group>.md` | data-plan rows it uses |
-  Agents write in parallel; their dry runs (`run.mjs --only <stack>`) queue on run.mjs's lock, one fresh server
-  at a time. Shared helpers are written and dry-run BEFORE the parallel run and are read-only during it; a needed
-  helper change goes into the agent's run notes and is made afterwards. Only ONE agent — the one owning all
+- Parallel work: run `node $PLUGIN/core/split.mjs W/cases.md` — it prints the split (fewest `vuong-test:writer`
+  agents whose groups stay ≤ 25 E2E-case weight, E2E groups split first, equal weight) as the fixed table
+  `| Agent | Cases | Test file (own) | Out dir (own) | Notes (own) | Data |`. **Suggest** it to the user and start
+  only after they agree (no one to ask: use it as printed); never split by hand. Each agent gets its table row.
+  Its last lines say what test.config.json still needs (the e2e stack's `each`, the server's `portEnv` so dry
+  runs need not queue): do only that, before starting — no need to read run.mjs or the config further.
+  A group dry-runs only its file: `run.mjs <scope> --only e2e --files W/e2e-<g>.mjs`. Shared helpers are written and dry-run
+  BEFORE the parallel run and are read-only during it; a needed helper change goes into the agent's run notes
+  and is made afterwards. On a shared environment (no fresh server per run) only ONE agent — the one owning all
   Writes = Y cases — may write data and append to `W/data-created.md`; the others run read-only (write guard on).
 - Accounts: never ask the user to create the account file by hand. Run
   `node $PLUGIN/core/account.mjs ~/.<project>-test-account.sh --vars <names from cfg.accounts.env>`: it creates

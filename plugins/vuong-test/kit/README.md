@@ -74,6 +74,7 @@ literal value (must equal).
   `writes: { allowed: true }` switches the guard off (throwaway local env only).
 - Rerun a subset: `E2E_MERGE=1` / `API_MERGE=1` replaces only those cases in the results file.
 - `E2E_HEADED=1`, `E2E_SLOWMO=<ms>`: only to watch a run.
+- `out` = the test file name without extension: `W/e2e.mjs` → `W/e2e`, group `W/e2e-a.mjs` → `W/e2e-a` (core/run.mjs "each" looks there).
 - Results: `collect.mjs --e2e-dir W --api-dir W` (every `W/e2e*/e2e-results.json`, `W/api*/api-results.json`).
-  `Pre` (cases.md) is applied by collect: a case with no result whose Pre case failed or is blocked is reported
-  BLOCKED. In the script, skip a case whose Pre did not pass (no `tc` call) or call `blocked("Pre <ID> failed")`.
+  `Pre` (cases.md) is applied by collect, across files and groups: a case whose Pre case failed or is blocked is
+  reported BLOCKED, whatever its own result. Write no Pre gate in the script; just run the cases in cases.md order.

@@ -394,3 +394,10 @@ test('R79: a colour with a scoped variable (tokenMismatch) is named: never merge
   const p = N([c('#1a73e8'), c('#1a73e8'), c('#1a73e8'), c('#1a74e8', { node: '0.9' })]);
   assert.deepEqual(only(p, 'COLOR_DE1').map((e) => [e.from, e.to, e.status]), [['#1a74e8', '#1a73e8', 'auto']]);
 });
+
+test('R84: a derived padding is kept (DERIVED), never a GRID4 question or a role majority', () => {
+  const r = N([pad(12), pad(12), pad(12), pad(13, { node: '0.8', derived: true }), pad(13.5, { node: '0.9', derived: true })]);
+  assert.equal(r.counts.DERIVED, 2);
+  assert.equal(r.entries.length, 0);
+  assert.equal(r.questions.length, 0);
+});

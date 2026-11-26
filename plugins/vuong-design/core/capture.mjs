@@ -238,6 +238,19 @@ function measurePage({ rootSel, widenSel, extras, nameOf, vars: wantVars }) {
   const hasBox = (cs) => !isTransparent(cs.backgroundColor) || cs.backgroundImage !== 'none' ||
     SIDES.some((s) => bw(cs, s) > 0) || cs.boxShadow !== 'none' || (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0);
   const pad = (cs) => SIDES.map((s) => parseFloat(cs['padding' + s]));
+  // R84: the insets the author wrote, per side t r b l: padding + border, and that plus an in-flow child's margin on
+  // the same side. infer's padding comes from geometry; one that is none of these was derived (centring in a fixed
+  // height, overlap, alignment) and is not a spacing value to put on the grid (normalize keeps it, DERIVED).
+  const authoredInsets = (el, cs) => {
+    const base = SIDES.map((s, i) => pad(cs)[i] + bw(cs, s));
+    const out = base.map((v) => new Set([rnd(v)]));
+    for (const c of el.children) {
+      const s = getComputedStyle(c);
+      if (s.display === 'none' || /^(absolute|fixed)$/.test(s.position)) continue;
+      SIDES.forEach((S, i) => { const m = parseFloat(s['margin' + S]) || 0; if (m) out[i].add(rnd(base[i] + m)); });
+    }
+    return out.map((x) => [...x].sort((a, b) => a - b));
+  };
 
   // Original-DOM child index of every node, recorded before any DOM edit so ids do not depend on inserted spans.
   const origIdx = new WeakMap();
@@ -812,9 +825,10 @@ function measurePage({ rootSel, widenSel, extras, nameOf, vars: wantVars }) {
         let tb;
         if (tight) tb = lines === 1 && rb ? [rb.box[0], rnd(cy - R.top), rb.box[2], rnd(cH)] : [rnd(cx - R.left), rnd(cy - R.top), rnd(cw), rnd(cH)];
         else tb = rb ? rb.box : r;
-        return { ...base(id, kind, tag, cls, r, p), kids: [textNode(id + '.t', 'text', '#text', '', el, cs, tb, {}, lines, rb ? rb.tw : tb[2], id)] };
+        return { ...base(id, kind, tag, cls, r, p), ins: authoredInsets(el, cs), kids: [textNode(id + '.t', 'text', '#text', '', el, cs, tb, {}, lines, rb ? rb.tw : tb[2], id)] };
       }
       const n = base(id, kind, tag, cls, r, p);
+      n.ins = authoredInsets(el, cs);
       if (/flex/.test(cs.display)) n.flexBox = flexContainer(el, cs);
       n.kids = [];
       kidsInto(n.kids, el, cs, id, clipFor(el, cs, b, clip));
@@ -1222,6 +1236,8 @@ function mergeNode(a, mapB) {
   if (a.flex) n.flex = a.flex;
   if (a.pct) n.pct = a.pct;
   if (a.flexBox) n.flexBox = a.flexBox;
+  // R84 authored insets, left out when they are all 0 with no child margin (the reader takes that as the default)
+  if (a.ins && a.ins.some((x) => x.length > 1 || x[0] !== 0)) n.ins = a.ins;
   if (a.tok) n.tok = a.tok;
   if (a.kids) n.kids = a.kids.map((k) => mergeNode(k, mapB));
   return n;
@@ -1318,7 +1334,7 @@ export async function captureScreens(htmlPath, opts = {}) {
       const vars = Object.fromEntries([...new Set([...Object.keys(declared), ...Object.keys(uses)])].sort()
         .map((k) => [k, { value: declared[k] ?? '', uses: uses[k] || 0 }]));
       return {
-        id, name: sA.name || id, W: [r2(sA.W), r2(sB.W)], H: [r2(sA.H), r2(sB.H)], widen: widens[i],
+        id, name: sA.name || id, W: [r2(sA.W), r2(sB.W)], H: [r2(sA.H), r2(sB.H)], widen: widens[i], ins: 1, // R84: frames carry ins
         tree, vars, varsComplex: sA.varsComplex || 0, varsUnreadable: A.varsUnreadable || 0, excluded, fonts: [...new Set([...sA.fonts, ...sB.fonts])], fontsRendered: { ...sA.fontsRendered, ...sB.fontsRendered },
         svgDefs: { ...sA.svgDefs, ...sB.svgDefs }, fontCss: A.fontCss,
         ...(png ? { png: [A.png[i], pngB(i)], origin: [A.origin[i], (bound[i] ? Bbound : Bfree).origin[i]] } : {}),

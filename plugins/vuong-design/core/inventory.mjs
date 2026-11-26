@@ -294,7 +294,12 @@ function screenUses(screen, spec) {
     // ---- spacing (authored by the layout) ----
     const l = sn.lay;
     if (l) {
-      (l.p || []).forEach((v, i) => addLen('space', 'padding' + SIDE[i], v, tok['padding' + SIDE[i]]));
+      // R84: a padding that is none of the insets the author wrote (screen.ins: the capture records them) was derived
+      // by infer from geometry (centring in a fixed height, overlap): derived, kept by normalize. A synthetic frame
+      // has no authored insets at all.
+      const ins = screen.ins ? (ir ? ir.ins || [[0], [0], [0], [0]] : null) : undefined;
+      const derived = (v, i) => ins !== undefined && (ins === null || !ins[i].some((a) => Math.abs(a - v) <= 0.05)) ? true : undefined;
+      (l.p || []).forEach((v, i) => addLen('space', 'padding' + SIDE[i], v, tok['padding' + SIDE[i]], { derived: derived(v, i) }));
       if (l.sb) add('space', 'gap', {}, { flex: 'sb', token: tok.gap });
       else addLen('space', 'gap', l.g, tok.gap);
       if (l.cg != null) addLen('space', 'counterGap', l.cg, tok.gap);

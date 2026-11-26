@@ -42,6 +42,8 @@
 //
 // Codes, in the order tried for each use (the first that applies decides):
 //  TOKEN           the use carries a CSS variable whose value is its value (inventory R64) -> kept.
+//  DERIVED         R84: a padding that is none of the source's authored insets (padding + border, plus an in-flow
+//                  child's margin): infer derived it from geometry (centring in a fixed height, overlap) -> kept.
 //  FLEX            space-between gap (Figma auto spacing), or an icon axis that is not FIXED -> kept, no number.
 //  IN_SCALE        already in scale -> kept. space, frame size, radius: a multiple of 4 px (±0.01; 0 never reaches
 //                  here). Radius and border width ≤ 2 px (hairlines) are never touched; border widths have no scale
@@ -215,6 +217,7 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     if (u.flex) { keep('FLEX'); continue; }
     if (typeof u.value !== 'number') { unparsed++; continue; }
     if (u.token) { keep('TOKEN'); continue; }
+    if (u.derived) { keep('DERIVED'); continue; } // R84
     if (u.cat === 'icon' && u.fixed === false) {
       const nat = squashedNatural(u); // R74
       if (nat === null) { keep('FLEX'); continue; }

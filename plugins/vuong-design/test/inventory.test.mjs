@@ -309,3 +309,16 @@ test('R80: no size use on an axis that stretches (abs LR / TB / SCALE); the othe
   assert.deepEqual(mk({ x: 0, y: 0, c: 'L', cy: 'SCALE' }), ['width']);
   assert.deepEqual(mk({ x: 0, y: 0, c: 'R' }), ['height', 'width']);
 });
+
+test('R84: with authored insets (screen.ins) a padding none of them is derived; an authored one, or a child margin added, is not', () => {
+  const f = fixture();
+  f.screen.ins = 1;
+  // card: CSS padding 11 + border 1 = 12 on top / bottom; 12 + a child margin 2 = 14 on the left; nothing gives 12 on the right
+  f.screen.tree.kids[0].ins = [[12], [11], [12], [12, 14]];
+  f.spec.kids[0].lay.p = [12, 12, 13, 14];
+  const sp = Object.fromEntries(of(inventory([f]), '0.0', 'space').map((u) => [u.prop, u.derived]));
+  assert.deepEqual(sp, { paddingT: undefined, paddingR: true, paddingB: true, paddingL: undefined });
+  // a synthetic frame has no authored insets: its padding is derived; without screen.ins (older IR) nothing is
+  assert.equal(of(inventory([f]), '0.3.g0', 'space', 'paddingR')[0].derived, true);
+  assert.equal(of(inventory([fixture()]), '0.0', 'space', 'paddingR')[0].derived, undefined);
+});

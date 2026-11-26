@@ -184,6 +184,89 @@ test('a second build of the same components: no duplicates, the screens\' instan
   assert.ok(cmpOf(fig).includes(s1['n.1'].mainComponent), 'the instance points to a component on the page');
 });
 
+// ---- plan 3b Task 7: edit guard, several component batches ----
+const cmpBatchesOf = (s, o = {}) => planBatches(s.cmp.items, { wrap: loaderCode, page: 'Components', extra: { cm: 1 }, unit: (x) => x.cm.n, ...o });
+test('a rebuild without edits: no component reported edited, the same components on the page', async () => {
+  const s = setup();
+  const { fig } = await build(s);
+  for (const b of s.cmpBatches) {
+    const r = await run(b.code, fig);
+    assert.deepEqual(r.screens.filter((x) => x.edited).map((x) => x.screen), []);
+    assert.deepEqual(r.cm.errors, []);
+  }
+});
+
+test('edited component is kept: its variants are not rebuilt (edited, the old root), its instances keep it; --force cmp:<name> rebuilds it', async () => {
+  const s = setup();
+  const { fig } = await build(s);
+  const row = cmpOf(fig).find((n) => n.name === 'row');
+  row.children[0].resize(row.children[0].width + 7, row.children[0].height); // a hand edit inside the main
+  const ids = Object.fromEntries(cmpOf(fig).map((n) => [n.name, n.id]));
+  const res = [];
+  for (const b of s.cmpBatches) res.push(await run(b.code, fig));
+  const x = res.flatMap((r) => r.screens).find((y) => y.screen === 'cmp:row');
+  assert.deepEqual([x.edited, x.root], [true, ids.row]);
+  assert.equal(typeof x.sig, 'string');
+  assert.equal(cmpOf(fig).find((n) => n.name === 'row'), row, 'the edited main stays');
+  // the card (built in this batch) nests the kept row; the screens' rows are still its instances
+  const card = cmpOf(fig).find((n) => n.name === 'card');
+  assert.notEqual(card.id, ids.card, 'the card is rebuilt');
+  assert.ok(card.children.every((c) => c.mainComponent === row));
+  const s1 = byVd(page(fig, 'Screens').children.find((n) => n.name === 's1'));
+  assert.equal(s1['n.1'].mainComponent, row);
+  assert.equal(cmpOf(fig).filter((n) => n.name === 'row').length, 1);
+  // forced: rebuilt, the instances move to the new main, the edited one goes
+  const forced = cmpBatchesOf(s, { force: ['cmp:row'] });
+  const r2 = [];
+  for (const b of forced) r2.push(await run(b.code, fig));
+  const y = r2.flatMap((r) => r.screens).find((z) => z.screen === 'cmp:row');
+  assert.ok(y.root && !y.edited && y.root !== ids.row);
+  assert.equal(row.removed, true);
+  assert.equal(byVd(page(fig, 'Screens').children.find((n) => n.name === 's1'))['n.1'].mainComponent.id, y.root);
+});
+
+test('components in several batches: a later batch keeps the components an earlier one built', async () => {
+  const s = setup();
+  // the largest limit that splits the components into two batches or more
+  let small = [];
+  for (let L = s.cmpBatches[0].bytes - 1; small.length < 2; L -= 50) small = cmpBatchesOf(s, { limit: L });
+  assert.ok(small.length > 1, `${small.length} batches`);
+  const fig = makeFakeFigma();
+  await run(runtimeInstallCode(), fig);
+  await run(runtimeCmpInstallCode(), fig);
+  for (const b of small) { const r = await run(b.code, fig); assert.deepEqual(r.cm.errors, [], `batch ${b.n}`); }
+  const names = cmpOf(fig).filter((n) => n.parent.type === 'PAGE').map((n) => n.name).sort();
+  assert.deepEqual(names, ['card', 'icon/i-a', 'icon/i-b', 'row', 'tab']);
+  for (const b of s.batches) { const r = await run(b.code, fig); for (const x of r.screens) assert.deepEqual(x.errors, [], x.screen); }
+});
+
+test('documentAccess dynamic-page: everything builds without the sync mainComponent getter', async () => {
+  const s = setup();
+  const { res } = await build(s, makeFakeFigma({ dynamicPage: true }));
+  for (const r of [...res.cmp, ...res.screens]) for (const x of r.screens) assert.deepEqual(x.errors, [], x.screen);
+  for (const r of res.cmp) assert.deepEqual(r.cm.errors, []);
+});
+
+test('an instance whose main component is not the encoded one reads back d.mc (the main it has)', async () => {
+  const s = setup();
+  const fig = makeFakeFigma();
+  await run(runtimeInstallCode(), fig);
+  await run(runtimeCmpInstallCode(), fig);
+  for (const b of s.cmpBatches) await run(b.code, fig);
+  // swapComponent does nothing from here on: INSTANCE_SWAP values and variant changes are lost
+  let sw = Object.getPrototypeOf(cmpOf(fig).find((n) => n.type === 'COMPONENT'));
+  while (!Object.getOwnPropertyDescriptor(sw, 'swapComponent')) sw = Object.getPrototypeOf(sw);
+  const orig = sw.swapComponent;
+  sw.swapComponent = function () {};
+  try {
+    const r = decode(await run(s.batches[0].code, fig), s.batches[0].data);
+    const s1 = r.screens.find((x) => x.screen === 's1');
+    const mc = Object.entries(s1.N).filter(([, n]) => n.d && n.d.mc !== undefined).map(([o, n]) => `${o}=${n.d.mc}`);
+    // tab 'Two' keeps the default icon i-a where its INSTANCE_SWAP value says i-b
+    assert.deepEqual(mc, ['n.4.0=icon/i-a'], JSON.stringify(mc));
+  } finally { sw.swapComponent = orig; }
+});
+
 test('off is plan 3: without components the batch data has no K / cp / cm and the loader has no component runtime', () => {
   const on = setup(), off = setup({ components: false });
   for (const b of off.batches) {
@@ -309,4 +392,108 @@ test('Planora with components: batches under 50 000 bytes, everything builds on 
   w(page(fig, 'Screens'));
   t.diagnostic(`components: ${cb.length} batches (${cb.map((b) => b.bytes).join(' / ')} B), screens: ${sb.length} batches (${sb.map((b) => b.bytes).join(' / ')} B); ${inst} instance layers on the screens, ${nodes} nodes read back`);
   assert.ok(inst >= 120, `instances ${inst}`);
+});
+
+// ---- plan 3b Task 7: check of components, edit guard through plan / ingest, figCmp / figSwap ----
+import { cmpVariants, blockInstances, cmpMutation, usesOf } from '../core/figma-cmp-check.mjs';
+import { figmaProxy } from '../core/figma-check.mjs';
+import { runFigMutations, FIG_KINDS } from '../core/mutate.mjs';
+
+async function sendAll(h, fig, keys) {
+  const st = rj(h.F, 'state.json');
+  for (const k of keys || st.order) {
+    const r = await run(readFileSync(join(h.F, st.batches[k].file), 'utf8'), fig);
+    const p = join(h.d, `${k}.json`);
+    writeFileSync(p, JSON.stringify(r));
+    assert.equal(await main(['ingest', '--out', h.out, '--result', p], { log: () => {} }), 0, k);
+  }
+  return rj(h.F, 'state.json');
+}
+async function builtDs() {
+  const h = cmpDs(), fig = makeFakeFigma();
+  assert.equal(await main(['plan', '--ds', h.ds, '--out', h.out], { log: () => {} }), 0);
+  await sendAll(h, fig);
+  return { h, fig };
+}
+const screenData = (h, st) => Object.fromEntries(Object.entries(st.screens).map(([id, s]) => [id, rj(h.F, st.batches[s.batch].data)]));
+const readF = (h) => (f) => rj(h.F, f);
+
+test('check components: every variant passes against its encoding, usedBy lists the screens; a planted root fill is caught', async () => {
+  const { h } = await builtDs();
+  const st = rj(h.F, 'state.json');
+  const v = cmpVariants(st, h.F, screenData(h, st), readF(h));
+  assert.deepEqual(v.map((x) => [x.key, x.status, x.pass]), [['card', 'done', true], ['icon/i-a', 'done', true], ['icon/i-b', 'done', true], ['row', 'done', true], ['tab/state=default', 'done', true], ['tab/state=on', 'done', true]], JSON.stringify(v.filter((x) => !x.pass)));
+  assert.deepEqual(v.find((x) => x.key === 'row').usedBy, ['s1', 's2']);
+  assert.deepEqual(v.find((x) => x.key === 'icon/i-b').usedBy, ['s1']);
+  assert.ok(v.every((x) => x.readback.missing === 0));
+  assert.deepEqual(cmpMutation(v, st, readF(h)), { kind: 'figCmp', target: 'card', caught: true });
+});
+
+test('edited component through plan / ingest: skippedEdited, kept, its screens listed; --force cmp:row rebuilds it; --force of an unknown component is a usage error', async () => {
+  const { h, fig } = await builtDs();
+  const row = cmpOf(fig).find((n) => n.name === 'row');
+  row.children[0].resize(row.children[0].width + 7, row.children[0].height);
+  assert.equal(await main(['plan', '--ds', h.ds, '--out', h.out, '--redo'], { log: () => {} }), 0);
+  let st = rj(h.F, 'state.json');
+  const r = await run(readFileSync(join(h.F, st.batches['cmp-01'].file), 'utf8'), fig);
+  const p = join(h.d, 'cmp-again.json');
+  writeFileSync(p, JSON.stringify(r));
+  const lines = [];
+  assert.equal(await main(['ingest', '--out', h.out, '--result', p], { log: (m) => lines.push(m) }), 0);
+  assert.ok(lines.some((l) => /edited by hand, kept \(skippedEdited; --force cmp:<name> rebuilds\): row/.test(l)), lines.join('\n'));
+  st = rj(h.F, 'state.json');
+  assert.deepEqual([st.components.row.status, st.components.row.root], ['skippedEdited', row.id]);
+  const v = cmpVariants(st, h.F, screenData(h, st), readF(h)).find((x) => x.key === 'row');
+  assert.deepEqual([v.edited, v.pass, v.usedBy], [true, true, ['s1', 's2']]);
+  // forced: the component batch carries it, the screen batches do not
+  assert.equal(await main(['plan', '--ds', h.ds, '--out', h.out, '--force', 'cmp:row'], { log: () => {} }), 0);
+  st = rj(h.F, 'state.json');
+  assert.deepEqual(rj(h.F, st.batches['cmp-01'].data).force, ['cmp:row']);
+  assert.ok(st.order.filter((k) => k.startsWith('batch')).every((k) => rj(h.F, st.batches[k].data).force === undefined), 'screen batches without cmp: entries');
+  st = await sendAll(h, fig, ['cmp-01']);
+  assert.equal(st.components.row.status, 'done');
+  assert.notEqual(st.components.row.root, row.id);
+  const e2 = [];
+  assert.equal(await main(['plan', '--ds', h.ds, '--out', h.out, '--force', 'cmp:nope'], { log: (m) => e2.push(m) }), 2);
+  assert.match(e2.join(' '), /--force cmp:nope: no such component \(components: /);
+});
+
+test('a component without readback: it fails, and its instances on the screens read back as missing (unchecked) with the reason', async () => {
+  const { h } = await builtDs();
+  const st = rj(h.F, 'state.json');
+  st.components.row.status = 'failed';
+  const v = cmpVariants(st, h.F, screenData(h, st), readF(h));
+  assert.equal(v.find((x) => x.key === 'row').pass, false);
+  const D = rj(h.F, st.batches[st.screens.s1.batch].data);
+  const sres = rj(h.F, st.screens.s1.result).screens.find((x) => x.screen === 's1');
+  const { sres: b, blocked } = blockInstances(sres, D, new Map([['row', 'instance of component row, which has no readback (failed)']]));
+  assert.deepEqual(Object.keys(blocked).sort(), ['n.0', 'n.0.0', 'n.0.1', 'n.1', 'n.1.0', 'n.2', 'n.2.0']);
+  assert.match(blocked['n.1'], /no readback \(failed\)/);
+  const P = figmaProxy(decode({ screens: [b] }, D).screens[0], D, SCREENS()[0].spec);
+  assert.ok(!P.A.boxes['n.1'] && P.A.boxes['n.3'], 'rows unchecked, tabs read');
+  assert.ok(usesOf(D, 's1').has('row') && usesOf(D, 's1').has('icon/i-b') && !usesOf(D, 's2').has('tab/state=default'));
+});
+
+test('figCmp and figSwap on the fixture: every instance of the component shows the planted fill, the swapped icon reads as the other icon; a batch without components runs the plan 3 kinds', async () => {
+  const { h } = await builtDs();
+  const st = rj(h.F, 'state.json');
+  const D = rj(h.F, st.batches[st.screens.s1.batch].data);
+  const sres = rj(h.F, st.screens.s1.result).screens.find((x) => x.screen === 's1');
+  const spec = SCREENS()[0].spec;
+  const dom = (s) => figmaProxy(decode({ screens: [JSON.parse(JSON.stringify(s))] }, D).screens[0], D, spec).A.dom;
+  const ref = dom(sres);
+  // icons set by INSTANCE_SWAP values are read (their main names them): no iconUnread
+  assert.deepEqual([ref['n.3.0'].icon, ref['n.4.0'].icon, ref['n.4.0'].iconUnread], ['i-a', 'i-b', undefined]);
+  // a stand-in for verifyScreen: a finding wherever the background or the icon differs from the real readback
+  const judge = (s) => {
+    const d = dom(s), data = [];
+    for (const [o, x] of Object.entries(ref)) for (const k of ['bg', 'icon']) if (d[o] && d[o][k] !== x[k]) data.push({ id: o, kind: k });
+    return { roots: [], crop: [], data, needsApproval: [], unchecked: Object.keys(ref).filter((o) => !d[o]), pass: !data.length };
+  };
+  const m = await runFigMutations({ id: 's1', base: judge(sres), screen: sres, D, tree: SCREENS()[0].screen.tree, spec, run: async (x) => judge(x) });
+  const by = Object.fromEntries(m.results.map((r) => [r.kind, r]));
+  assert.deepEqual([by.figCmp.target, by.figCmp.targets, by.figCmp.caught], ['row', ['n.0', 'n.1', 'n.2'], true]);
+  assert.deepEqual([by.figSwap.target, by.figSwap.caught, by.figSwap.found], ['n.3.0', true, ['data|n.3.0|icon']]);
+  const plain = await runFigMutations({ id: 's1', base: judge(sres), screen: null, D: { ...D, K: undefined }, tree: null, spec, run: async () => null });
+  assert.deepEqual(plain.results.map((r) => r.kind), FIG_KINDS);
 });

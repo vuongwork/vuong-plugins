@@ -197,10 +197,13 @@ export function cmpEncode(components, screens, ctx) {
     const tpl = nodeOf(v.template.screen, v.template.node);
     const exp = expandInstance(tpl, { bind: v.bind, props: propsOf(c), vals: x.vals || {}, ov: x.ov || {} });
     const tIdx = index(tpl), swaps = swapBound(c, v);
+    // the icon an INSTANCE_SWAP value puts at a bound path (mi: its K index, for the readback's main check)
+    const swapTo = new Map(c.props.filter((p) => p.type === 'INSTANCE_SWAP' && v.bind[p.name] !== undefined).map((p) => [v.bind[p.name], props[p.name]]));
     const rc = new Set(Object.entries(x.ov || {}).filter(([, ov]) => Object.keys(ov).some((k) => k.startsWith('icon.'))).map(([p]) => p));
     const pair = (en, sn, xn) => {
       const path = rel(xn.id, tpl.id);
       if ((swaps.has(path) || rc.has(path)) && en.t === 'V') en.rc = 1;
+      if (swapTo.has(path) && en.t === 'V') en.mi = swapTo.get(path);
       const tn = tIdx.get(xn.id);
       (sn.kids || []).forEach((k, i) => {
         const ek = en.k[i], xk = (xn.kids || [])[i];

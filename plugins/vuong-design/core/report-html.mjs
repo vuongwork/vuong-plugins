@@ -388,7 +388,19 @@ details>summary{cursor:pointer;margin-top:10px}
 .howto{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:4px 12px;margin:10px 0}.howto ul{margin:6px 0;padding-left:20px}
 `;
 
-export function renderReportHtml({ title = 'vuong-design layout report', generated = '', args = {}, screens = [] }) {
+// components (figma.mjs check with components, plan 3b Task 7): a table of the component variants after the screens'
+function renderComponents(c) {
+  const rows = c.variants.map((v) => `<tr class="${v.pass ? 'pass' : 'fail'}"><td>${esc(v.key)}</td><td>${esc(v.status)}</td>` +
+    `<td>${v.readback ? `${v.readback.nodes - v.readback.missing} of ${v.readback.nodes}` : '-'}</td><td>${v.diffs.length}</td><td>${v.sizes.length}</td>` +
+    `<td>${v.errors.length}</td><td>${esc(v.usedBy.join(', ') || '-')}</td><td>${v.edited ? 'edited by hand, kept' : v.pass ? 'pass' : 'fail'}</td></tr>`).join('\n');
+  const m = (c.mutations || []).map((x) => `${x.kind} on ${x.target || '-'}: ${x.caught === null ? x.skipped : x.caught ? 'caught' : 'MISSED'}`).join(' · ');
+  return `<h2>Components</h2>
+<p class="muted">${c.variants.filter((v) => v.pass).length}/${c.variants.length} variants pass · checked against their encoding (no source page of their own); their uses are checked on each screen${m ? ` · planted errors: ${esc(m)}` : ''}</p>
+<div class="wrap"><table><tr><th>variant</th><th>status</th><th>nodes read back</th><th>differences from the encoding</th><th>sizes off (over 0.5 px, texts 1 px)</th><th>build errors</th><th>used by screens</th><th>result</th></tr>
+${rows}</table></div>`;
+}
+
+export function renderReportHtml({ title = 'vuong-design layout report', generated = '', args = {}, screens = [], components = null }) {
   const total = screens.length, passed = screens.filter((v) => v.summary.pass).length;
   const groups = groupRepeats(screens);
   const rows = screens.map((v) => {
@@ -408,7 +420,7 @@ export function renderReportHtml({ title = 'vuong-design layout report', generat
 ${HOWTO}
 <div class="wrap"><table><tr><th>screen</th><th>nodes checked</th><th>unexplained layout errors (plugin bug)</th><th>items needing approval (largest model delta, px)</th><th>image mismatches (crop fails)</th><th>data findings (by kind)</th><th>flags (by kind)</th><th>Figma spec size (KB)</th><th>spec over 50 KB</th><th>allowlisted items</th><th>result</th></tr>
 ${rows}</table></div>
-${screens.map((v) => renderScreen(v, groups)).join('\n')}
+${components ? `${renderComponents(components)}\n` : ''}${screens.map((v) => renderScreen(v, groups)).join('\n')}
 </body></html>
 `;
 }

@@ -16,7 +16,7 @@ XZ=(n,e,al,T)=>{const s=e.s||'XX',ia=al&&!e.a;if(ia||e.l)XA.forEach((f,i)=>{cons
 // an instance (or a nested one, ex): its own size and placement on a new one, then what differs from its encoding
 XI=async(e,par,sc,ex)=>{const o=e.o;let n=ex;
 try{const M=await XG(e.i);
-if(!n){n=M.createInstance();if(par)par.appendChild(n)}else if(n.mainComponent!=M)n.swapComponent(M);
+if(!n){n=M.createInstance();if(par)par.appendChild(n)}else if(await n.getMainComponentAsync()!=M)n.swapComponent(M);
 if(e.p){if(Object.values(e.p).some(x=>typeof x=='string'))await XL(n);n.setProperties(await XP(n,e.p))}
 pd(n,'id',o);
 await XF(n,e,o,!ex);
@@ -62,6 +62,10 @@ if(a.length==b.length)a.forEach((y,i)=>{for(const k of['fills','strokes'])if(y[k
 else ub(o,'rc','','icon layers differ');t.remove()}}
 if(d.op)n.opacity=e.op!=U?e.op:1;
 if(!top&&p)XZ(n,e,!!p.layoutMode&&p.layoutMode!='NONE',T)},
+// readback (CMP_PATCHES): an instance (i) or an icon an INSTANCE_SWAP value sets (mi) whose main component is not the
+// encoded one reads back d.mc = the main's cmp key ('' when it has none); mainComponent itself is not readable with
+// documentAccess dynamic-page
+XK=async(n,e,d)=>{const x=e.i!=U?e.i:e.mi;if(x!=U&&n.type=='INSTANCE'){const m=await n.getMainComponentAsync(),k=m?gd(m,'cmp'):'';if(k!=D.K[x])(d=d||{}).mc=k}return d},
 // component batch (D.cm): a built template root becomes a component (CV); once the last variant of a name is built
 // (a component's variants are consecutive and never split between batches) they form a set and the set (or the
 // component) gets its properties (XD), before a later component uses it; after the loop (PO) the components of an
@@ -83,10 +87,22 @@ PO=async()=>{if(!D.cm)return;
 for(const[,sc]of XC)if(!XF2.has(sc.cm.n))await XD(sc.cm.n);
 // screen() names a built root after its screen key: a variant takes its axis=value name back
 for(const[m,sc]of XC)m.name=sc.cm.v||sc.cm.n;
-let sw=0,kept=0;for(const o of XO)if(o.type=='COMPONENT'){const w=XM.get(gd(o,'cmp'));if(w&&w!=o)for(const i of await o.getInstancesAsync()){i.swapComponent(w);sw++}
+// an old component replaced by this build hands its instances over and goes (kept while some stay); one this build
+// failed to replace stays as it is
+let sw=0,kept=0;for(const o of XO)if(o.type=='COMPONENT'){const w=XM.get(gd(o,'cmp'));if(!w||w==o)continue;for(const i of await o.getInstancesAsync()){i.swapComponent(w);sw++}
 if((await o.getInstancesAsync()).length)kept++;else o.remove()}
+// signatures once the sets, properties and swaps are done (they move and size the variants)
+for(const[m,sc]of XC){pd(m,'sig',sig(m));const r=out.screens.find(x=>x.screen==sc.screen);if(r)r.sig=gd(m,'sig')}
 for(const o of XO)if(o.type=='COMPONENT_SET'&&!o.removed&&!(o.children||[]).length)o.remove();
 out.cm={sets:XR,swapped:sw,oldKept:kept,errors:XE}};
 if(D.K||D.cm)await XN();
-// an earlier build's components stay out of screen()'s frame lookup (PO replaces them)
-if(D.cm)for(const n of pg.findAll(n=>(n.type=='COMPONENT'||n.type=='COMPONENT_SET')&&gd(n,'cmp'))){XO.push(n);pd(n,'screen','')}
+// an earlier build of the components this batch builds (other batches' stay out): out of screen()'s frame lookup (PO
+// replaces them). A component edited by hand (sig, as a screen frame's) keeps its whole name (every variant, the set):
+// its variants are not built, each reports edited with the old root, its instances keep it; D.force 'cmp:<name>'
+// rebuilds it. A variant the kept name lacks is not built (an error).
+if(D.cm){const KN={},E=new Set,FO=D.force||[];for(const sc of D.screens)KN[D.K[sc.cm.k]]=sc.cm.n;const NS=new Set(Object.values(KN));
+const L=pg.findAll(n=>(n.type=='COMPONENT'||n.type=='COMPONENT_SET')&&gd(n,'cmp')).filter(n=>n.type=='COMPONENT'?KN[gd(n,'cmp')]!=U:NS.has(gd(n,'cmp')));
+for(const n of L){const g=gd(n,'sig'),nm=KN[gd(n,'cmp')];if(n.type=='COMPONENT'&&g&&g!=sig(n)&&g!=sig(n,1)&&FO.indexOf('cmp:'+nm)<0)E.add(nm)}
+for(const n of L)if(!E.has(n.type=='COMPONENT'?KN[gd(n,'cmp')]:gd(n,'cmp'))){XO.push(n);pd(n,'screen','')}
+D.screens=D.screens.filter(sc=>{const nm=sc.cm.n;if(!E.has(nm))return 1;const m=XM.get(D.K[sc.cm.k]);
+out.screens.push(m?{screen:sc.screen,root:m.id,edited:true,sig:gd(m,'sig')}:{screen:sc.screen,fontMissing:[],errors:[{o:sc.T.o,msg:'not built: component '+nm+' was edited by hand and is kept (--force cmp:'+nm+' rebuilds it)'}]})})}

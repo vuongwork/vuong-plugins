@@ -195,8 +195,23 @@ Component được dựng từ spec của lần xuất hiện đầu tiên (theo
 - `check` kiểm tra component như màn (trang Component) và màn dùng instance như cũ. Lỗi cài thêm: `figCmp` (đổi một thuộc tính trong component chính → mọi instance phải lệch và bị bắt), `figSwap` (đổi icon instance sang icon khác). Kind không có ứng viên → `skipped` như hiện tại.
 - Component bị sửa tay (`sig` khác) → `skippedEdited`, không ghi đè, báo cáo liệt kê màn dùng nó. `--force cmp:<tên>` ghi đè.
 
-- [ ] **Step 1: Viết test**: `edited component is kept`; `figCmp` và `figSwap` bị bắt trên fixture; component thiếu readback → mọi instance của nó `unchecked`, màn không đạt.
-- [ ] **Step 2–4:** FAIL → viết → PASS.
+- [x] **Step 1: Viết test**: `edited component is kept`; `figCmp` và `figSwap` bị bắt trên fixture; component thiếu readback → mọi instance của nó `unchecked`, màn không đạt.
+- [x] **Step 2–4:** FAIL → viết → PASS.
+
+Đã làm (2026-11-26):
+- Chống ghi đè cho component:
+  - chữ ký được tính lại sau khi gộp set, thêm thuộc tính và swap;
+  - sửa một variant là giữ cả component;
+  - `--force cmp:<tên>` chỉ vào lô component.
+- Sửa thêm hai lỗi tìm ra khi viết test:
+  - lô `cmp-NN` sau xoá component của lô trước (Planora hiện chỉ có một lô nên chưa bị);
+  - runtime đọc `mainComponent` đồng bộ, mà plugin bridge chạy `dynamic-page` không cho phép. Nay dùng `getMainComponentAsync`; Figma giả lập có `dynamicPage: true` để bắt lỗi này.
+- Phần đọc lại báo `d.mc` khi instance hoặc icon do INSTANCE_SWAP đặt trỏ sai component chính. Icon đó giờ được kiểm danh tính như dữ liệu, không còn để `figma-icon` không đọc.
+- `check`:
+  - mục `components` trong `report.json` / `report.html`, kiểm theo bản mã hoá (`core/figma-cmp-check.mjs`);
+  - instance của component chưa đọc lại được → node `unchecked`, màn trượt.
+- `--mutate`: thêm `figCmp` (cả phía màn và phía component) và `figSwap`, chỉ với lô có component.
+- Kiểm vị trí con trong component: chưa so riêng. Vị trí được kiểm gián tiếp qua instance trên màn, so với nguồn.
 - [ ] **Step 5: Commit** `feat(vuong-design): check components on Figma, edit guard and component mutations`.
 
 ### Task 8: Nghiệm thu trên Figma thật (Planora)

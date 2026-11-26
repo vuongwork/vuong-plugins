@@ -10,7 +10,8 @@
 //   fill, ts, fv, td?, tt? }], fills?, strokes, dash?, radius?, es?, op, vars?, iconEmpty? }; text / runs on TEXT nodes (and glyph icons),
 //   fills / radius / es on the others.
 // figmaDom(n, ctx) -> DomRecord   one Actual as renderProxy's dom record (proxy.mjs): text, runs, color, bg, ff, op,
-//   vis, disp, stroke [t r b l], outline, radius [4], icon, img. ctx = { opEff (effective opacity, undefined when an
+//   vis, disp, stroke [t r b l], outline, radius [4], icon, img. An icon that is an instance of an icon component (plan
+//   3b) has its icon read: the ref of its main (icon/<ref>), not iconUnread. ctx = { opEff (effective opacity, undefined when an
 //   ancestor is not in the readback), spec (the spec-norm node), overlay (the Actual of `<o>#stroke`; null when the
 //   cell's overlay is not in the readback) }.
 //   What the readback does not observe is left out of the record (undefined), never filled in from the source:
@@ -30,7 +31,8 @@
 //   the intent is reported in the spec's own unit (the intent was encoded from it, e.g. 50% -> px), a different one
 //   in px.
 // figmaProxy(s, D, spec, { png }) -> { A, B, unread }   A / B = { boxes, dom, png (A only, device scale 2), model:
-//   'figma', mark: 'figma-real', unread, fontsMissing, facesMissing } (fonts from the screen's fontMissing). A screen
+//   'figma', mark: 'figma-real', unread, fontsMissing, facesMissing }, swapped?: [{ id, kind: 'component', expected,
+//   actual }] (an instance whose main is another component than the encoded one: check adds them to the report's data) (fonts from the screen's fontMissing). A screen
 //   without readback gives empty boxes (every node unchecked).
 // pngSize(buf) -> [w, h]; rescalePng(browser, buf, factor) -> Buffer (canvas, smooth). The screenshot's scale is
 //   pngWidth / W_A; check rescales it to the proxy's device scale 2 before measureCrops.
@@ -190,6 +192,10 @@ export function actualNodes(s, D) {
     n.strokes = d.strokes !== undefined ? d.strokes : b && (ov || !b.o) && !T_ ? { c: [D.C[b.c]], w: fourOf(b.w) } : null;
     if (D.rd && b && !T_) n.dash = d.strokes !== undefined ? dashOf(d.strokes) : b.d || 'solid';
     if (d.vars !== undefined) n.vars = d.vars;
+    // plan 3b Task 7: an instance (i) or an icon set by an INSTANCE_SWAP value (mi): the component it is an instance of
+    // (the encoded one unless the readback says mc)
+    const k = e.i !== undefined ? e.i : e.mi;
+    if (!ov && k !== undefined && Array.isArray(D.K)) { n.main = d.mc !== undefined ? d.mc : D.K[k]; n.mainIntent = D.K[k]; }
     return n;
   };
   walk(T);
@@ -238,7 +244,10 @@ export function figmaDom(n, ctx = {}) {
   // svg is reported as 'svg' (its markup is unread 'svg'); no vectors at all = nothing drawn (icon undefined: a finding)
   if (e.t === 'V' && !n.iconEmpty) {
     const ic = spec && spec.icon;
-    if (ic && ic.ref) dom.iconUnread = true; else dom.icon = 'svg';
+    // an icon that is an instance of an icon component: its main names the icon (the icon component is checked on its
+    // own); another main than an icon one -> 'component:<name>'
+    if (n.main !== undefined) dom.icon = n.main.startsWith('icon/') ? n.main.slice(5) : `component:${n.main}`;
+    else if (ic && ic.ref) dom.iconUnread = true; else dom.icon = 'svg';
   }
   if (e.t === 'I' || e.im) { if (!(n.fills || []).includes('IMAGE')) dom.img = null; }
   return dom;
@@ -254,6 +263,7 @@ export function figmaProxy(s, D, spec, opts = {}) {
   if (spec) idx(spec);
   const boxes = { A: {}, B: {} }, dom = {};
   const unread = new Set(BASE_UNREAD);
+  const swapped = []; // instances (not icons) of another component than the encoded one
   if (!(D && D.rd)) { unread.add('text-decoration'); unread.add('text-transform'); }
   const walk = (e, opParent) => {
     const n = act.get(e.o);
@@ -264,6 +274,7 @@ export function figmaProxy(s, D, spec, opts = {}) {
       dom[e.o] = figmaDom(n, { opEff, spec: specIdx.get(e.o), overlay: ov });
       if (e.t === 'V' && !(e.ic && e.ic.g != null) && dom[e.o].icon === 'svg') unread.add('svg');
       if (dom[e.o].iconUnread) unread.add('icon');
+      if (n.main !== undefined && n.main !== n.mainIntent && e.t !== 'V') swapped.push({ id: e.o, kind: 'component', expected: n.mainIntent, actual: n.main });
       if ((e.t === 'I' || e.im) && dom[e.o].img === undefined) unread.add('image');
       if (e.bd && e.bd.d && !D.rd) unread.add('stroke-style');
     }
@@ -280,7 +291,7 @@ export function figmaProxy(s, D, spec, opts = {}) {
   }))];
   const list = [...unread];
   const mk = (M) => ({ boxes: boxes[M], dom, png: M === 'A' ? opts.png || null : null, model: 'figma', mark: 'figma-real', unread: list, fontsMissing, facesMissing });
-  return { A: mk('A'), B: mk('B'), unread: list };
+  return { A: mk('A'), B: mk('B'), unread: list, ...(swapped.length ? { swapped } : {}) };
 }
 
 // ---- screenshot ----

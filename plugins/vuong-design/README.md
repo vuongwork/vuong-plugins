@@ -320,7 +320,7 @@ Each cell is an `<iframe srcdoc>` that holds the proxy page (`proxy.mjs`) of one
 
 **Batches, in send order:** vars, `runtime`, `runtime-cmp`, `cmp-NN`, then the screen batches.
 
-- `runtime-cmp` installs `core/figma-runtime-cmp.js` once, like the runtime (≤ 16 384 B as installed; 6.7 KB now).
+- `runtime-cmp` installs `core/figma-runtime-cmp.js` once, like the runtime (≤ 16 384 B as installed; 7.9 KB now).
 - A batch that uses components gets a loader that inserts it into the screen runtime and patches three calls there (`CMP_PATCHES`). The screen runtime itself is unchanged.
 - `cmp-NN` batches build, in this order: the icon components (`icon/<ref>`, one per value an INSTANCE_SWAP property can take), then the components, each after the components its templates hold. A component's variants never split between batches.
 
@@ -339,7 +339,38 @@ Each cell is an `<iframe srcdoc>` that holds the proxy page (`proxy.mjs`) of one
 - A nested main binds its own variables: where the readback shows other variables than the encoding's, each field is bound again to the encoded one.
 - The readback is the plan 3 one: every spec node has an entry, by the same id. So `check` reads instances as it reads layers.
 
-**A second build** (the data changed, or `--redo`) builds new components. The instances of each old one move to the new one of the same name (`swapComponent`), and the old one is removed: no duplicates. An unchanged `cmp-NN` is kept, as a vars batch is. A screen's hash covers the component items it uses.
+**A second build** (the data changed, or `--redo`) builds new components. The instances of each old one move to the new one of the same name (`swapComponent`), and the old one is removed: no duplicates. An unchanged `cmp-NN` is kept, as a vars batch is. A screen's hash covers the component items it uses. A `cmp-NN` batch only replaces the components it builds itself; those of other batches stay. An old component that the batch failed to rebuild also stays.
+
+**Edited by hand.** A component carries a signature (`vuongdesign/sig`), like a screen frame. The signature is refreshed once its set, properties and swaps are done.
+
+- If you edit any variant of a component, the next build keeps the whole component: every variant and its set.
+- Each variant reports `edited` with its old root. `ingest` records it as `skippedEdited`, and the screens' instances keep using it.
+- `--force cmp:<name>` rebuilds it. A screen batch never gets the `cmp:` entries, and an unknown name is a usage error.
+- A variant that the kept component does not have is not built. It reports an error that names `--force`.
+
+**Instance mains.** The readback also checks which component an instance uses.
+
+- An instance (`i`), or an icon set by an INSTANCE_SWAP value (`mi`), whose main component is not the encoded one reads back `d.mc`, the main's `cmp` name.
+- The runtime reads mains with `getMainComponentAsync`. The bridge plugin's `documentAccess: dynamic-page` forbids the sync `mainComponent` getter; the fake throws for it with `dynamicPage: true`.
+- `check` reads such an icon by its main (`icon/<ref>`), so its identity is checked as data instead of being unread (`figma-icon`).
+- An instance of another component that is not an icon is a `component` data finding.
+
+**Check.** With components, `figma.mjs check` adds a `components` section to `report.json` and a table to `report.html`. The functions are in `core/figma-cmp-check.mjs`.
+
+- A variant has no source page, so it is checked against its encoding. It passes when:
+  - every node is read back;
+  - no node differs from its encoding;
+  - every FIXED size, and a frame's HUG size, is within 0.5 px (texts 1 px);
+  - the build had no errors.
+- A HUG text gets its size from Figma's font metrics, so it is checked on the screens, against the source.
+- `skippedEdited`: kept and not checked here. It passes, and the log lists the screens that use it.
+- A variant without readback (failed, pending) fails. Each of its instances on a screen then reads back as missing (unchecked, with the reason), so that screen fails.
+- The run passes only when every screen and every variant passes.
+
+`--mutate` adds two planted errors on batches with components; a batch without them keeps the plan 3 list:
+
+- **`figCmp`:** the main of the screen's first instance is built wrong (its root fill inverted). Every instance of it on the screen shows that fill, and each one must be caught. On the components side, one variant's root fill is changed, and its check must fail.
+- **`figSwap`:** the first icon set by a component reads back as another icon component.
 
 Planora on the fake (18 screens, 14 components, fixture `test/fixtures/figma-cmp-planora.json.gz`, 2026-11-25):
 

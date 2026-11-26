@@ -74,6 +74,7 @@
 import { normColor, figPlainFrame } from './verify.mjs';
 import { runScreen } from './pipeline.mjs';
 import { ordOf, decode, actualNodes } from './figma-check.mjs';
+import { figCmpTargets, otherIcon } from './figma-cmp-check.mjs';
 
 export const KINDS = ['moveShape', 'moveText', 'swapIcon', 'deleteLeaf', 'hideLeaf', 'thinStrokeSmall', 'thinStroke4000', 'drift', 'gap',
   'radiusLarge', 'fontLarge', 'svgLarge', 'imageLarge', 'normSilent', 'normWrongValue', 'normCropHide', 'normLayoutDrift'];
@@ -495,7 +496,15 @@ export async function runMutations(browser, screen, inferred, fontMap, opts = {}
 //   tree), spec (spec-norm tree), run: async (screen result) -> report }) -> { id, baseline, results, allCaught } as
 //   runMutations: caught = a failure the baseline does not have (same keys) on the target, its spec ancestors or
 //   descendants.
+// Batches with components (D.K, plan 3b Task 7) also run FIG_CMP_KINDS; a batch without them runs FIG_KINDS only, so
+// a plan 3 report keeps its mutation list:
+//  - figCmp: the main component of the screen's first read-back instance root built wrong (its root fill inverted, as
+//    figFill): every read-back instance root of it on the screen reads back with that fill; caught only when every
+//    one of them is (each on itself or its layers).
+//  - figSwap: the first icon set by a component (an INSTANCE_SWAP value or an icon instance) reads back as an instance
+//    of another icon component of the batch (d.mc); no other icon component: 'no candidate'.
 export const FIG_KINDS = ['figMove', 'figText', 'figFill', 'figDrop', 'figCase', 'figDash', 'figIconPx', 'figHide'];
+export const FIG_CMP_KINDS = ['figCmp', 'figSwap'];
 export const FIG_PIXEL_KINDS = new Set(['figIconPx', 'figHide']);
 const FIG_WN = ['Thin', 'ExtraLight', 'Light', 'Regular', 'Medium', 'SemiBold', 'Bold', 'ExtraBold', 'Black'];
 const invertHex = (h) => {
@@ -563,6 +572,12 @@ export function chooseFig(kind, sres, D, tree, spec) {
   if (kind === 'figCase') return cands.find((o) => { const n = act.get(o); return n.e.t === 'T' && n.text !== String(n.text).toUpperCase() && (n.runs || []).length; }) || null;
   if (kind === 'figDash') return cands.find((o) => /^(dashed|dotted)$/.test(act.get(o).dash || '') && (act.get(o).strokes || act.has(`${o}#stroke`))) || null;
   if (kind === 'figIconPx') return spec ? leaves.find((o) => src.get(o).kind === 'icon' && swapIconSpec(spec, o)) || null : null;
+  if (kind === 'figSwap') {
+    const enc = new Map();
+    const w = (e) => { enc.set(e.o, e); (e.k || []).forEach(w); };
+    w(T);
+    return ordOf(T).find((o) => { const e = enc.get(o), k = e && (e.mi !== undefined ? e.mi : e.i); return e && e.t === 'V' && act.has(o) && k !== undefined && String(D.K[k]).startsWith('icon/') && otherIcon(D, D.K[k]); }) || null;
+  }
   if (kind === 'figHide') {
     if (!spec) return null;
     let best = null, bc = HIDE_CONTRAST - 1;
@@ -599,14 +614,28 @@ export function mutateFig(kind, sres, D, o0) {
     });
   }
   if (kind === 'figDash') { const st = { ...n.strokes }; delete st.d; d.strokes = st; }
+  if (kind === 'figSwap') d.mc = otherIcon(D, n.main);
   out.nodes[i] = [fid, A, dB || 0, d];
   return out;
 }
 
-export async function runFigMutations({ id, base, screen: sres, D, tree, spec, run, kinds = FIG_KINDS }) {
+export async function runFigMutations({ id, base, screen: sres, D, tree, spec, run, kinds = D && Array.isArray(D.K) ? [...FIG_KINDS, ...FIG_CMP_KINDS] : FIG_KINDS }) {
   const before = new Set(failures(base).map((f) => f.key));
   const results = [];
+  const subtree = (o) => { const e = find(spec, o); return new Set(e ? walk(e.n).map((x) => x.n.id) : [o]); };
   for (const kind of kinds) {
+    if (kind === 'figCmp') {
+      const t = sres && sres.nodes ? figCmpTargets(sres, D) : null;
+      if (!t) { results.push({ kind, target: null, caught: null, by: [], skipped: sres && sres.nodes ? 'no candidate' : 'no readback' }); continue; }
+      let m = clone(sres);
+      for (const o of t.targets) m = mutateFig('figFill', m, D, o);
+      const rep = await run(m);
+      const fresh = failures(rep).filter((f) => !before.has(f.key));
+      const per = t.targets.map((o) => { const h = subtree(o); return fresh.filter((f) => h.has(f.id)); });
+      const by = [...new Set(per.flat().map((f) => f.check))];
+      results.push({ kind, target: t.k, targets: t.targets, caught: per.every((x) => x.length > 0), by, found: per.flat().map((f) => f.key), missedTargets: t.targets.filter((o, i) => !per[i].length) });
+      continue;
+    }
     if ((kind === 'figCase' || kind === 'figDash') && !(D && D.rd)) { results.push({ kind, target: null, caught: null, by: [], skipped: 'not read back (batch without D.rd)' }); continue; }
     const o = sres && sres.nodes ? chooseFig(kind, sres, D, tree, spec) : null;
     if (!o) { results.push({ kind, target: null, caught: null, by: [], skipped: sres && sres.nodes ? 'no candidate' : 'no readback' }); continue; }

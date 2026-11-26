@@ -27,6 +27,7 @@
 // scopes outside VariableScope or of the wrong type; a text style font that is not loaded, a non-positive size, a line
 // height / letter spacing without a valid unit; an effect colour with a channel outside 0..1 or without `a`, an unknown type.
 // figma._collections lists the created collections.
+// dynamicPage: instance.mainComponent throws (documentAccess dynamic-page, the bridge plugin); getMainComponentAsync works.
 // ignore: property names silently ignored by the setter on created frames / texts / svg frames (readback diff test).
 // Screenshots (T8, figma.mjs shots): figma.getNodeByIdAsync, node.clone() (inserted after the node in its parent),
 // node.rescale(s), page.remove() (throws on the current page or the last page).
@@ -58,7 +59,7 @@ function checkPaints(ps) {
   return Object.freeze(ps.map((p) => Object.freeze({ ...p })));
 }
 
-export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyles = [], effectStyles = [], throwIf = () => false, ignore = [], idPrefix = '1', idStart = 0 } = {}) {
+export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyles = [], effectStyles = [], throwIf = () => false, ignore = [], idPrefix = '1', idStart = 0, dynamicPage = false } = {}) {
   let seq = idStart;
   const nid = () => idPrefix + ':' + ++seq;
   const MIXED = Symbol('mixed');
@@ -448,7 +449,9 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
     return g;
   }
   class InstanceApi {
-    get mainComponent() { return this._main; }
+    // documentAccess dynamic-page (the bridge plugin's manifest): the sync getter throws, as in real Figma
+    get mainComponent() { if (dynamicPage) throw new Error('Cannot call with documentAccess: dynamic-page. Use node.getMainComponentAsync instead.'); return this._main; }
+    async getMainComponentAsync() { return this._main; }
     get componentProperties() {
       const defs = DEFS.get(ownerOf(this._main)) || {}, out = {};
       for (const [k, d] of Object.entries(defs)) out[k] = { type: d.type, value: (this._pv || {})[k] ?? d.defaultValue };

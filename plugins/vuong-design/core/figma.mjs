@@ -90,6 +90,7 @@ export const CMP_PATCHES = [
   ['root=S.root=await mk(sc.T,null,sc)', 'root=S.root=await CV(await mk(sc.T,null,sc),sc)'],
   ['for(const sc of D.screens){S=', 1],
   ["if(PR){pt('total',T0)", "await PO();if(PR){pt('total',T0)"],
+  ['const d=read(n,e,ov)', 'const d=await XK(n,e,read(n,e,ov))'],
 ];
 export const runtimeCmpInstallCode = () => `const B=${JSON.stringify(RTC_BODY)};
 figma.root.setSharedPluginData('${NS}','rtc',B);figma.root.setSharedPluginData('${NS}','rtcv','${RUNTIME_CMP_VERSION}');
@@ -192,10 +193,13 @@ export function encodeAll(dsData, { page = 'Screens', force = [], cmpPage = 'Com
 
 // the plan's items in send order: vars batches, the runtime, (with components: the component runtime and the
 // component batches cmp-NN, atoms first), screen batches of the screens not in `keep` (numbered from `first`)
+// force: screen ids and 'cmp:<component name>' (Task 7: a component edited by hand is rebuilt): the screen batches get
+// the screen ids, the component batches the cmp: ones (a batch without any: no force, byte for byte as before)
 export function planAll(dsData, { page = 'Screens', force = [], keep = new Set(), first = 1, encoded, prof = false, cmpPage = 'Components' } = {}) {
-  const { encs, cmp } = encoded || encodeAll(dsData, { page, force, cmpPage });
-  const batches = planBatches(encs.filter((e) => !keep.has(e.screen)), { wrap: loaderCode, page, force, first, prof, ...(cmp ? { extra: { cp: cmpPage } } : {}) });
-  const cmpBatches = cmp ? planBatches(cmp.items, { wrap: loaderCode, page: cmpPage, prof, extra: { cm: 1 }, unit: (x) => x.cm.n }) : [];
+  const sf = force.filter((f) => !f.startsWith('cmp:')), cf = force.filter((f) => f.startsWith('cmp:'));
+  const { encs, cmp } = encoded || encodeAll(dsData, { page, force: sf, cmpPage });
+  const batches = planBatches(encs.filter((e) => !keep.has(e.screen)), { wrap: loaderCode, page, force: sf, first, prof, ...(cmp ? { extra: { cp: cmpPage } } : {}) });
+  const cmpBatches = cmp ? planBatches(cmp.items, { wrap: loaderCode, page: cmpPage, prof, extra: { cm: 1 }, unit: (x) => x.cm.n, ...(cf.length ? { force: cf } : {}) }) : [];
   const rtc = cmp ? runtimeCmpInstallCode() : null;
   // the text style variants of every screen (kept ones too: the vars batches are sent whole)
   const vars = varsPayload(dsData.tokens, { variants: [...new Map(encs.flatMap((e) => e.variants || []).map((v) => [v[0], v])).values()] });
@@ -231,7 +235,11 @@ async function plan(argv, log) {
   if (cmpPage === (o.page || 'Screens')) throw new UsageError(`--cmp-page ${cmpPage}: the components need a page of their own, not the screens page`);
   const ids = dsData.screens.map((s) => s.id);
   const force = [...new Set((o.force || []).flatMap((f) => f.split(',')).map((f) => f.trim()).filter(Boolean))];
-  for (const f of force) if (!ids.includes(f)) throw new UsageError(`--force ${f}: no such screen (screens: ${ids.join(', ')})`);
+  const cnames = dsData.components ? (dsData.components.components || []).map((c) => c.name) : [];
+  for (const f of force) {
+    if (f.startsWith('cmp:')) { if (!cnames.includes(f.slice(4))) throw new UsageError(`--force ${f}: no such component (components: ${cnames.join(', ') || 'none'})`); }
+    else if (!ids.includes(f)) throw new UsageError(`--force ${f}: no such screen (screens: ${ids.join(', ')})`);
+  }
   const page = o.page || 'Screens';
   const F = figDir(o.out);
   mkdirSync(F, { recursive: true });
@@ -241,7 +249,7 @@ async function plan(argv, log) {
   const has = (key, kind) => Object.values(filesOf(key, kind)).every((f) => existsSync(join(F, f)));
   let all, encoded, keep;
   try {
-    encoded = encodeAll(dsData, { page, force, cmpPage });
+    encoded = encodeAll(dsData, { page, force: force.filter((f) => !f.startsWith('cmp:')), cmpPage });
     // a screen built (or kept as edited) from the same data is not sent again
     keep = new Set(o.redo ? [] : ids.filter((s) => {
       const p = ps[s];
@@ -437,14 +445,16 @@ async function ingest(argv, log) {
     st.components ||= {};
     for (const s of res.screens) {
       const rec = { batch: key, result: file };
-      if (s.root === undefined) { failed++; Object.assign(rec, { status: 'failed', errors: s.errors, fontMissing: s.fontMissing.length }); }
+      if (s.edited === true) Object.assign(rec, { status: 'skippedEdited', root: s.root, sig: s.sig, edited: true, skippedEdited: true });
+      else if (s.root === undefined) { failed++; Object.assign(rec, { status: 'failed', errors: s.errors, fontMissing: s.fontMissing.length }); }
       else Object.assign(rec, { status: 'done', root: s.root, sig: s.sig, errors: s.errors.length, fontMissing: s.fontMissing.length });
       st.components[s.screen.replace(/^cmp:/, '')] = rec;
     }
     b.status = failed ? 'failed' : 'done';
     b.result = file;
     if (res.cm.errors && res.cm.errors.length) b.errors = res.cm.errors; else delete b.errors;
-    log(`${key}: ${b.status}; ${res.screens.filter((s) => s.root !== undefined).length}/${res.screens.length} variants built, ${Object.keys(res.cm.sets || {}).length} components${res.cm.swapped ? `, ${res.cm.swapped} instances moved to the new build` : ''}${res.cm.oldKept ? `, ${res.cm.oldKept} old components kept (instances left)` : ''}${failed ? `; errors: ${[...(res.cm.errors || []).map((x) => `${x.o}: ${x.msg}`), ...res.screens.filter((s) => s.root === undefined).map((s) => s.screen)].slice(0, 3).join('; ')}` : ''}`);
+    const kept = res.screens.filter((s) => s.edited === true).map((s) => s.screen.replace(/^cmp:/, ''));
+    log(`${key}: ${b.status}; ${res.screens.filter((s) => s.root !== undefined && s.edited !== true).length}/${res.screens.length} variants built,${kept.length ? ` edited by hand, kept (skippedEdited; --force cmp:<name> rebuilds): ${kept.join(', ')},` : ''} ${Object.keys(res.cm.sets || {}).length} components${res.cm.swapped ? `, ${res.cm.swapped} instances moved to the new build` : ''}${res.cm.oldKept ? `, ${res.cm.oldKept} old components kept (instances left)` : ''}${failed ? `; errors: ${[...(res.cm.errors || []).map((x) => `${x.o}: ${x.msg}`), ...res.screens.filter((s) => s.root === undefined).map((s) => s.screen)].slice(0, 3).join('; ')}` : ''}`);
   } else if (b.kind === 'vars') {
     b.status = res.errors.length ? 'failed' : 'done';
     b.result = file;
@@ -751,6 +761,7 @@ async function check(argv, log, deps) {
   const { gate, summarize, specJson, allowlistEntry } = await import('./pipeline.mjs');
   const { defaultFontMap } = await import('./font-map.mjs');
   const { runFigMutations, swapIconSpec, hideFrameSpec } = await import('./mutate.mjs');
+  const { cmpVariants, blockInstances, cmpMutation } = await import('./figma-cmp-check.mjs');
   const { buildProxyHtml, renderProxy } = await import('./proxy.mjs');
   const fontMap = deps.fontMap || defaultFontMap();
   const t0 = Date.now();
@@ -766,13 +777,19 @@ async function check(argv, log, deps) {
     const missing = inp.screens.filter((x) => !capById.has(x.id)).map((x) => x.id);
     if (missing.length) throw new UsageError(`screens ${missing.join(', ')} are not in the captured page any more (same --root / --name as the ds run?)`);
     const screensOut = [], views = [];
+    // plan 3b Task 7: the component variants against their encoding; an instance of one without readback is unchecked
+    const cmpOn = !!(st.components && Object.keys(st.components).length);
+    const variants = cmpOn ? cmpVariants(st, F, Object.fromEntries(inp.screens.filter((x) => x.D).map((x) => [x.id, x.D])), (f) => readJson(join(F, f))) : [];
+    const noRead = new Map(variants.filter((v) => v.status !== 'done' && v.status !== 'skippedEdited').map((v) => [v.key, `instance of component ${v.key}, which has no readback (${v.status})`]));
+    const cmpMut = cmpOn && o.mutate ? cmpMutation(variants, st, (f) => readJson(join(F, f))) : null;
     const { screenView, renderReportHtml } = await import('./report-html.mjs');
     for (const x of inp.screens) {
       const sc = capById.get(x.id);
       const { inferred, modelled, target, normOn, layout, modP, normP, normLayout, normLayoutError } = await localScreen(browser, sc, { id: x.id, fontMap, webFonts, entries: inp.entries });
       if (specJson(target.spec) !== x.specText) throw new UsageError(`screen ${x.id}: the target spec rebuilt from the page differs from spec-norm-${safe(x.id)}.json: the source changed since ds.mjs ran; run ds.mjs and figma.mjs plan again`);
       // the Figma readback and screenshot
-      const sres = x.sres && x.sres.nodes ? x.sres : null;
+      const bl = blockInstances(x.sres && x.sres.nodes ? x.sres : null, x.D, noRead);
+      const sres = bl.sres;
       let shot = null;
       if (x.shot) shot = await shotAtDsf(browser, readFileSync(x.shot), sc.W[0]);
       const build = (s) => figmaProxy(s ? decode({ screens: [clone(s)] }, x.D).screens[0] : null, x.D, target.spec, { png: shot ? shot.png : null });
@@ -793,7 +810,10 @@ async function check(argv, log, deps) {
       const input = (figP, cr = crops, rf = null) => (normOn
         ? { screen: sc, spec: modelled.spec, proxy: modP, layout, flags, norm: { spec: target.spec, applied: target.applied, proxy: figP, entries: inp.entries }, normLayout, crops: cr, pixel, ...extra, ...(rf ? { cropsRefVsFigma: rf } : {}) }
         : { screen: sc, spec: modelled.spec, proxy: figP, layout, flags, crops: cr, pixel });
-      const report = verifyScreen(input(fig), verifyOpts);
+      // an instance of another component than the encoded one (not an icon: its identity is the icon check) is a finding
+      const verifyFig = (figP, ...a) => { const r = verifyScreen(input(figP, ...a), verifyOpts); for (const w of figP.swapped || []) r.data.push(w); if ((figP.swapped || []).length) r.pass = false; return r; };
+      const report = verifyFig(fig);
+      for (const [id, why] of Object.entries(bl.blocked)) if (report.unchecked.includes(id)) (report.uncheckedReasons ||= {})[id] = why;
       if (normLayoutError) report.normLayoutError = normLayoutError;
       let mutations = null;
       if (o.mutate) {
@@ -811,7 +831,7 @@ async function check(argv, log, deps) {
         };
         mutations = await runFigMutations({
           id: x.id, base: report, screen: sres, D: x.D, tree: sc.tree, spec: target.spec,
-          run: async (m, px) => { if (!px) return verifyScreen(input(build(m)), verifyOpts); const pc = await pixelCrops(px.o, px.kind); return pc ? verifyScreen(input(build(m), pc.cr, pc.rf), verifyOpts) : null; },
+          run: async (m, px) => { if (!px) return verifyFig(build(m)); const pc = await pixelCrops(px.o, px.kind); return pc ? verifyFig(build(m), pc.cr, pc.rf) : null; },
         });
       }
       const ids = [];
@@ -840,12 +860,21 @@ async function check(argv, log, deps) {
       views.push({ ...v, figma });
       log(`  ${x.id}: ${summary.pass ? 'pass' : 'fail'}${sres ? '' : ` (no readback: ${ss.status})`}${shot ? '' : x.staleShot ? ' (screenshot of an earlier build: take new shots)' : ' (no screenshot)'} (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
     }
-    const { pass, missed } = runVerdict(screensOut);
+    const verdict = runVerdict(screensOut);
+    const cmpPass = variants.every((v) => v.pass);
+    const missed = [...verdict.missed, ...(cmpMut && cmpMut.caught === false ? [`components:${cmpMut.kind}`] : [])];
+    const pass = verdict.pass && cmpPass && missed.length === verdict.missed.length;
+    const components = cmpOn ? { pass: cmpPass, variants, ...(cmpMut ? { mutations: [cmpMut] } : {}) } : null;
     const seconds = Math.round((Date.now() - t0) / 100) / 10;
     const a = { out: o.out, html: src.html, root: src.root, webFonts, tol: verifyOpts, mutate: !!o.mutate, allowlistApproved: allowlist.filter((e) => e && e.approved === true).length };
-    writeFileSync(join(F, 'report.json'), JSON.stringify({ generated: new Date().toISOString(), seconds, args: a, pass, ...(o.mutate ? { mutationsMissed: missed } : {}), screens: screensOut }, null, 1));
-    writeFileSync(join(F, 'report.html'), renderReportHtml({ title: 'vuong-design check on real Figma', generated: `${new Date().toISOString()} · ${seconds} s`, args: a, screens: views }));
+    writeFileSync(join(F, 'report.json'), JSON.stringify({ generated: new Date().toISOString(), seconds, args: a, pass, ...(o.mutate ? { mutationsMissed: missed } : {}), screens: screensOut, ...(components ? { components } : {}) }, null, 1));
+    writeFileSync(join(F, 'report.html'), renderReportHtml({ title: 'vuong-design check on real Figma', generated: `${new Date().toISOString()} · ${seconds} s`, args: a, screens: views, ...(components ? { components } : {}) }));
     const failed = screensOut.filter((s) => !s.summary.pass).length;
+    if (components) {
+      const by = (k) => variants.filter((v) => v.status === k).length, bad = variants.filter((v) => !v.pass);
+      log(`components: ${variants.length - bad.length}/${variants.length} variants pass (${by('done')} built, ${by('skippedEdited')} edited by hand and kept${variants.length - by('done') - by('skippedEdited') ? `, ${variants.length - by('done') - by('skippedEdited')} without readback` : ''})${bad.length ? `; failing: ${bad.slice(0, 5).map((v) => v.key).join(', ')}` : ''}`);
+      for (const v of variants.filter((x) => x.edited)) log(`  ${v.key}: edited by hand, kept; used by ${v.usedBy.join(', ') || 'no screen'} (their instances are checked on each screen)`);
+    }
     log(`${screensOut.length - failed}/${screensOut.length} screens pass on Figma in ${seconds} s; report: ${join(F, 'report.html')}`);
     if (missed.length) log(`the mutation check missed ${missed.length} planted error${missed.length === 1 ? '' : 's'} (${missed.join(', ')}): the verifier cannot be trusted; exit 1`);
     return pass ? 0 : 1;

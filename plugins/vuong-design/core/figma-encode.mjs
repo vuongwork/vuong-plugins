@@ -146,7 +146,7 @@ function mapRefs(e, fn) {
     if (o.v) for (const k of Object.keys(o.v)) one('V', o.v, k);
   }
   // plan 3b components (figma-cmp.mjs): the instance's component, INSTANCE_SWAP values
-  one('K', e, 'i');
+  one('K', e, 'i'); one('K', e, 'mi'); // mi: the icon an INSTANCE_SWAP value sets (Task 7 readback)
   if (e.p) for (const k of Object.keys(e.p)) if (typeof e.p[k] === 'number') one('K', e.p, k);
   if (e.k) for (const k of e.k) mapRefs(k, fn);
 }
@@ -689,7 +689,8 @@ export function batchData(encs, n, page, force, prof, extra) {
   });
   const D = { batch: n, rd: 1 }; // rd: the runtime reads text decoration / case and the dash pattern back (figma-check)
   if (page !== undefined) D.page = page;
-  const f = (force || []).filter((x) => encs.some((enc) => enc.screen === x));
+  // a component item (figma-cmp.mjs) is forced by its name: 'cmp:<name>' (its screen is 'cmp:<K name>')
+  const f = (force || []).filter((x) => encs.some((enc) => enc.screen === x || (enc.cm && `cmp:${enc.cm.n}` === x)));
   if (f.length) D.force = f;
   if (prof) D.prof = 1; // runtime phase timings (figma.mjs plan --prof); not in the per-screen hash
   // extra (plan 3b): cm = 1 on a component batch, cp = the components page when the batch uses components

@@ -54,9 +54,11 @@ const short = (s, n = 60) => {
 };
 
 const C = has("cases.md") ? parseCases(f("cases.md")) : null;
-const questions = (tablesStartingWith(read("spec-sources.md"), "Q")[0]?.rows || []).filter((r) => r.q && !/^</.test(r.q) && !(r.answer || "").trim());
+// answers.md: the user's answers (Q / D / X refs), maybe not yet copied into spec-sources.md / diff.md by the writer
+const answered = new Set((tablesStartingWith(read("answers.md"), "Ref")[0]?.rows || []).filter((r) => (r.answer || "").trim()).map((r) => (r.ref || "").trim()));
+const questions = (tablesStartingWith(read("spec-sources.md"), "Q")[0]?.rows || []).filter((r) => r.q && !/^</.test(r.q) && !(r.answer || "").trim() && !answered.has(r.q.trim()));
 const diffs = has("diff.md") ? parseDiff(f("diff.md")).filter((r) => r.id && !/^</.test(r.id)) : [];
-const openDiffs = diffs.filter((r) => !r.decision.trim() || /\bopen\b|^</i.test(r.decision));
+const openDiffs = diffs.filter((r) => (!r.decision.trim() || /\bopen\b|^</i.test(r.decision)) && !answered.has(r.id.trim()));
 const needs = (tablesStartingWith(read("data-plan.md"), "Need")[0]?.rows || []).filter((r) => r.need && !/^</.test(r["concrete data (key / state / file)"] || ""));
 const notReady = needs.filter((r) => !/^(ready|ok|done|✓)/i.test((r.status || "").trim()));
 const approved = C && C.approvedBy && !/^</.test(C.approvedBy);

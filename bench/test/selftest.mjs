@@ -8,6 +8,7 @@ import { byStep, docsAndRework } from '../lib/steps.mjs';
 import { badRefs, matchKey, mdTables } from '../lib/grade.mjs';
 import { childEnv, claudeArgs, loadCase, main as runMain } from '../run.mjs';
 import { render } from '../report.mjs';
+import processChecks from '../suites/vuong-test/process.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let failed = 0, passed = 0;
@@ -93,6 +94,28 @@ const eq = (a, b, name) => ok(JSON.stringify(a) === JSON.stringify(b), name, `\n
   const t = parseTrace(ev);
   eq(totals(t.messages).output, 400, 'output: per-message split adds up to modelUsage');
   ok(t.messages[0].usage.output > t.messages[1].usage.output && t.messages[1].usage.output > 50, 'output: thinking-heavy message gets more', JSON.stringify(t.messages.map((m) => m.usage.output)));
+}
+
+{ // vuong-test process checks (trace only)
+  const tu = (id, name, input) => ({ type: 'tool_use', id, name, input });
+  const res = (id, text) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: text }] } });
+  const ev = [
+    { type: 'system', subtype: 'init', plugins: [{ name: 'vuong-test' }] },
+    { type: 'assistant', message: { id: 'm1', model: 'o', content: [tu('a', 'Agent', { subagent_type: 'vuong-test:writer', prompt: 'p' })], usage: {} } },
+    { type: 'assistant', parent_tool_use_id: 'a', message: { id: 's1', model: 's', content: [tu('b', 'Read', { file_path: 'P/skills/vuong-test/SKILL.md' }), tu('c', 'Read', { file_path: 'P/kit/e2e-kit.mjs' })], usage: {} } },
+    { type: 'assistant', parent_tool_use_id: 'a', message: { id: 's2', model: 's', content: [tu('d', 'Bash', { command: "cat > W/api.mjs <<'EOF'\nimport x from 'P/kit/api-kit.mjs';\n" + 'x'.repeat(1600) + '\nEOF' })], usage: {} } },
+    res('d', 'Exit code 2\nunexpected EOF'),
+    { type: 'assistant', message: { id: 'm2', model: 'o', content: [tu('e', 'Edit', { file_path: 'W/cases.md', old_string: 'a', new_string: 'b' }), tu('f', 'Write', { file_path: 'W/run.mjs', content: 'spawn collect.mjs' })], usage: {} } },
+    { type: 'result', total_cost_usd: 1, modelUsage: {} },
+  ];
+  const by = Object.fromEntries(processChecks(ev).map((k) => [k.name.replace('process: ', ''), k]));
+  ok(by['writer agents spawned'].detail === '1', 'process: writer spawn counted');
+  ok(!by['main session does not write writer-owned files after delegating'].pass, 'process: main edit of cases.md after delegating flagged');
+  ok(by['no kit source read'].detail.startsWith('1×'), 'process: kit source Read flagged, kit import inside a heredoc not', by['no kit source read'].detail);
+  ok(!by['no whole SKILL.md read by the writer'].pass, 'process: whole SKILL.md read flagged');
+  ok(/1× 2KB \(failed\)/.test(by['no file written through a shell heredoc'].detail), 'process: failed heredoc flagged', by['no file written through a shell heredoc'].detail);
+  ok(!by['collect arguments not built by hand (core/run.mjs)'].pass, 'process: own run script flagged');
+  ok(Object.values(by).every((k) => k.info), 'process: all info (not in the score)');
 }
 
 console.log(`${passed} passed, ${failed} failed`);

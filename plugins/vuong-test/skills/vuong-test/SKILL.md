@@ -18,12 +18,16 @@ a dev can ask the same at any time with `/vuong-test:next [scope]`.
 Files others read (`cases.md`, `diff.md`, `data-plan.md`) must read row by row without another file open: spec by
 file name + cell, flow refs with their name, rules in words; codes (`R12`, `S2`, `B3`) only in brackets.
 
+Create and change files with the Write / Edit tools only — never a shell heredoc, `sed -i` or `node -e` writing a
+file (auto mode blocks them, and one stray quote loses the whole file).
+
 **Delegate the writing steps.** Steps 2–3 (spec-sources.md, flows.md, diff.md), step 4 (cases.md + data-plan.md)
 and step 6 (write + dry-run tests) go to the `vuong-test:writer` agent (runs on Sonnet: same score measured, about
 a third cheaper per step) — one agent per scope, or one per group when step 6 is split. Before delegating, do not
-read the inputs the agent will read: check they exist (one `ls`) and write the answers. First write what the user answered into the step files where it belongs
-(BA answers in `spec-sources.md`, decisions in `diff.md`, approval in the `cases.md` header) — the agent reads
-answers from files only. Its prompt is only: `PLUGIN`, `W`, the step, the scope, the input paths (step 6: case
+read the inputs the agent will read: check they exist (one `ls`). What the user answered (BA answers, diff
+decisions, conflicts) goes, in their words, as rows of `W/answers.md` (`$PLUGIN/templates/answers.md`; one Write, or
+one Edit appending the rows) — never edit spec-sources.md / diff.md yourself, the agent copies the rows there. Only
+the approval goes in the `cases.md` header. The agent reads answers from files only. Its prompt is only: `PLUGIN`, `W`, the step, the scope, the input paths (step 6: case
 IDs, test file, out dir); no answers, no rulings on what counts as a source, no file contents. Do not read its
 output files again except to show the user what this flow says to show, and do not fix them yourself: gaps from
 `cases-summary.mjs`, lint errors or failing dry runs go back to the same agent (SendMessage, else a new writer with
@@ -49,7 +53,8 @@ run `node $PLUGIN/core/config.mjs --check` in the repo. Exit 1 → for each name
 question (the description after `—`; "where is it on your machine?"), then
 `node $PLUGIN/core/config.mjs --set NAME=<answer>` and check again. If it says the local file is committed,
 tell the user the `git rm --cached` line; do not run it yourself. Read stacks, dirs and environments from
-`node $PLUGIN/core/config.mjs --print` (the resolved config), not from the raw file.
+`node $PLUGIN/core/config.mjs --print` (the resolved config), not from the raw file — no `cat` of
+`test.config.json` / `package.json`, no `ls -la` of the repo.
 
 Spec locations (ask, do not guess): ask the user where the documents live (repo folders, shared drive,
 SVN/Git checkout of the design docs). Run `node $PLUGIN/core/scan-specs.mjs <those folders>` and show the
@@ -158,17 +163,25 @@ Follow `$PLUGIN/references/stacks/<stack>.md` and `$PLUGIN/references/review-tes
 - `manual` cases: no test code. Run `node $PLUGIN/core/manual-runbook.mjs W/cases.md --out W/manual/ [--lang vi]` and
   give the xlsx to the person running them (never regenerate over a file they may have typed into: the script
   refuses to overwrite). When they send it back, it is an input of step 7 (`--manual`).
-- Tests already exist for the scope (dev UT, TDD tooling) → run the review above first; a test with Decision
-  `keep` / `tag <ID>` covers its case, so write new tests only for the cases still without one.
+- Tests already exist for the scope (dev UT, TDD tooling) → the review above is writer work: one writer (the
+  ut group's, if split) runs the scan and fills Case / Matches Expected first. A test with Decision `keep` /
+  `tag <ID>` (the user's, from `answers.md` rows `T<n>`) covers its case; with no decision yet, write new tests
+  for every case and show the user `existing-tests.md` errors / `no` rows at the end.
+- Each test file must be run by a `stacks[]` entry of `test.config.json` (add or narrow its `run`, e.g. the jest
+  `--testMatch` for `W/ut/`; `"server": false` for stacks without the app server): `node $PLUGIN/core/run.mjs
+  <scope> --dry` lists every test file of the scope.
 - Self-review the tests against `$PLUGIN/references/review-tests.md` before the real run, and run
   `node $PLUGIN/core/lint-tests.mjs <test dirs>` (fixed waits, hard-coded secrets) until it passes.
 - Parallel work: split the approved cases by area/flow group and **suggest** a number of parallel `vuong-test:writer` agents
-  to the user before starting — about 1 agent per 15–25 E2E cases (1 per 40–60 UT cases), max 5. Show the
+  to the user before starting — about 1 agent per 15–25 E2E cases (1 per 40–60 UT cases), max 5; groups of about
+  equal weight (1 E2E case ≈ 2 API / mount ≈ 3 UT): the E2E cases are split first, never one group with all the
+  E2E cases and another layer on top while a second agent gets only UT. Show the
   split and start only after the user agrees. Fixed template, one row per agent `<group>`:
   | Agent | Cases | Test file (own) | Out dir (own) | Notes (own) | Data |
   |---|---|---|---|---|---|
   | `<group>` | IDs | `W/e2e-<group>.mjs` / `W/api-<group>.mjs` | `W/e2e-<group>/` / `W/api-<group>/` (`out`) | `W/run-notes-<group>.md` | data-plan rows it uses |
-  Shared helpers are written and dry-run BEFORE the parallel run and are read-only during it; a needed
+  Agents write in parallel; their dry runs (`run.mjs --only <stack>`) queue on run.mjs's lock, one fresh server
+  at a time. Shared helpers are written and dry-run BEFORE the parallel run and are read-only during it; a needed
   helper change goes into the agent's run notes and is made afterwards. Only ONE agent — the one owning all
   Writes = Y cases — may write data and append to `W/data-created.md`; the others run read-only (write guard on).
 - Accounts: never ask the user to create the account file by hand. Run
@@ -182,7 +195,13 @@ Follow `$PLUGIN/references/stacks/<stack>.md` and `$PLUGIN/references/review-tes
 
 ## 7. Run and report → `W/report/*.html`
 
-Run the stack command(s), then:
+Run `node $PLUGIN/core/run.mjs <scope>` — one command: every `stacks[]` entry of `test.config.json` (`--only` /
+`--skip` ids), the server from `environments.<env>.server` started fresh and stopped, then collect + report; it
+prints the "Cần đọc tiếp" block. Do not write your own run script or build the collect arguments by hand; a stack
+that is missing or wrong for this scope is fixed in `test.config.json` (`--dry` shows the plan). A script the user
+asks for that reruns everything is a wrapper around this command; it reads `W/results.json` ›
+`cases[]` (`id`, `layer`, `status`: passed · failed · blocked · notrun) — no need to read the plugin source. What `run.mjs` does, by hand (no config entry):
+run the stack command(s), then
 `node $PLUGIN/core/collect.mjs --cases W/cases.md --out W/results.json <inputs>` and
 `node $PLUGIN/core/render-html.mjs W/results.json --out W/report/` (→ `W/report/index.html`, replaced each run; `--keep`
 also keeps a timestamped copy in `report/history/` when the user wants to compare runs); show the "Cần đọc tiếp"

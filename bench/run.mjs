@@ -127,7 +127,11 @@ export async function grade(c, ws, events) {
   const mod = await import(pathToFileURL(c.gradeFile).href);
   const key = c.keyFile ? JSON.parse(readFileSync(c.keyFile, 'utf8')) : null;
   try {
-    return await mod.default({ ws, caseDir: c.dir, key, events, sh: (cmd, o) => sh(cmd, ws, o), read: (r) => read(ws, r), exists: (r) => exists(ws, r) });
+    const checks = await mod.default({ ws, caseDir: c.dir, key, events, sh: (cmd, o) => sh(cmd, ws, o), read: (r) => read(ws, r), exists: (r) => exists(ws, r) });
+    // suite-level process checks from the trace (info only): suites/<suite>/process.mjs
+    const proc = join(c.suiteDir, 'process.mjs');
+    if (existsSync(proc)) checks.push(...(await import(pathToFileURL(proc).href)).default(events));
+    return checks;
   } catch (e) {
     return [{ name: 'grader crashed', score: 0, pass: false, detail: String(e?.stack || e).slice(0, 800), by: 'code' }];
   }

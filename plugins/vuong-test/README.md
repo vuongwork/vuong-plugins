@@ -94,7 +94,7 @@ The HTML report is regenerated from committed files plus a run; share it through
 ```
 skills/vuong-test/SKILL.md   the flow (entry point)
 references/                  process details: sources, flows, test self-review, config, stacks/*
-templates/                   cases.md, data-plan.md, data-created.md, diff.md, test.config.json
+templates/                   answers.md, cases.md, data-plan.md, data-created.md, diff.md, test.config.json
 core/                        lint, collect, render, cleanup-list (Node, no deps)
 kit/                         E2E helper
 test/selftest.mjs            self-test of every script (run before push)

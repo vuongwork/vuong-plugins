@@ -15,7 +15,8 @@
       "dir": ".",
       "run": "npx jest --json --outputFile=test-work/_out/ut-jest.json --coverage --coverageReporters=json",
       "results": { "jest-json": "test-work/_out/ut-jest.json" },
-      "coverage": "coverage/coverage-final.json"
+      "coverage": "coverage/coverage-final.json",
+      "server": false
     },
     {
       "id": "api",
@@ -33,7 +34,8 @@
     }
   ],
   "environments": {
-    "local": { "baseUrl": "http://localhost:3210", "apiBase": "http://localhost:3210/api", "writesAllowed": true, "writable": true }
+    "local": { "baseUrl": "http://localhost:3210", "apiBase": "http://localhost:3210/api", "writesAllowed": true, "writable": true,
+      "server": { "start": "npm start", "ready": "http://localhost:3210/", "env": { "LEAVE_TODAY": "2026-11-25" } } }
   },
   "accounts": { "env": [] },
   "dataRules": "Local server, data in memory: restart the server (npm start) to reset. User is sent as header X-User (E001 owns the sample leaves, E002 owns LV-20261124-003).",

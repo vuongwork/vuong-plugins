@@ -224,6 +224,8 @@ let results; // used by render-html
   check("--coverage istanbul (50% statements)", tot[0]?.format === "istanbul" && Math.round(tot[0].statements) === 50, JSON.stringify(tot));
   check("--coverage jacoco (75% instructions, lines 100%)", tot[1]?.format === "jacoco" && tot[1].statements === 75 && tot[1].lines === 100 && tot[1].branches === null, JSON.stringify(tot));
   check("not covered table parsed", results.notCovered?.[0]?.ref === "E9");
+  const cs = (id) => results.cases.find((c) => c.id === id);
+  check("results.json cases carry status (no tests array)", cs("F-001")?.status === "failed" && cs("P-001")?.status === "passed" && !("tests" in (cs("F-001") || {})), JSON.stringify(results.cases?.slice(0, 2)));
 
   const out2 = path.join(T, "W/results2.json");
   const e2eA = path.join(T, "W/e2e-a/e2e-results.json");
@@ -968,6 +970,10 @@ section("next / readable rows");
   check("next: approve — important rows, cases waiting on a question (with its text), data, open diff", /xem trước \(ưu tiên cao \/ ghi dữ liệu\): A-001/.test(r.out) && /chờ Q1 "limit\?": A-002/.test(r.out) && /N2 admin account — waiting, case A-001/.test(r.out) && /D1 Save: spec "x" ↔ code "y"/.test(r.out) && !/Q2/.test(r.out), r.out);
   check("next: paths relative to where it runs, no extra command to run", /^\s+\d\. test-work\/demo\/cases\.md$/m.test(r.out) && !/cases-summary\.mjs/.test(r.out), r.out);
   check("next: writes no file", readdirSync(path.join(P, "test-work/demo")).sort().join() === "cases.md,data-plan.md,diff.md,spec-sources.md");
+  w("wi/test-work/demo/answers.md", ["# Answers", "", table(["Ref", "Answer", "By", "Date"], [["Q1", "max 200", "BA An", "2026-11-26"], ["D1", "fix code", "Lan", "2026-11-26"]])].join("\n"));
+  r = run("core/next.mjs", ["demo"], { cwd: P });
+  check("next: answers.md rows count as answered before the writer copies them", !/chờ Q1/.test(r.out) && !/D1 Save: spec/.test(r.out) && /DUYỆT CASE/.test(r.out), r.out);
+  rmSync(path.join(P, "test-work/demo/answers.md"));
   w("wi/test-work/demo/cases.md", casesMd(rows));
   r = run("core/next.mjs", ["demo"], { cwd: P });
   check("next: approved, no run → write / run stage with missing data", /VIẾT \/ CHẠY TEST/.test(r.out) && /còn thiếu: N2 \(case A-001\)/.test(r.out), r.out);
@@ -1113,6 +1119,69 @@ section("help");
   const f = run("core/help.mjs", ["api"]);
   check("help <word> filters", /api-kit/.test(f.out) && !/read-spec/.test(f.out), f.out);
   check("commands/help.md runs core/help.mjs", /core\/help\.mjs/.test(readFileSync(path.join(PLUGIN, "commands/help.md"), "utf8")));
+}
+
+// ── run (step 7 in one command) ───────────────────────────────────────────────
+section("run");
+{
+  const R = path.join(T, "runrepo");
+  const port = 41000 + Math.floor(Math.random() * 2000);
+  const url = `http://127.0.0.1:${port}/`;
+  w("runrepo/test-work/S1/cases.md", casesMd([
+    ["S1-U01", "ut", "F1", "call f", "returns 1", "spec.xlsx › A1", "-", "N"],
+    ["S1-A01", "api", "F1", "GET /", "200", "spec.xlsx › A2", "-", "N"],
+  ]));
+  w("runrepo/test-work/S1/diff.md", "# Diff\n");
+  w("runrepo/srv.js", `require("http").createServer((q, s) => s.end("ok")).listen(${port});\n`);
+  const jestOut = (id, status) => ({ testResults: [{ name: "x.test.js", assertionResults: [{ title: `[${id}] t`, fullName: `[${id}] t`, status, ancestorTitles: [] }] }] });
+  w("runrepo/ut.js", `require("fs").mkdirSync("out", { recursive: true }); require("fs").writeFileSync("out/ut-" + process.argv[2] + ".json", ${JSON.stringify(JSON.stringify(jestOut("S1-U01", "passed")))}); process.exit(1);\n`);
+  // passes only while the server answers: proves it was started before this stack
+  w("runrepo/api.js", `fetch(${JSON.stringify(url)}).then(() => { require("fs").mkdirSync("out", { recursive: true }); require("fs").writeFileSync("out/api.json", ${JSON.stringify(JSON.stringify(jestOut("S1-A01", "passed")))}); }, () => process.exit(3));\n`);
+  j("runrepo/test.config.json", {
+    workDir: "test-work",
+    stacks: [
+      { id: "ut", stack: "jest", dir: ".", run: "node ut.js <scope>", results: { "jest-json": "out/ut-<scope>.json" }, server: false },
+      { id: "api", stack: "jest", dir: ".", run: "node api.js", results: { "jest-json": "out/api.json" } },
+      { id: "none", stack: "jest", dir: ".", run: "node -e 0", results: { "jest-json": "out/none.json" } },
+    ],
+    environments: { local: { baseUrl: url, server: { start: "node srv.js", ready: url } } },
+  });
+  const d = run("core/run.mjs", ["S1", "--dry"], { cwd: R });
+  check("run --dry: plan with <scope> replaced, server marked, nothing run", d.code === 0 && /ut: \(\.\) node ut\.js S1\b/.test(d.out) && /api: \(\.\) node api\.js \[server\]/.test(d.out) && /--jest-json out[\\/]ut-S1\.json/.test(d.out) && !existsSync(path.join(R, "out")), d.all);
+  w("runrepo/out/none.json", JSON.stringify(jestOut("S1-U01", "failed"))); // stale: must not be collected
+  const r = run("core/run.mjs", ["S1"], { cwd: R });
+  const res = existsSync(path.join(R, "test-work/S1/results.json")) ? readJson(path.join(R, "test-work/S1/results.json")) : { tests: [] };
+  const st = (id) => res.tests.filter((t) => t.ids.includes(id)).map((t) => t.status).join(",");
+  check("run: stacks run, server up for api only, failing exit is a result", st("S1-U01") === "passed" && st("S1-A01") === "passed", r.all);
+  check("run: stale results deleted; stack without results → exit 1, still reported", r.code === 1 && /none: exit 0 .*NO RESULTS FILE/.test(r.out) && existsSync(path.join(R, "test-work/S1/report/index.html")), r.all);
+  const after = await fetch(url).then(() => true, () => false);
+  check("run: server stopped at the end", !after);
+  const { spawn } = await import("node:child_process");
+  const other = spawn(process.execPath, [path.join(R, "srv.js")], { stdio: "ignore" });
+  for (let i = 0; i < 40 && !(await fetch(url).then(() => true, () => false)); i++) await new Promise((ok) => setTimeout(ok, 100));
+  const busy = run("core/run.mjs", ["S1", "--only", "api"], { cwd: R });
+  other.kill();
+  check("run: refuses when something already answers on ready (data not known clean)", busy.code === 1 && /already answers/.test(busy.all), busy.all);
+  check("run: unknown argument → exit 2", run("core/run.mjs", ["S1", "--bogus"], { cwd: R }).code === 2);
+  const LOCK = path.join(R, "test-work/_out/run.lock");
+  check("run: lock released at the end", !existsSync(LOCK));
+  w("runrepo/test-work/_out/run.lock", "999999 S1 old"); // dead owner
+  const stale = run("core/run.mjs", ["S1", "--only", "api"], { cwd: R });
+  check("run: a dead owner's lock is taken over", stale.code === 0 && !/waiting/.test(stale.out) && !existsSync(LOCK), stale.all);
+  const cfg2 = readJson(path.join(R, "test.config.json"));
+  cfg2.environments.local.server.lockWaitSec = 1;
+  j("runrepo/test.config.wait.json", cfg2);
+  w("runrepo/test-work/_out/run.lock", `${process.pid} S1 live`); // live owner: this selftest
+  const wait = run("core/run.mjs", ["S1", "--only", "api", "--config", "test.config.wait.json"], { cwd: R });
+  check("run: a live owner's lock → waits, then gives up (lock kept)", wait.code === 1 && /waiting for it to finish/.test(wait.out) && /waited/.test(wait.all) && existsSync(LOCK), wait.all);
+  rmSync(LOCK);
+  const utOnly = run("core/run.mjs", ["S1", "--only", "ut"], { cwd: R });
+  check("run: stacks without the server take no lock", utOnly.code === 0 && !existsSync(LOCK), utOnly.all);
+  j("runrepo/test.config.env.json", { workDir: "test-work", stacks: [{ id: "envs", dir: ".", server: false, run: `node -e "require('fs').mkdirSync('out',{recursive:true});require('fs').writeFileSync('out/env.txt',[process.env.BASE_URL,process.env.API_BASE,process.env.VT_ENV,process.env.VT_SCOPE].join('|'))"` }], environments: { local: { baseUrl: url, apiBase: "http://api:1/x" } } });
+  run("core/run.mjs", ["S1", "--config", "test.config.env.json", "--no-report"], { cwd: R });
+  const envTxt = existsSync(path.join(R, "out/env.txt")) ? readFileSync(path.join(R, "out/env.txt"), "utf8") : "";
+  check("run: stacks get BASE_URL / API_BASE / VT_ENV / VT_SCOPE from the environment", envTxt === `${url}|http://api:1/x|local|S1`, envTxt);
+  check("run --help: usage, exit 0", (() => { const h = run("core/run.mjs", ["--help"], { cwd: R }); return h.code === 0 && /BASE_URL/.test(h.out); })());
 }
 
 // ── node --check every script ─────────────────────────────────────────────────

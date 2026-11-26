@@ -162,7 +162,8 @@ const results = {
     approvedDate: spec.approvedDate,
     flows: spec.flows,
   },
-  cases: spec.cases,
+  // status per case (passed / failed / blocked / notrun), so a script reading results.json needs no other logic
+  cases: casesWithStatus({ cases: spec.cases, tests }).map(({ tests: _t, ...c }) => c),
   notCovered: spec.notCovered,
   diff: opt.diff && existsSync(opt.diff) ? parseDiff(opt.diff) : [],
   tests,

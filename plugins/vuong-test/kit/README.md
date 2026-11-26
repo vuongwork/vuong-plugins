@@ -3,11 +3,15 @@
 Both kits: cases run in order, one result record per case, results in the format `core/collect.mjs` reads.
 A case passes unless its function throws. Status: `passed` · `failed` (throw, `expect`, `verify`) ·
 `blocked` (`blocked(msg)`, or a writes:true case outside a writable environment). Returned string = note in the report.
+Run through `core/run.mjs` (`--help`): it sets `BASE_URL` / `API_BASE` from `environments.<env>` and starts the server.
+Import path: on Windows an absolute path must be a `file:///` URL (`"file:///E:/…/kit/e2e-kit.mjs"`); a bare
+`E:/…` fails with ERR_UNSUPPORTED_ESM_URL_SCHEME.
 
 ## E2E — `kit/e2e-kit.mjs` (Playwright resolved from the project: cwd or `from`)
 
 ```js
 import { createRun } from "<plugin>/kit/e2e-kit.mjs";
+const BASE = process.env.BASE_URL;                 // set by core/run.mjs from test.config.json (also API_BASE, VT_ENV, VT_SCOPE)
 const run = await createRun({ out: "W/e2e", viewport: { width: 360, height: 800 } });
 await run.tc("L01-E01", "new form shows today", async ({ page, ctx, expect, verify, blocked, shot, settle }) => {
   await page.goto(BASE + "/?mode=new");

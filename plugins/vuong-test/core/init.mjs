@@ -32,7 +32,7 @@ else {
 }
 mkdirSync(path.join(root, "test-work"), { recursive: true });
 const gi = path.join(root, ".gitignore");
-// committed: spec-sources, flows, cases, diff, data-plan, data-created, run-notes, test code.
+// committed: answers, spec-sources, flows, cases, diff, data-plan, data-created, run-notes, test code.
 // not committed: reports, screenshots, raw results, caches.
 const IGNORE = [
   "test.config.local.json",

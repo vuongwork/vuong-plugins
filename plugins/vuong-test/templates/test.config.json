@@ -106,7 +106,8 @@
       "baseUrl": "http://localhost:3000",
       "writesAllowed": true,
       "writable": true,
-      "apiBase": "http://localhost:8080/api"
+      "apiBase": "http://localhost:8080/api",
+      "server": { "$comment": "optional: core/run.mjs starts this before the stacks that need it and stops it after; fresh = per-stack | once | none", "start": "npm start", "ready": "http://localhost:3000/", "fresh": "per-stack" }
     },
     "test": {
       "baseUrl": "<url>",

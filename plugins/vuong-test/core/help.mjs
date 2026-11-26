@@ -36,6 +36,7 @@ const GROUPS = [
     [`node ${P}/core/review-tests.mjs <dir>... [--cases W/cases.md] [--out W/existing-tests.md]`, "Soát test có sẵn (JS/TS, Java): không assert, assert yếu, chỉ check mock, tautology, mock chính thứ đang test, catch nuốt lỗi, skip/only; case nào chưa có test gắn tag"],
   ]],
   ["Chạy & report (bước 7–8)", [
+    [`node ${P}/core/run.mjs <scope> [--only ut,api] [--env local] [--dry]`, "Bước 7 một lệnh: chạy mọi stack trong test.config.json (tự bật/tắt server nếu environments.<env>.server có), rồi collect + report HTML"],
     [`node ${P}/core/collect.mjs --cases W/cases.md --out W/results.json ...`, "Gom kết quả: --jest-json/--jest-dir, --junit, --e2e-dir, --api-dir, --manual <runbook đã điền>, --coverage, --diff, --data, --notes-dir; ca có Pre bị Fail → BLOCKED"],
     ["W/triage.md (templates/triage.md)", "Ghi kết luận của user cho test fail: app-correct / test-wrong / bug / spec-unclear; report hiện cạnh lỗi"],
     [`node ${P}/core/render-html.mjs W/results.json --out W/report/ [--keep]`, "Report HTML → W/report/index.html (ghi đè mỗi lần; --keep giữ bản có giờ trong history/): PASS/FAIL/BLOCKED/NOT RUN theo case, spec≠code, data đã tạo, API calls, coverage"],

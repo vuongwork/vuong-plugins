@@ -13,6 +13,7 @@ import { varsPlan, varsPayload, varNames } from '../core/figma-vars.mjs';
 import { encodeScreen, planBatches, newTables } from '../core/figma-encode.mjs';
 import { cmpEncode } from '../core/figma-cmp.mjs';
 import { ordOf, decode } from '../core/figma-check.mjs';
+import { cmpCheckOne } from '../core/figma-cmp-check.mjs';
 import { makeFakeFigma, DEFAULT_FONTS } from './fake-figma.mjs';
 
 const AsyncFunction = (async () => {}).constructor;
@@ -156,6 +157,9 @@ test('state variants: the row (a button) gets pressed / disabled / loading / foc
   const set = cp.children.find((c) => c.name === 'row');
   assert.equal(set.type, 'COMPONENT_SET');
   assert.deepEqual(set.children.map((c) => c.name), ['state=default', 'state=pressed', 'state=disabled', 'state=loading', 'state=focus']);
+  // a state overlay is absolute in its variant (a component root is auto layout too): in flow it grows a HUG variant
+  const ov = all(cp).filter((n) => /~(pressed|disabled|loading|focus)$/.test(n.getSharedPluginData('vuongdesign', 'id')));
+  assert.ok(ov.length >= 3 && ov.every((n) => n.layoutPositioning === 'ABSOLUTE'), JSON.stringify(ov.map((n) => [n.getSharedPluginData('vuongdesign', 'id'), n.layoutPositioning])));
   // the card's rows and the screens' rows are instances of state=default
   const inst = all(page(fig, 'Screens')).filter((n) => n.type === 'INSTANCE' && n.mainComponent && n.mainComponent.parent === set);
   assert.ok(inst.length >= 2 && inst.every((n) => n.mainComponent.name === 'state=default'));
@@ -213,13 +217,15 @@ test('Planora with approved states: 4 btn states, chip / ck / fab / tog disabled
     effectStyles: (plan.effectStyles || []).map((x) => x.name), fonts: [...DEFAULT_FONTS, 'Be Vietnam Pro|Light'] });
   await run(runtimeInstallCode(), fig);
   await run(runtimeCmpInstallCode(), fig);
-  let nodes = 0;
+  let nodes = 0, propTexts = 0;
   for (const b of [...cb, ...sb]) {
     const r = decode(await run(b.code, fig), b.data);
     if (r.cm) assert.deepEqual(r.cm.errors, [], `cmp ${b.n}`);
     for (const s of r.screens) {
       assert.deepEqual(s.errors, [], s.screen);
-      for (const [o, x] of Object.entries(s.N)) assert.equal(x.d, undefined, `${s.screen} ${o}: ${JSON.stringify(x.d)}`);
+      // a variant's property texts show the set's default (real Figma): cmpCheckOne allows exactly those
+      if (s.screen.startsWith('cmp:')) { const c = cmpCheckOne(s, b.data, s.screen.slice(4)); assert.deepEqual(c.diffs, [], s.screen); propTexts += c.propertyTexts.length; }
+      else for (const [o, x] of Object.entries(s.N)) assert.equal(x.d, undefined, `${s.screen} ${o}: ${JSON.stringify(x.d)}`);
       nodes += Object.keys(s.N).length;
     }
   }

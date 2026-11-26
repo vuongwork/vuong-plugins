@@ -91,6 +91,8 @@ export const CMP_PATCHES = [
   ['for(const sc of D.screens){S=', 1],
   ["if(PR){pt('total',T0)", "await PO();if(PR){pt('total',T0)"],
   ['root.x=x;root.y=y;', 'root.x=x;root.y=y;if(XLP[0]){const q=XLP[0];XLP[0]=0;await XD(q)}'],
+  // a component root is auto layout too: its late children (state overlays, badges) go ABSOLUTE in it
+  ["isAL=n=>!!n&&n.type=='FRAME'&&", "isAL=n=>!!n&&(n.type=='FRAME'||n.type=='COMPONENT')&&"],
   ['const d=read(n,e,ov)', 'const d=await XK(n,e,read(n,e,ov))'],
 ];
 export const runtimeCmpInstallCode = () => `const B=${JSON.stringify(RTC_BODY)};

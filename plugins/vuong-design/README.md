@@ -321,7 +321,7 @@ Each cell is an `<iframe srcdoc>` that holds the proxy page (`proxy.mjs`) of one
 **Batches, in send order:** vars, `runtime`, `runtime-cmp`, `cmp-NN`, then the screen batches.
 
 - `runtime-cmp` installs `core/figma-runtime-cmp.js` once, like the runtime (≤ 16 384 B as installed; 8.5 KB now).
-- A batch that uses components gets a loader that inserts it into the screen runtime and patches three calls there (`CMP_PATCHES`). The screen runtime itself is unchanged.
+- A batch that uses components gets a loader that inserts it into the screen runtime and patches a few calls there (`CMP_PATCHES`; `isAL` also counts a component root as auto layout, so its state overlays and badges go absolute). The screen runtime itself is unchanged.
 - `cmp-NN` batches build, in this order: the icon components (`icon/<ref>`, one per value an INSTANCE_SWAP property can take), then the components, each after the components its templates hold. A component's variants never split between batches.
 
 **A component** is its template built as a screen frame, then turned into a component.
@@ -360,8 +360,8 @@ Each cell is an `<iframe srcdoc>` that holds the proxy page (`proxy.mjs`) of one
 
 - A variant has no source page, so it is checked against its encoding. It passes when:
   - every node is read back;
-  - no node differs from its encoding;
-  - every FIXED size, and a frame's HUG size, is within 0.5 px (texts 1 px);
+  - no node differs from its encoding, except a text bound to a TEXT property: Figma shows the set's one default in every variant (`propertyTexts`), and the HUG sizes around such a text are not compared;
+  - every FIXED size is within 0.5 px, a frame's HUG size within 1 px (Figma rounds the texts it holds; texts 1 px);
   - the build had no errors.
 - A HUG text gets its size from Figma's font metrics, so it is checked on the screens, against the source.
 - `skippedEdited`: kept and not checked here. It passes, and the log lists the screens that use it.

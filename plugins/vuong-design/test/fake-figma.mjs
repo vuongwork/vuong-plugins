@@ -528,6 +528,8 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
         if (f === 'mainComponent' && this.type !== 'INSTANCE') throw new Error('mainComponent reference needs an instance');
       }
       this._cpr = { ...v };
+      // real Figma (2026-11-26): a text bound to a TEXT property shows the property's default (one per set) in every variant
+      for (const [f, k] of Object.entries(v || {})) if (f === 'characters' && defs[k].type === 'TEXT') this.characters = defs[k].defaultValue;
     },
     configurable: true,
   });

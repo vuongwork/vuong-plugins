@@ -9,6 +9,7 @@ import { encodeScreen, planBatches, newTables, batchData } from '../core/figma-e
 import { cmpEncode } from '../core/figma-cmp.mjs';
 import { loaderCode, runtimeInstallCode, runtimeCmpInstallCode, CMP_PATCHES } from '../core/figma.mjs';
 import { ordOf, decode } from '../core/figma-check.mjs';
+import { cmpCheckOne } from '../core/figma-cmp-check.mjs';
 import { makeFakeFigma, DEFAULT_FONTS } from './fake-figma.mjs';
 
 const RUNTIME = readFileSync(new URL('../core/figma-runtime.js', import.meta.url), 'utf8');
@@ -394,7 +395,7 @@ test('Planora with components: batches under 50 000 bytes, everything builds on 
     effectStyles: (plan.effectStyles || []).map((x) => x.name), fonts: [...DEFAULT_FONTS, 'Be Vietnam Pro|Light'] });
   await run(runtimeInstallCode(), fig);
   await run(runtimeCmpInstallCode(), fig);
-  let inst = 0, nodes = 0;
+  let inst = 0, nodes = 0, propTexts = 0;
   for (const b of [...cb, ...sb]) {
     const r = decode(await run(b.code, fig), b.data);
     if (r.cm) assert.deepEqual(r.cm.errors, [], `cmp ${b.n}`);
@@ -402,10 +403,13 @@ test('Planora with components: batches under 50 000 bytes, everything builds on 
       assert.deepEqual(s.errors, [], s.screen);
       const ids = ordOf(b.data.screens.find((x) => x.screen === s.screen).T);
       for (const o of ids) assert.ok(s.N[o], `${s.screen} ${o}`);
-      for (const [o, x] of Object.entries(s.N)) assert.equal(x.d, undefined, `${s.screen} ${o}: ${JSON.stringify(x.d)}`);
+      // a variant's property texts show the set's default (real Figma): cmpCheckOne allows exactly those
+      if (s.screen.startsWith('cmp:')) { const c = cmpCheckOne(s, b.data, s.screen.slice(4)); assert.deepEqual(c.diffs, [], s.screen); propTexts += c.propertyTexts.length; }
+      else for (const [o, x] of Object.entries(s.N)) assert.equal(x.d, undefined, `${s.screen} ${o}: ${JSON.stringify(x.d)}`);
       nodes += ids.length;
     }
   }
+  assert.ok(propTexts >= 2, `variants whose property text shows the default: ${propTexts}`);
   const w = (n) => { if (n.type === 'INSTANCE') inst++; (n.children || []).forEach(w); };
   w(page(fig, 'Screens'));
   t.diagnostic(`components: ${cb.length} batches (${cb.map((b) => b.bytes).join(' / ')} B), screens: ${sb.length} batches (${sb.map((b) => b.bytes).join(' / ')} B); ${inst} instance layers on the screens, ${nodes} nodes read back`);

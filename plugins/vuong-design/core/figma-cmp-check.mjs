@@ -7,9 +7,10 @@
 // cmpVariants(st, F, screenData) -> [CmpReport] one per st.components entry (key = the K name), sorted by key:
 //   { key, name (component), status (done | skippedEdited | failed | pending), batch, root, usedBy: [screen ids],
 //     readback: { nodes, missing } | null, diffs: [{ o, d }], sizes: [{ o, A: [w, h], e: [w, h] }], errors, pass }
-//   done: pass when every node is read back, no node differs from its encoding (d, the main check mc included), every
-//   FIXED size (and a frame's HUG size) is within TOL_FRAME (texts TOL_TEXT) of the encoded one, and the build had no
-//   errors.
+//   done: pass when every node is read back, no node differs from its encoding (d, the main check mc included; a text
+//   bound to a TEXT property reads back as the property's default: propertyTexts), every FIXED size is within TOL_FRAME
+//   and a frame's HUG size within TOL_TEXT (texts TOL_TEXT) of the encoded one (not around a property text that is not
+//   the default), and the build had no errors.
 //   skippedEdited: kept as the user edited it, not checked here (pass; its screens check its instances); failed /
 //   pending: fails, and every instance of it on a screen is unchecked (blockInstances).
 //   screenData: { [screen id]: D } (the screen batches' data), for usedBy.
@@ -41,20 +42,29 @@ export function cmpCheckOne(s, D, key) {
   const ord = ordOf(sc.T), N = s.N || {};
   const enc = new Map();
   walkT(sc.T, (e) => enc.set(e.o, e));
-  const diffs = [], sizes = [];
+  // a text bound to a TEXT property shows the property's default in every variant (Figma has one default per set, real
+  // Figma 2026-11-26): it reads back as that default, and the HUG sizes around it follow it, not the encoded text
+  const P = (sc.cm && sc.cm.p) || {}, Bd = (sc.cm && sc.cm.b) || {}, bound = new Map();
+  for (const [k, [ty, def]] of Object.entries(P)) if (ty === 'TEXT' && Bd[k] !== undefined) bound.set(Bd[k] ? `${sc.T.o}.${Bd[k]}` : sc.T.o, def);
+  const grown = new Set();
+  const up = (e) => { let g = false; for (const k of e.k || []) g = up(k) || g; if (bound.has(e.o) && e.tx !== bound.get(e.o)) g = true; if (g) grown.add(e.o); return g; };
+  up(sc.T);
+  const diffs = [], sizes = [], propertyTexts = [];
   for (const [o, x] of Object.entries(N)) {
-    if (x.d) diffs.push({ o, d: x.d });
+    if (x.d && bound.has(o) && x.d.text === bound.get(o) && Object.keys(x.d).every((k) => k === 'text' || k === 'runs')) propertyTexts.push(o);
+    else if (x.d) diffs.push({ o, d: x.d });
     const e = enc.get(o);
     if (!e || o.endsWith('#stroke') || !x.A) continue;
-    const tol = e.t === 'T' ? TOL_TEXT : TOL_FRAME, s2 = e.s || 'XX';
+    const s2 = e.s || 'XX';
     // FILL follows the instance's parent: only FIXED (X) and HUG (H) sizes are the component's own. A HUG text's size
     // comes from the font's metrics in Figma: it is checked on the screens, against the source, with the model's
-    // tolerances (the components page has no source)
-    const own = (i) => s2[i] === 'X' || (s2[i] === 'H' && e.t !== 'T');
-    const off = [0, 1].some((i) => own(i) && e[i ? 'h' : 'w'] != null && Math.abs(x.A[2 + i] - e[i ? 'h' : 'w']) > tol);
+    // tolerances (the components page has no source). A HUG frame takes TOL_TEXT: Figma rounds the texts it holds.
+    const own = (i) => s2[i] === 'X' || (s2[i] === 'H' && e.t !== 'T' && !grown.has(o));
+    const tol = (i) => (e.t === 'T' || s2[i] === 'H' ? TOL_TEXT : TOL_FRAME);
+    const off = [0, 1].some((i) => own(i) && e[i ? 'h' : 'w'] != null && Math.abs(x.A[2 + i] - e[i ? 'h' : 'w']) > tol(i));
     if (off) sizes.push({ o, A: [r2(x.A[2]), r2(x.A[3])], e: [e.w, e.h] });
   }
-  return { readback: { nodes: ord.length, missing: ord.filter((o) => !N[o]).length }, diffs, sizes };
+  return { readback: { nodes: ord.length, missing: ord.filter((o) => !N[o]).length }, diffs, sizes, propertyTexts };
 }
 
 export function cmpVariants(st, F, screenData = {}, read) {

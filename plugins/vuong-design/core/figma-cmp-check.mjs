@@ -49,6 +49,8 @@ export function cmpCheckOne(s, D, key) {
   const grown = new Set();
   const up = (e) => { let g = false; for (const k of e.k || []) g = up(k) || g; if (bound.has(e.o) && e.tx !== bound.get(e.o)) g = true; if (g) grown.add(e.o); return g; };
   up(sc.T);
+  // a state overlay (~pressed, ~disabled) is absolute and stretched to its parent: it grows with a grown parent
+  for (const o of enc.keys()) if (o.split('.').pop().startsWith('~') && grown.has(o.slice(0, o.lastIndexOf('.')))) grown.add(o);
   const diffs = [], sizes = [], propertyTexts = [];
   for (const [o, x] of Object.entries(N)) {
     if (x.d && bound.has(o) && x.d.text === bound.get(o) && Object.keys(x.d).every((k) => k === 'text' || k === 'runs')) propertyTexts.push(o);
@@ -59,7 +61,7 @@ export function cmpCheckOne(s, D, key) {
     // FILL follows the instance's parent: only FIXED (X) and HUG (H) sizes are the component's own. A HUG text's size
     // comes from the font's metrics in Figma: it is checked on the screens, against the source, with the model's
     // tolerances (the components page has no source). A HUG frame takes TOL_TEXT: Figma rounds the texts it holds.
-    const own = (i) => s2[i] === 'X' || (s2[i] === 'H' && e.t !== 'T' && !grown.has(o));
+    const own = (i) => !(o.split('.').pop().startsWith('~') && grown.has(o)) && (s2[i] === 'X' || (s2[i] === 'H' && e.t !== 'T' && !grown.has(o)));
     const tol = (i) => (e.t === 'T' || s2[i] === 'H' ? TOL_TEXT : TOL_FRAME);
     const off = [0, 1].some((i) => own(i) && e[i ? 'h' : 'w'] != null && Math.abs(x.A[2 + i] - e[i ? 'h' : 'w']) > tol(i));
     if (off) sizes.push({ o, A: [r2(x.A[2]), r2(x.A[3])], e: [e.w, e.h] });

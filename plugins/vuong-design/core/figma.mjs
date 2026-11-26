@@ -786,6 +786,13 @@ async function check(argv, log, deps) {
     const { screenView, renderReportHtml } = await import('./report-html.mjs');
     for (const x of inp.screens) {
       const sc = capById.get(x.id);
+      // a screen with no readback (never sent, failed): fails without the local model, proxy and report view (about 6 s
+      // each on Planora)
+      if (!x.sres || !x.sres.nodes) {
+        screensOut.push({ summary: { file: inp.ir.file, screen: x.id, pass: false, notBuilt: x.state.status }, notBuilt: true, figma: { status: x.state.status, batch: x.state.batch || null } });
+        log(`  ${x.id}: fail (no readback: ${x.state.status}; not checked)`);
+        continue;
+      }
       const { inferred, modelled, target, normOn, layout, modP, normP, normLayout, normLayoutError } = await localScreen(browser, sc, { id: x.id, fontMap, webFonts, entries: inp.entries });
       if (specJson(target.spec) !== x.specText) throw new UsageError(`screen ${x.id}: the target spec rebuilt from the page differs from spec-norm-${safe(x.id)}.json: the source changed since ds.mjs ran; run ds.mjs and figma.mjs plan again`);
       // the Figma readback and screenshot

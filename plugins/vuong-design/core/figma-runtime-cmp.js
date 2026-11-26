@@ -92,6 +92,12 @@ for(const[m,sc]of XC)m.name=sc.cm.v||sc.cm.n;
 // failed to replace stays as it is
 let sw=0,kept=0;for(const o of XO)if(o.type=='COMPONENT'){const w=XM.get(gd(o,'cmp'));if(!w||w==o)continue;for(const i of await o.getInstancesAsync()){i.swapComponent(w);sw++}
 if((await o.getInstancesAsync()).length)kept++;else o.remove()}
+// layout: one row per component, the icons share one; a set holds its variants in one row (24 apart and in); rows 64
+// apart, below what is left on the page (other batches' components, old ones still used)
+{const R=new Map;for(const[m,sc]of XC){const o=m.parent&&m.parent.type=='COMPONENT_SET'?m.parent:m,g=sc.cm.n.startsWith('icon/')?'icon/':sc.cm.n,r=R.get(g)||[];if(r.indexOf(o)<0)r.push(o);R.set(g,r)}
+const own=new Set([...R.values()].flat());for(const o of own)if(o.type=='COMPONENT_SET'){let x=24,h=0;for(const v of o.children){v.x=x;v.y=24;x+=v.width+24;h=Math.max(h,v.height)}o.resize(x,h+48)}
+let y=pg.children.filter(c=>!own.has(c)).reduce((m,c)=>Math.max(m,c.y+c.height+64),0);
+for(const r of R.values()){let x=0,h=0;for(const o of r){o.x=x;o.y=y;x+=o.width+40;h=Math.max(h,o.height)}y+=h+64}}
 // signatures once the sets, properties and swaps are done (they move and size the variants)
 for(const[m,sc]of XC){pd(m,'sig',sig(m));const r=out.screens.find(x=>x.screen==sc.screen);if(r)r.sig=gd(m,'sig')}
 for(const o of XO)if(o.type=='COMPONENT_SET'&&!o.removed&&!(o.children||[]).length)o.remove();

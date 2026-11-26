@@ -320,14 +320,15 @@ Each cell is an `<iframe srcdoc>` that holds the proxy page (`proxy.mjs`) of one
 
 **Batches, in send order:** vars, `runtime`, `runtime-cmp`, `cmp-NN`, then the screen batches.
 
-- `runtime-cmp` installs `core/figma-runtime-cmp.js` once, like the runtime (≤ 16 384 B as installed; 7.9 KB now).
+- `runtime-cmp` installs `core/figma-runtime-cmp.js` once, like the runtime (≤ 16 384 B as installed; 8.5 KB now).
 - A batch that uses components gets a loader that inserts it into the screen runtime and patches three calls there (`CMP_PATCHES`). The screen runtime itself is unchanged.
 - `cmp-NN` batches build, in this order: the icon components (`icon/<ref>`, one per value an INSTANCE_SWAP property can take), then the components, each after the components its templates hold. A component's variants never split between batches.
 
 **A component** is its template built as a screen frame, then turned into a component.
 
 - Its readback goes into `state.json` under `components` (one entry per variant).
-- Variants become a component set named after the component. Each variant is named `axis=value, ...`.
+- Variants become a component set named after the component. Each variant is named `axis=value, ...`. The set forms once its last variant is built and placed: a variant named anything else breaks the set, and real Figma then refuses `setProperties` on every instance of it.
+- Layout of the components page: one row per component (the icon components share one), 64 px apart, below what is already on the page; a set holds its variants in one row, 24 px apart and 24 px in.
 - The set (or the single component) gets the properties. TEXT binds `characters`, BOOLEAN binds `visible`, INSTANCE_SWAP binds the main of an icon instance.
 - Plugin data `vuongdesign/cmp` holds the name the runtime finds it by: `<name>` or `<name>/<axis=value, ...>`.
 
@@ -554,6 +555,7 @@ AI workflow (one Figma file the user named; never two writers on the same file).
 
    check derives the scale from the PNG width / W_A (a 608 px shot of a 304 px frame is scale 2, used as it is). This costs 2 more `use_figma` calls per run than the estimate prints.
 4. Run `figma.mjs check --out <dir> [--mutate]` and open `<dir>/figma/report.html`.
+   A screen with no readback (not sent yet, or failed) fails at once and is not checked (`notBuilt` in `report.json`), so checking one batch costs only its screens.
 5. Over `--max-calls`: after ingesting, run `plan` again; it continues with the batches not yet done.
 
 Files in `<out>/figma/`:

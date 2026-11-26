@@ -186,6 +186,24 @@ test('a second build of the same components: no duplicates, the screens\' instan
 
 // ---- plan 3b Task 7: edit guard, several component batches ----
 const cmpBatchesOf = (s, o = {}) => planBatches(s.cmp.items, { wrap: loaderCode, page: 'Components', extra: { cm: 1 }, unit: (x) => x.cm.n, ...o });
+test('components page layout: one row per component, the icons share one; variants in one row inside their set, nothing overlaps', async () => {
+  const s = setup();
+  const { fig } = await build(s);
+  const top = page(fig, 'Components').children;
+  const box = (n) => [n.x, n.y, n.x + n.width, n.y + n.height];
+  const apart = (a, b) => a[2] <= b[0] || b[2] <= a[0] || a[3] <= b[1] || b[3] <= a[1];
+  for (let i = 0; i < top.length; i++) for (let j = i + 1; j < top.length; j++) assert.ok(apart(box(top[i]), box(top[j])), `${top[i].name} / ${top[j].name} overlap`);
+  for (const set of top.filter((n) => n.type === 'COMPONENT_SET')) {
+    const v = set.children;
+    assert.ok(v.length > 1 && v.every((x) => x.y === 24 && x.x >= 24 && x.x + x.width <= set.width - 24 + 1e-6 && x.y + x.height <= set.height), set.name);
+    for (let i = 1; i < v.length; i++) assert.ok(v[i].x >= v[i - 1].x + v[i - 1].width + 24 - 1e-6, `${set.name}: ${v[i].name}`);
+  }
+  const icons = top.filter((n) => n.name.startsWith('icon/'));
+  assert.equal(new Set(icons.map((n) => n.y)).size, 1, 'icons in one row');
+  const rows = [...new Set(top.filter((n) => !n.name.startsWith('icon/')).map((n) => n.y))];
+  assert.equal(rows.length, top.length - icons.length, 'every other component on its own row');
+});
+
 test('a rebuild without edits: no component reported edited, the same components on the page', async () => {
   const s = setup();
   const { fig } = await build(s);

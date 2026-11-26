@@ -358,7 +358,7 @@ Planora on the fake (18 screens, 14 components, fixture `test/fixtures/figma-cmp
 | State | What the variant adds |
 |---|---|
 | pressed | a top layer at full size, filled with the content colour, its opacity bound to `state/pressed/overlay` |
-| disabled | the root's fill and stroke move onto a bottom layer whose opacity is bound to `state/disabled/container`; each child's opacity is bound to `state/disabled/content` |
+| disabled | the root's fill and stroke move onto a bottom layer whose opacity is bound to `state/disabled/container`; each child's opacity is bound to `state/disabled/content`. A root without children (an empty checkbox) has no other content: its outline is the content, so the layer is bound to `state/disabled/content` (38 %; at 12 % Planora's checkbox border would drop from 1.61:1 to 1.05:1 on white) |
 | loading | the label at opacity 0 (it keeps its size) and a centred spinner in the label's colour |
 | focus | a ring layer outside the root, its stroke weight bound to `state/focus/width`, in the focus colour token |
 | error | the root's stroke in the error colour token; its width is bound to `state/error/width` when the root had no stroke |

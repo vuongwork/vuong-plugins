@@ -119,6 +119,9 @@ test('applyState draws each patch as layers on a copy of the template, with the 
   assert.deepEqual(d.map['r.~disabled'], { radiusTL: 'radius.4', bg: 'role.red', borderT: 'role.ink', 'border-width-T': 'border.1', opacity: 'state.disabled.container' });
   assert.deepEqual(d.map['r.0'], { color: 'role.ink2', opacity: 'state.disabled.content' });
   assert.equal(d.map['r.1'], undefined, 'a child with its own opacity is faded, not bound');
+  const b = applyState({ ...root, kids: [] }, { state: 'disabled', patch: { strokeOpacity: 0.38 } }, nm);
+  assert.deepEqual(b.spec.kids.map((k) => [k.id, k.paint.opacity, !!k.paint.border]), [['r.~disabled', 0.38, true]]);
+  assert.equal(b.map['r.~disabled'].opacity, 'state.disabled.content', 'no kids: the outline is the content');
   const l = applyState(root, { state: 'loading', patch: { spinner: { replace: ['0'], size: 14, color: '#111111' } } }, nm);
   assert.equal(l.spec.kids[0].paint.opacity, 0);
   assert.deepEqual([l.spec.kids[2].t, l.spec.kids[2].w, l.spec.kids[2].abs], ['V', 14, { x: 13, y: 3, c: 'C', cy: 'C' }]);

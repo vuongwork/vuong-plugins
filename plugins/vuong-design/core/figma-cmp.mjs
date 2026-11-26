@@ -89,7 +89,8 @@ const SIDE = ['T', 'R', 'B', 'L'];
 //   pressed   last child: full size, absolute, stretched, the root's radius, fill = the content colour (and its
 //             token), opacity state.pressed.overlay
 //   disabled  first child: the root's fill and stroke moved onto it (their tokens too), opacity
-//             state.disabled.container; every original child's opacity x state.disabled.content (bound when it had
+//             state.disabled.container (state.disabled.content when the root has no kids: then they are its
+//             content); every original child's opacity x state.disabled.content (bound when it had
 //             no opacity of its own)
 //   loading   each replaced label at opacity 0 (it keeps its size); last child: the spinner, centred, stroked in the
 //             label's colour (and its token)
@@ -131,7 +132,7 @@ export function applyState(tpl, { state, patch }, nm = {}) {
       for (const k of Object.keys(re)) if (/^border/.test(k)) { keys[k] = re[k]; delete re[k]; }
     }
     kids.unshift(layer({ paint: { ...moved, ...(rad ? { radius: rad } : {}), opacity: patch.fillOpacity ?? patch.strokeOpacity } }));
-    map[id] = { ...radKeys, ...keys, opacity: 'state.disabled.container' };
+    map[id] = { ...radKeys, ...keys, opacity: orig.length ? 'state.disabled.container' : 'state.disabled.content' };
   }
   if (patch.spinner) {
     let tok = null;

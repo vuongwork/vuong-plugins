@@ -122,7 +122,10 @@ test('a checkbox: on maps to checked from the HTML, disabled proposed; with only
   assert.deepEqual(src(c), { unchecked: 'html', checked: 'html', disabled: 'proposed' });
   assert.deepEqual(c.proposed[0].patch, { contentOpacity: 0.38, strokeOpacity: 0.12 });
   c = cmp(run([scr('s1', ck(), ck())], D), 'ck');
-  assert.equal(src(c).checked, 'missing');
+  assert.equal(src(c).checked, 'missing');  // an empty box: its outline is its content (Material 3: 38 %), at 12 % it would vanish
+  const box = () => F('ck', { border: 2 });
+  c = cmp(run([scr('s1', box(), box())], D), 'ck');
+  assert.deepEqual(c.proposed[0].patch, { strokeOpacity: 0.38 });
 });
 
 test('a declared state class outside the table is an extra state with a warning until stateMap maps it', () => {

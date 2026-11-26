@@ -34,7 +34,8 @@
 //
 // Patches (paths relative to the component root, '' = the root; colours '#rrggbb[aa]'):
 //   pressed  { overlay: { color, opacity } }
-//   disabled { contentOpacity?, fillOpacity?, strokeOpacity? }   (only the parts the root has)
+//   disabled { contentOpacity?, fillOpacity?, strokeOpacity? }   (only the parts the root has; a root without kids:
+//            fill and stroke at the content opacity, they are its content)
 //   focus    { ring: { width, color, token } }
 //   error    { stroke: { width, color, token } }
 //   loading  { spinner: { replace: [paths], size, color } }
@@ -182,10 +183,11 @@ function patchFor(state, root, R, tokens) {
       return color ? { patch: { overlay: { color, opacity: R.pressed.overlay } } } : { reason: 'no text or icon colour to tint the overlay with' };
     }
     case 'disabled': {
-      const patch = {};
-      if ((root.kids || []).length) patch.contentOpacity = R.disabled.content;
-      if (hasBg) patch.fillOpacity = R.disabled.container;
-      if (hasStroke) patch.strokeOpacity = R.disabled.container;
+      // no kids: the fill / stroke is the content itself (an unchecked box's outline), so it fades as content
+      const patch = {}, kids = (root.kids || []).length, box = kids ? R.disabled.container : R.disabled.content;
+      if (kids) patch.contentOpacity = R.disabled.content;
+      if (hasBg) patch.fillOpacity = box;
+      if (hasStroke) patch.strokeOpacity = box;
       return Object.keys(patch).length ? { patch } : { reason: 'nothing to fade (no content, fill or stroke)' };
     }
     case 'focus': {

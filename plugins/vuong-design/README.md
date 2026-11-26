@@ -400,7 +400,7 @@ Planora on the fake (18 screens, 14 components, fixture `test/fixtures/figma-cmp
 
 Planora with its states (fixture `test/fixtures/figma-cmp-planora-states.json.gz`, 2026-11-26): 22 state variants (btn: pressed, disabled and loading on each of its 4 variants; chip, ck, fab, tog: disabled; fab: pressed). The component batch is 29.5 KB; all 1 398 nodes are read back as encoded.
 
-**Real-Figma behaviour of components (plan 3b, 2026-11-26).** Found on the first real sends and handled (fake-Figma tests for the first four; the last two have none yet):
+**Real-Figma behaviour of components (plan 3b, 2026-11-26).** Found on the first real sends and handled (each with a fake-Figma or unit test):
 - An SVG `<g>` comes back as a GROUP without fills or strokes: the icon recolour walks the vectors only.
 - A component set formed before its last variant is placed has "existing errors", and `setProperties` on its instances throws: the set forms after placement.
 - A COMPONENT root is auto layout too: state overlays and badges go ABSOLUTE in it (`isAL` patch), or they push the variant's size.

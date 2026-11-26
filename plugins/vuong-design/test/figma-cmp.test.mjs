@@ -150,6 +150,38 @@ test('screens use instances: every spec node read back, no differences, texts an
   assert.equal(s1['n.5.1'].characters, 'Three');
 });
 
+test('icon recolour that throws: its scratch svg is removed, nothing is left on any page', async () => {
+  const s = setup();
+  const fig = makeFakeFigma();
+  await run(runtimeInstallCode(), fig);
+  await run(runtimeCmpInstallCode(), fig);
+  for (const b of s.cmpBatches) await run(b.code, fig);
+  // from here (the screens), every svg the runtime parses breaks on its first walk, as a recolour error would
+  const make = fig.createNodeFromSvg.bind(fig);
+  let calls = 0;
+  fig.createNodeFromSvg = (svg) => { const t = make(svg); calls++; t.findAll = () => { throw new Error('recolour broke'); }; return t; };
+  for (const b of s.batches) await run(b.code, fig);
+  assert.ok(calls > 0, 'the screens recolour at least one icon');
+  for (const p of fig.root.children) for (const n of p.children) {
+    const vd = n.getSharedPluginData('vuongdesign', 'screen') || n.getSharedPluginData('vuongdesign', 'cmp');
+    assert.ok(vd, `${p.name}: ${n.type} ${n.name} left on the page`);
+  }
+});
+
+test('cmpCheckOne: a state overlay stretched to a parent grown by the property default is not a size failure', () => {
+  // an invented tag component: its label is bound to a TEXT property whose default is longer than this variant's text
+  const T = { o: 'n', w: 60, h: 30, s: 'HH', k: [{ o: 'n.0', t: 'T', tx: 'Hi', w: 20, h: 16, s: 'HH' }, { o: 'n.~disabled', w: 60, h: 30, s: 'XX' }] };
+  const D = { screens: [{ screen: 'cmp:tag/state=disabled', T, cm: { n: 'tag', p: { label: ['TEXT', 'A much longer label'] }, b: { label: '0' } } }] };
+  const N = (ov) => ({ n: { A: [0, 0, 110, 30] }, 'n.0': { A: [8, 7, 94, 16], d: { text: 'A much longer label' } }, 'n.~disabled': { A: [0, 0, ov, 30] } });
+  const c = cmpCheckOne({ N: N(110) }, D, 'tag/state=disabled');
+  assert.deepEqual(c.sizes, []);
+  assert.deepEqual(c.diffs, []);
+  assert.deepEqual(c.propertyTexts, ['n.0']);
+  // the same readback in a variant whose text is the default (nothing grew): the root and the overlay are checked
+  const D2 = JSON.parse(JSON.stringify(D)); D2.screens[0].T.k[0].tx = 'A much longer label';
+  assert.deepEqual(cmpCheckOne({ N: N(110) }, D2, 'tag/state=disabled').sizes.map((x) => x.o), ['n', 'n.~disabled']);
+});
+
 test('override kept: a row with its own fill is an instance whose root fill is overridden; the main keeps its own', async () => {
   const s = setup();
   const { fig } = await build(s);

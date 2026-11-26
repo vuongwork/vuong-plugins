@@ -18,15 +18,16 @@ a dev can ask the same at any time with `/vuong-test:next [scope]`.
 Files others read (`cases.md`, `diff.md`, `data-plan.md`) must read row by row without another file open: spec by
 file name + cell, flow refs with their name, rules in words; codes (`R12`, `S2`, `B3`) only in brackets.
 
-**Delegate the writing steps.** Step 4 (cases.md + data-plan.md) and step 6 (write + dry-run tests) go to the
-`vuong-test:writer` agent (runs on Sonnet: same quality measured, about half the cost) — one agent per scope, or
-one per group when step 6 is split. First write what the user answered into the step files where it belongs
+**Delegate the writing steps.** Steps 2–3 (spec-sources.md, flows.md, diff.md), step 4 (cases.md + data-plan.md)
+and step 6 (write + dry-run tests) go to the `vuong-test:writer` agent (runs on Sonnet: same score measured, about
+a third cheaper per step) — one agent per scope, or one per group when step 6 is split. Before delegating, do not
+read the inputs the agent will read: check they exist (one `ls`) and write the answers. First write what the user answered into the step files where it belongs
 (BA answers in `spec-sources.md`, decisions in `diff.md`, approval in the `cases.md` header) — the agent reads
 answers from files only. Its prompt is only: `PLUGIN`, `W`, the step, the scope, the input paths (step 6: case
 IDs, test file, out dir); no answers, no rulings on what counts as a source, no file contents. Do not read its
 output files again except to show the user what this flow says to show, and do not fix them yourself: gaps from
 `cases-summary.mjs`, lint errors or failing dry runs go back to the same agent (SendMessage, else a new writer with
-the list) in one message. You keep everything that talks to the user: steps 1–3, its open questions, the
+the list) in one message. You keep everything that talks to the user: step 1, the agent's open questions (BA questions, diff decisions), the
 approval gate (5), the run and report (7). No Agent tool available → do the step yourself.
 
 `/vuong-test:vuong-test help` (or `/vuong-test:help [word]`): run `node $PLUGIN/core/help.mjs [word]` and show its output as is; do nothing else.
@@ -75,6 +76,8 @@ with the header filled (Scope, Environment, Writes data; the table comes in step
 
 ## 2. Clarify spec → `W/spec-sources.md`
 
+**Main session: hand this step to the `vuong-test:writer` agent** (see Delegate the writing steps); the writer does it.
+
 Read `$PLUGIN/references/spec-and-sources.md`. Run `node $PLUGIN/core/find-spec.mjs <scope keyword(s)>` to list the
 documents in `cfg.specPaths` (no hit → ask the user where the spec is and add it to `specPaths`). Convert each xlsx/xlsm/docx hit with `node $PLUGIN/core/read-spec.mjs <file>...` (→ `test-work/_spec/<name>.md`, read-only on the source; header has modified date + sha256 for `spec-sources.md`) and cite the bold `**Sheet!Cell**` / `**¶N**` / `**Table T rRcC**` labels it prints; exit 3 (pdf/pptx/doc/xls) → use a document reader skill. Collect every
 source (spec, ticket, decisions file, named person + date); record each file's modified date / revision.
@@ -105,6 +108,8 @@ person. The difference list is a deliverable on its own: spec owners use it to u
 components too) cited in the row; no hit → "not found by `<search>`, unverified" (`references/flows.md`).
 
 ## 4. Cases → `W/cases.md`
+
+**Main session: hand this step to the `vuong-test:writer` agent** (see Delegate the writing steps); the writer does it.
 
 Tester's file given in step 1 → start from it: `node $PLUGIN/core/import-cases.mjs <file> --scope <scope> --out W/cases.md`
 (layout from `cfg.caseTemplates`; no matching entry → read the file with `read-spec.mjs`, ask the user which
@@ -142,6 +147,8 @@ Also show the data-plan rows marked `user-provides` or `cannot` with their cases
 the data now; cases whose data is still missing at run time are BLOCKED, not improvised.
 
 ## 6. Write and dry-run tests
+
+**Main session: hand this step to the `vuong-test:writer` agent** (see Delegate the writing steps); the writer does it.
 
 Follow `$PLUGIN/references/stacks/<stack>.md` and `$PLUGIN/references/review-tests.md`. Kit options and helpers:
 `$PLUGIN/kit/README.md` is the complete API — do not read the kit source.

@@ -243,7 +243,8 @@
       "any": [
         "(rejected|từ chối|đã huỷ|đã hủy)[^|]*(huỷ đơn|hủy đơn|btn-cancel|cancel button|button)",
         "(huỷ đơn|hủy đơn|btn-cancel|cancel button)[^|]*(rejected|từ chối|đã huỷ|đã hủy|status !== 'approved')",
-        "(huỷ đơn|hủy đơn|btn-cancel|cancel button).*(≠|!==|khác|not)\\s*'?(approved|đã duyệt)"
+        "(huỷ đơn|hủy đơn|btn-cancel|cancel button).*(≠|!==|khác|not)\\s*'?(approved|đã duyệt)",
+        "(huỷ đơn|hủy đơn|btn-cancel|cancel button).*(vẫn hiện|still (shown|visible)|hiện cả|shown).*(từ chối|rejected|đã huỷ|đã hủy|cancelled)"
       ]
     }
   ],

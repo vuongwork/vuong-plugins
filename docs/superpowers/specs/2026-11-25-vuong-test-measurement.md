@@ -250,3 +250,20 @@ Session chính (Opus) giữ phần nói chuyện với user, cổng duyệt, ch�
 - Gap / lỗi lint / dry-run fail gửi lại cho writer, session chính không tự sửa (t2 lần đầu Opus tự sửa ~10 lượt ≈ 0.5 USD).
 - Kết quả: −33% (t2), −32% (t4) so với Opus thuần, chất lượng giữ nguyên. Sonnet thuần rẻ hơn nữa (1.43 / 1.50)
   nhưng mất Opus ở phần hỏi đáp và phán đoán; user muốn rẻ nhất có thể tự `/model sonnet`.
+
+## 14. Vòng tối ưu 3 (2026-11-26): writer cả bước 2–3, Opus bớt đọc trước khi giao
+
+- Bench: thời gian lấy theo mốc nhận result (CLI `duration_ms` sai khi có agent chạy nền; run có nhiều result event
+  thì cộng lượt, lấy cost cao nhất). t4 writer lần trước: 9,1 phút, không phải 1,2.
+- Writer làm thêm bước 2–3 (spec-sources.md, flows.md, diff.md). Opus không đọc input của agent trước khi giao.
+- Mỗi bước 2, 4, 6 có dòng "Main session: hand this step to the writer": một lần t4 Opus bỏ qua đoạn Delegate ở đầu
+  file và tự làm hết (3,20 USD); thêm dòng này thì giao đúng.
+
+| Ca | Opus thuần | Cấu hình cuối | Giảm | Phút | Điểm |
+|---|---|---|---|---|---|
+| t1 flows | 1,27–1,44 | **1,00** (Opus 0,36 + Sonnet 0,64) | −26% | 5,0 | 0,967 → 1,0* |
+| t2 cases | 2,41 | **1,12** (0,55 + 0,57) | −54% | 4,9 | 1,0 (63 case, 20 Not covered) |
+| t4 tests | 3,28–3,69 | **1,78** (0,75 + 1,03) | −46% | 10,7 | 1,0 (6/6 lỗi) |
+
+\* Grader bỏ sót: diff.md có dòng D6 (Huỷ đơn vẫn hiện ở đơn Từ chối / Đã huỷ) nhưng chữ nằm ở hai cột. Đã thêm pattern
+vào key; workspace không còn nên chấm lại tay. Mỗi ô 1 lần chạy; t1 chạy trước khi thêm dòng nhắc ở mỗi bước.

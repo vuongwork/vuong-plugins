@@ -176,7 +176,13 @@ Component được dựng từ spec của lần xuất hiện đầu tiên (theo
 - Khác với bản kế hoạch: instance mang nguyên mã hoá của kế hoạch 3, cộng các dấu `i`, `p`, `j`, `rc`. Runtime chỉ đặt trên mỗi layer những gì khác với mã hoá. Cách này thay cho `ov` theo đường dẫn, đúng cả với instance lồng nhau, và readback giữ nguyên.
 - Chạy lại: component mới thay component cũ cùng tên, instance được chuyển sang (`swapComponent`), không tạo trùng.
 - Planora trên fake: 1 lô component (19,3 KB), 3 lô màn (44,0 / 46,6 / 19,1 KB), 147 layer instance, 1 335 / 1 335 node đọc lại đúng.
-- Còn lại (phần 2): trạng thái đề xuất (nhấn, tắt, đang tải) thành variant, và biến cho thông số trạng thái.
+
+Đã làm phần 2 (2026-11-26):
+- Biến trạng thái: `stateTokens` (`states.mjs`) sinh token số từ luật đã duyệt. Token không vào `tokens.json`: `cmp.mjs` ghi vào cuối `tokens.css` (giữa dấu `/* vd:states */`), `figma.mjs plan` thêm vào token khi đọc `states.json`. Lô `vars` có collection `State` (độ mờ x 100, độ dày nét).
+- Variant trạng thái: `withStates` + `applyState` (`figma-cmp.mjs`). Component có trạng thái đề xuất thêm trục `state`; mỗi trạng thái là một variant dựng từ variant gốc, layer trạng thái gắn biến `State`. Không sửa runtime.
+- Luật chưa duyệt → mọi lô giống từng byte như khi không có `states.json`.
+- Planora trên fake: 22 variant trạng thái, lô component 29,5 KB, 1 398 / 1 398 node đọc lại đúng.
+- Để Task 7: `check` so layer trạng thái (chúng không có trong spec đích của màn; component chưa được `check`).
 
 - [ ] **Step 1: Viết test** trên fake: lô cmp dựng đủ component / set / thuộc tính, chạy lại → không trùng; `state vars`: luật duyệt → có token trong `tokens.css` và biến số trên fake, layer trạng thái gắn biến; sửa giá trị một biến → mọi component trạng thái đổi theo; màn dùng instance có readback đủ mục theo ID spec (`instance readback`); `override kept`; component có node lỗi → instance của nó `detached` và màn vẫn dựng; `off is plan 3`: tắt → mọi lô Planora giống từng byte fixture kế hoạch 3; kích thước hai runtime ≤ 16 384 B mỗi file.
 - [ ] **Step 2–4:** FAIL → viết → PASS.

@@ -12,6 +12,8 @@
 //   vd-components.draft.json componentsDraft() suggestions
 //   vd-rules.draft.json      ds.mjs's draft with a `states` section added (statesDraft) while the rules file has no
 //                            approved states; the section is removed once they are approved. Other keys unchanged.
+//   tokens.css               the approved state rules as CSS variables (--state-pressed-overlay ...), between
+//                            /* vd:states */ markers at the end (replaced on rerun, removed while not approved)
 //   coverage.json            ds.mjs's coverage with `components` = { missing: [...], summary } added (replaced on rerun)
 //   components.html          the preview page (components-report.mjs)
 //   design-system.html       a "Components" summary section with a link, between <!--vd:components--> markers
@@ -23,7 +25,7 @@ import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { findComponents, componentsDraft, readComponentsFile, overridableFrom } from './components.mjs';
 import { loadFacts } from './figma-probe.mjs';
-import { componentStates, statesDraft, stateRules } from './states.mjs';
+import { componentStates, statesDraft, stateRules, stateCss, STATE_CSS_MARK } from './states.mjs';
 import { readRules } from './rules-file.mjs';
 import { renderComponents, componentsSummary } from './components-report.mjs';
 import { defaultFontMap } from './font-map.mjs';
@@ -78,6 +80,11 @@ export async function main(argv, deps = {}) {
     const { cmps, states, draft, rulesDraft, html } = r;
     writeFileSync(join(ds, 'components.json'), json(cmps));
     writeFileSync(join(ds, 'states.json'), json(states));
+    const cssPath = join(ds, 'tokens.css');
+    if (existsSync(cssPath)) {
+      const css = readFileSync(cssPath, 'utf8'), next = css.replace(STATE_CSS_MARK, '') + stateCss(states);
+      if (next !== css) writeFileSync(cssPath, next);
+    }
     writeFileSync(join(ds, 'vd-components.draft.json'), json(draft));
     const rdPath = join(ds, 'vd-rules.draft.json');
     const rd = existsSync(rdPath) ? readJson(rdPath) : { version: 1, answers: {}, notes: {} };

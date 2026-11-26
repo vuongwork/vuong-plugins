@@ -14,7 +14,8 @@
 // Names (figma-encode.mjs figmaVarName): variable = token path without `primitive.`, '.' -> '/' (color/c01, space/12,
 //   radius/full, font/size/10_5, role/text-muted); text style `type/<name>` of primitive.typography.<name>; effect style
 //   `shadow/<name>` of primitive.shadow.<name>.
-// Collections `Primitive` and `Role` (one mode each: the default mode, renamed `Value`). A role variable is a
+// Collections `Primitive` and `Role`, and `State` when tokens has a `state` group (states.mjs stateTokens: number
+//   tokens of the approved state rules; width -> STROKE_FLOAT, the rest OPACITY x 100) (one mode each: the default mode, renamed `Value`). A role variable is a
 //   VARIABLE_ALIAS to the Primitive variable its $value reaches (an alias to another role is followed to the end); a
 //   role token holding a literal gets the literal. Description = $description. Every variable has explicit scopes:
 //     color (primitive and role)  FRAME_FILL SHAPE_FILL TEXT_FILL STROKE_COLOR EFFECT_COLOR
@@ -115,6 +116,16 @@ export function varsPlan(tokens, variants = []) {
       const sc = v.ty === 0 ? 0 : roleScope(name);
       vars.push({ name, coll: 1, ty: v.ty, val: stored(v.val, sc), sc, desc: desc(t) });
     }
+  }
+
+  // state tokens (plan 3b Task 6 part 2, states.mjs stateTokens): collection State; a width is a stroke weight, every
+  // other value an opacity (x 100, as above)
+  for (const [path, t] of leaves(tokens.state, 'state')) {
+    if (!VAR_TYPES.has(t.$type)) continue;
+    const v = valueOf(t);
+    if (v.skip) { skipped.push({ path, reason: v.skip }); continue; }
+    const sc = /.width$/.test(path) ? 4 : 5;
+    vars.push({ name: varNameOf(path), coll: 2, ty: v.ty, val: stored(v.val, sc), sc, desc: desc(t) });
   }
 
   const textStyles = [], effectStyles = [];
@@ -269,8 +280,8 @@ return R;
 `;
 
 export function varsPayload(tokens, { limit = PAYLOAD_LIMIT, collections = {}, variants = [] } = {}) {
-  const cn = [collections.primitive || 'Primitive', collections.role || 'Role'];
   const plan = varsPlan(tokens, variants);
+  const cn = [collections.primitive || 'Primitive', collections.role || 'Role', ...(plan.vars.some((v) => v.coll === 2) ? [collections.state || 'State'] : [])];
   const items = [
     ...plan.vars.map((v) => ['v', JSON.stringify([v.name, v.coll, v.ty, v.val, v.sc, v.desc])]),
     ...plan.textStyles.map((t) => ['t', JSON.stringify([t.name, t.ff, t.fw, t.it, t.fs, t.lh, t.ls, t.tc, t.desc, ...(t.td ? [t.td] : [])])]),

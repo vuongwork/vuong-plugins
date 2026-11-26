@@ -62,6 +62,7 @@ import { varsPayload, varNames, varsPlan } from './figma-vars.mjs';
 import { ordOf, decode, expandNodes, figmaProxy, shotAtDsf, proxyVsFigma, effectNodes, pngSize } from './figma-check.mjs';
 import { startBridge, BRIDGE_PORT } from './figma-bridge.mjs';
 import { cmpEncode } from './figma-cmp.mjs';
+import { stateTokens } from './states.mjs';
 
 const RUNTIME = readFileSync(new URL('./figma-runtime.js', import.meta.url), 'utf8');
 const shaOf = (s) => createHash('sha1').update(s).digest('hex').slice(0, 16);
@@ -156,6 +157,17 @@ function readDs(dsDir) {
   return { ds, ir, tokens, map, screens, source };
 }
 
+// states.json -> dsData.states, and its approved rules' number tokens added to dsData.tokens (group `state`)
+export function withStateTokens(dsData, states) {
+  dsData.states = states;
+  const add = stateTokens(states);
+  if (add.state) {
+    if (dsData.tokens.state) throw new UsageError('tokens.json already has a group "state"; the state variables need that name');
+    dsData.tokens = { ...dsData.tokens, ...add };
+  }
+  return dsData;
+}
+
 // encodes every screen; hash per screen = its data alone (tables resolved), page and force included
 // components (plan 3b Task 6): dsData.components (components.json) marks the occurrences as instances and adds the
 // component batch items (figma-cmp.mjs); a screen's hash then covers the component items it uses.
@@ -166,7 +178,7 @@ export function encodeAll(dsData, { page = 'Screens', force = [], cmpPage = 'Com
   const encs = screens.map((s) => encodeScreen(s.spec, { screen: s.id, file: ir.file, W: s.W, map, svgDefs: s.svgDefs, tables, tokens, styleTc }));
   let cmp = null;
   if (dsData.components && (dsData.components.components || []).length) {
-    cmp = cmpEncode(dsData.components, screens, { file: ir.file, map, tables, tokens, styleTc });
+    cmp = cmpEncode(dsData.components, screens, { file: ir.file, map, tables, tokens, styleTc, states: dsData.states });
     for (const e of encs) cmp.mark(e);
   }
   const itemHash = cmp ? new Map(cmp.items.map((x) => [tables.K[x.cm.k], sha(JSON.stringify(batchData([x], 0, cmpPage, [], false, { cm: 1 })))])) : null;
@@ -209,7 +221,12 @@ async function plan(argv, log) {
   const dsData = readDs(o.ds);
   // components (plan 3b): components.json of cmp.mjs in the ds folder, unless --no-components
   const cmpFile = join(dsData.ds, 'components.json');
-  if (!o['no-components'] && existsSync(cmpFile)) dsData.components = readJson(cmpFile, 'components.json');
+  if (!o['no-components'] && existsSync(cmpFile)) {
+    dsData.components = readJson(cmpFile, 'components.json');
+    // proposed states (Task 6 part 2): states.json of cmp.mjs; approved rules add the State variables
+    const stFile = join(dsData.ds, 'states.json');
+    if (existsSync(stFile)) withStateTokens(dsData, readJson(stFile, 'states.json'));
+  }
   const cmpPage = o['cmp-page'] || 'Components';
   if (cmpPage === (o.page || 'Screens')) throw new UsageError(`--cmp-page ${cmpPage}: the components need a page of their own, not the screens page`);
   const ids = dsData.screens.map((s) => s.id);

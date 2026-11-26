@@ -136,9 +136,21 @@ test('cmp.mjs writes the component files, adds states to the rules draft and cov
 test('cmp.mjs: approved rules remove the states draft; a bad declaration or a missing ds folder is a usage error', async () => {
   const dir = dsDir();
   writeFileSync(join(dir, 'vd-rules.json'), JSON.stringify({ version: 1, answers: {}, states: { approved: true } }));
+  const CSS0 = ':root {\n  --color-c01: #fff;\n}\n';
+  writeFileSync(join(dir, 'tokens.css'), CSS0);
   assert.equal((await cli(['--ds', dir], dir)).code, 0);
+  // approved rules: the state variables at the end of tokens.css, once (a rerun replaces the block)
+  assert.equal((await cli(['--ds', dir], dir)).code, 0);
+  const css = readFileSync(join(dir, 'tokens.css'), 'utf8');
+  assert.equal(count(css, /\/\* vd:states \*\//g), 1);
+  assert.ok(css.startsWith(CSS0 + '/* vd:states */\n:root {\n  --state-pressed-overlay: 0.1;\n'), css);
+  assert.ok(css.endsWith('  --state-error-width: 1px;\n}\n/* /vd:states */\n'), css);
   assert.equal(JSON.parse(readFileSync(join(dir, 'vd-rules.draft.json'), 'utf8')).states, undefined);
   assert.equal(JSON.parse(readFileSync(join(dir, 'states.json'), 'utf8')).approved, true);
+  // not approved again: the block is removed
+  writeFileSync(join(dir, 'vd-rules.json'), JSON.stringify({ version: 1, answers: {}, states: { approved: '' } }));
+  assert.equal((await cli(['--ds', dir], dir)).code, 0);
+  assert.equal(readFileSync(join(dir, 'tokens.css'), 'utf8'), CSS0);
   writeFileSync(join(dir, 'vd-components.json'), JSON.stringify({ version: 1, classes: { btn: { kind: 'rocket' } } }));
   const bad = await cli(['--ds', dir], dir);
   assert.equal(bad.code, 2);

@@ -350,7 +350,23 @@ Planora on the fake (18 screens, 14 components, fixture `test/fixtures/figma-cmp
 | Instance layers on the screens | 147 (127 occurrences, plus their nested and icon instances) |
 | Nodes read back as encoded | 1 335 of 1 335 |
 
-Not yet: the proposed states (pressed, disabled, loading) as variants, and the state variables (plan Task 6, second part).
+**Proposed states.** Once the state rules are approved (`states.approved: true` in `vd-rules.json`, set by you), `figma.mjs plan` also reads `states.json`:
+
+- Each numeric rule value becomes a variable in a collection `State`: `state/pressed/overlay`, `state/disabled/content`, `state/disabled/container` (opacity scope), `state/focus/width`, `state/error/width` (stroke-weight scope). `cmp.mjs` writes the same values to the end of `tokens.css` (`--state-pressed-overlay: 0.1;` …, between `/* vd:states */` markers).
+- A component with a proposed state gets the variant axis `state`. Its variants from the HTML become `state=default` unless they already have a state. Each proposed state is one more variant, built from its base variant:
+
+| State | What the variant adds |
+|---|---|
+| pressed | a top layer at full size, filled with the content colour, its opacity bound to `state/pressed/overlay` |
+| disabled | the root's fill and stroke move onto a bottom layer whose opacity is bound to `state/disabled/container`; each child's opacity is bound to `state/disabled/content` |
+| loading | the label at opacity 0 (it keeps its size) and a centred spinner in the label's colour |
+| focus | a ring layer outside the root, its stroke weight bound to `state/focus/width`, in the focus colour token |
+| error | the root's stroke in the error colour token; its width is bound to `state/error/width` when the root had no stroke |
+
+- Figma cannot bind the opacity of a single fill, so a faded fill or an overlay is a layer of its own. Changing one variable then changes every state component that uses it.
+- These variants have no instances on the screens. Rules not approved, or `--no-components`: no `State` variables, no state variants, and every batch is the same, byte for byte, as without `states.json`.
+
+Planora with its states (fixture `test/fixtures/figma-cmp-planora-states.json.gz`, 2026-11-26): 22 state variants (btn: pressed, disabled and loading on each of its 4 variants; chip, ck, fab, tog: disabled; fab: pressed). The component batch is 29.5 KB; all 1 398 nodes are read back as encoded.
 
 ## Figma encoding
 

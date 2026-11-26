@@ -357,3 +357,35 @@ export function componentStates(result, { specs = {}, tokens = null, rules, decl
 export function forFigma(st) {
   return { ...st, components: st.components.map((c) => ({ ...c, proposed: st.approved ? c.proposed : [] })) };
 }
+
+// ---- state variables (plan 3b Task 6 part 2) -----------------------------------------------------------------------
+//
+// Approved rules -> number tokens, one per numeric rule value: state.<rule>.<key> (state.pressed.overlay 0.1,
+// state.disabled.content 0.38, state.disabled.container 0.12, state.focus.width 2, state.error.width 1). They are not
+// in tokens.json (ds.mjs output stays as it was): cmp.mjs writes them to tokens.css (stateCss), figma.mjs adds them
+// to the tokens it plans (variables in a collection `State`, figma-vars.mjs) and binds the state layers to them.
+// Not approved (or no states.json) -> {} and no CSS: nothing of a state reaches the code or Figma before the user
+// approved the rules.
+export const STATE_PX = new Set(['width']);
+export function stateTokens(st) {
+  if (!st || st.approved !== true || !isObj(st.rules)) return {};
+  const out = {};
+  for (const k of Object.keys(RULE_DEFAULTS)) {
+    for (const [p, v] of Object.entries(st.rules[k] || {})) {
+      if (typeof v !== 'number' || !(p in RULE_DEFAULTS[k])) continue;
+      (out[k] ||= {})[p] = STATE_PX.has(p)
+        ? { $type: 'dimension', $value: { value: v, unit: 'px' }, $description: `vuong-design state rule states.${k}.${p}` }
+        : { $type: 'number', $value: v, $description: `vuong-design state rule states.${k}.${p}` };
+    }
+  }
+  return Object.keys(out).length ? { state: out } : {};
+}
+// tokens.css block for the state tokens: between /* vd:states */ markers (cmp.mjs replaces it on every run)
+export const STATE_CSS_MARK = /\/\* vd:states \*\/[\s\S]*?\/\* \/vd:states \*\/\n?/;
+export function stateCss(st) {
+  const t = stateTokens(st).state;
+  if (!t) return '';
+  const lines = [];
+  for (const [k, g] of Object.entries(t)) for (const [p, tok] of Object.entries(g)) lines.push(`  --state-${k}-${p}: ${STATE_PX.has(p) ? `${tok.$value.value}px` : tok.$value};`);
+  return `/* vd:states */\n:root {\n${lines.join('\n')}\n}\n/* /vd:states */\n`;
+}

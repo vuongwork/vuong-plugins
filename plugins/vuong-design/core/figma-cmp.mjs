@@ -50,10 +50,122 @@ const intern = (tables, name) => {
 export const variantName = (axes, props) => axes.map((a) => `${a}=${props[a]}`).join(', ');
 export const cmpKey = (c, v) => (c.axes.length ? `${c.name}/${variantName(c.axes, v.props)}` : c.name);
 
+// ---- proposed states (plan 3b Task 6 part 2) ----------------------------------------------------------------------
+// states (states.json): once its rules are approved, every component with a proposed state gets the axis `state`
+// (its variants without one: state=default) and one variant per proposed entry, its template the base variant's with
+// the patch drawn as layers (applyState). Those variants have no uses on the screens.
+export function withStates(comps, states) {
+  const by = new Map(((states && states.approved === true && states.components) || []).filter((c) => (c.proposed || []).length).map((c) => [c.name, c]));
+  return comps.map((c) => {
+    const s = by.get(c.name);
+    if (!s) return c;
+    const axes = c.axes.includes('state') ? c.axes : [...c.axes, 'state'].sort(cmpStr);
+    const full = (props) => Object.fromEntries(axes.map((a) => [a, props[a] ?? 'default']));
+    const variants = c.variants.map((v) => ({ ...v, props: full(v.props) }));
+    for (const p of s.proposed) {
+      const b = c.variants[p.base];
+      if (!b) throw new Error(`states.json: ${c.name} ${p.state} names base variant ${p.base}, which components.json does not have (run cmp.mjs again)`);
+      variants.push({ props: full(p.props), template: b.template, bind: b.bind, nested: b.nested, nodes: [], st: { state: p.state, patch: p.patch } });
+    }
+    const names = new Set();
+    for (const v of variants) {
+      const n = variantName(axes, v.props);
+      if (names.has(n)) throw new Error(`component ${c.name}: two variants named ${n} (an HTML state and a proposed one?)`);
+      names.add(n);
+    }
+    return { ...c, axes, variants };
+  });
+}
+// the spinner a loading state draws (stroke = the label colour)
+export const SPINNER_REF = 'vd-spinner';
+const SPINNER = '<symbol id="vd-spinner" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></symbol>';
+const r2 = (v) => Math.round(v * 100) / 100;
+const r4 = (v) => Math.round(v * 10000) / 10000;
+const SIDE = ['T', 'R', 'B', 'L'];
+// tpl (spec subtree, left unchanged) + { state, patch } + nm (token map of the template's screen) -> { spec, map }:
+// the state's template, and the token-map entries of the nodes it changed or added (each replaces that node's
+// entry). Added layers have the id '<root>.~<state>'. Figma cannot bind the opacity of one paint, so a faded fill or
+// an overlay is a layer of its own, its opacity bound to a variable of the State collection:
+//   pressed   last child: full size, absolute, stretched, the root's radius, fill = the content colour (and its
+//             token), opacity state.pressed.overlay
+//   disabled  first child: the root's fill and stroke moved onto it (their tokens too), opacity
+//             state.disabled.container; every original child's opacity x state.disabled.content (bound when it had
+//             no opacity of its own)
+//   loading   each replaced label at opacity 0 (it keeps its size); last child: the spinner, centred, stroked in the
+//             label's colour (and its token)
+//   focus     last child: a ring outside the root, stroke state.focus.width in the focus colour token
+//   error     the root's stroke in the error colour token; its own width, else state.error.width
+export function applyState(tpl, { state, patch }, nm = {}) {
+  const root = structuredClone(tpl), map = {};
+  const own = (n) => (map[n.id] ||= { ...(nm[n.id] || {}) });
+  const id = `${root.id}.~${state}`;
+  const kids = (root.kids = root.kids || []);
+  const orig = [...kids];
+  const p = root.paint || (root.paint = {});
+  const rad = p.radius;
+  const radKeys = Object.fromEntries(Object.entries(nm[root.id] || {}).filter(([k]) => /^radius/.test(k)));
+  const layer = (o) => ({ id, t: 'F', w: root.w, h: root.h, sz: ['FIXED', 'FIXED'], abs: { x: 0, y: 0, c: 'LR', cy: 'TB' }, ...o });
+  const colorKey = (n) => { const e = nm[n.id] || {}; return e.color || Object.entries(e).filter(([k]) => /^color/.test(k)).map(([, v]) => v)[0]; };
+  const walk = (n, fn) => { fn(n); (n.kids || []).forEach((k) => walk(k, fn)); };
+  const first = (pred) => { let x = null; walk(root, (n) => { if (!x && pred(n)) x = n; }); return x; };
+  if (patch.overlay) {
+    const src = first((n) => n.t === 'T' || n.icon);
+    kids.push(layer({ paint: { bg: patch.overlay.color, opacity: patch.overlay.opacity, ...(rad ? { radius: rad } : {}) } }));
+    const e = (src && nm[src.id]) || {};
+    const tok = src && (src.t === 'T' ? colorKey(src) : e.stroke || e.fill || colorKey(src));
+    map[id] = { ...radKeys, ...(tok ? { bg: tok } : {}), opacity: 'state.pressed.overlay' };
+  }
+  if (patch.contentOpacity != null) for (const k of orig) {
+    const o = (k.paint && k.paint.opacity) ?? 1;
+    k.paint = { ...(k.paint || {}), opacity: r4(o * patch.contentOpacity) };
+    if (o === 1) own(k).opacity = 'state.disabled.content';
+  }
+  if (patch.fillOpacity != null || patch.strokeOpacity != null) {
+    const moved = {}, keys = {}, re = own(root);
+    if (patch.fillOpacity != null) {
+      for (const k of ['bg', 'bgImage']) if (p[k] !== undefined) { moved[k] = p[k]; delete p[k]; }
+      if (re.bg) { keys.bg = re.bg; delete re.bg; }
+    }
+    if (patch.strokeOpacity != null && p.border) {
+      moved.border = p.border; delete p.border;
+      for (const k of Object.keys(re)) if (/^border/.test(k)) { keys[k] = re[k]; delete re[k]; }
+    }
+    kids.unshift(layer({ paint: { ...moved, ...(rad ? { radius: rad } : {}), opacity: patch.fillOpacity ?? patch.strokeOpacity } }));
+    map[id] = { ...radKeys, ...keys, opacity: 'state.disabled.container' };
+  }
+  if (patch.spinner) {
+    let tok = null;
+    for (const path of patch.spinner.replace) {
+      const n = first((x) => x.id === at(root, path));
+      if (!n) throw new Error(`state ${state}: no label ${path} in ${root.id}`);
+      n.paint = { ...(n.paint || {}), opacity: 0 };
+      tok ||= colorKey(n);
+    }
+    const z = patch.spinner.size;
+    kids.push({ id, t: 'V', w: z, h: z, sz: ['FIXED', 'FIXED'], abs: { x: r2((root.w - z) / 2), y: r2((root.h - z) / 2), c: 'C', cy: 'C' },
+      icon: { ref: SPINNER_REF, color: patch.spinner.color, stroke: patch.spinner.color, fill: 'none' } });
+    if (tok) map[id] = { stroke: tok };
+  }
+  if (patch.ring) {
+    const W = patch.ring.width;
+    const grow = (v) => (/^\s*\d*\.?\d+(px)?\s*$/.test(String(v)) ? `${r2(parseFloat(v) + W)}px` : v);
+    kids.push({ id, t: 'F', w: r2(root.w + 2 * W), h: r2(root.h + 2 * W), sz: ['FIXED', 'FIXED'], abs: { x: -W, y: -W, c: 'LR', cy: 'TB' },
+      paint: { border: SIDE.map(() => ({ w: W, style: 'solid', color: patch.ring.color })), ...(rad ? { radius: rad.map(grow) } : {}) } });
+    map[id] = Object.fromEntries(SIDE.flatMap((s) => [[`border${s}`, patch.ring.token], [`border-width-${s}`, 'state.focus.width']]));
+  }
+  if (patch.stroke) {
+    const had = Array.isArray(p.border) && p.border.some((b) => b && b.w > 0);
+    p.border = SIDE.map((s, i) => ({ w: had ? (p.border[i] && p.border[i].w) || 0 : patch.stroke.width, style: 'solid', color: patch.stroke.color }));
+    const re = own(root);
+    for (const s of SIDE) { re[`border${s}`] = patch.stroke.token; if (!had) re[`border-width-${s}`] = 'state.error.width'; }
+  }
+  return { spec: root, map };
+}
+
 export function cmpEncode(components, screens, ctx) {
   const tables = ctx.tables;
   const specs = new Map(screens.map((s) => [String(s.id), { ...s, idx: index(s.spec) }]));
-  const comps = (components && components.components) || [];
+  const comps = withStates((components && components.components) || [], ctx.states);
   const byName = new Map(comps.map((c) => [c.name, c]));
   const propsOf = (c) => Object.fromEntries(c.props.map((p) => [p.name, { type: p.type, default: p.default }]));
   // occurrence index: screen \0 node -> { c, v, x }
@@ -118,9 +230,15 @@ export function cmpEncode(components, screens, ctx) {
     return [...out].sort(cmpStr);
   };
 
-  const encOf = (screen, sn) => {
+  const encOf = (screen, sn, extra) => {
     const s = specs.get(String(screen));
-    return encodeScreen(sn, { ...ctx, screen: String(screen), svgDefs: s.svgDefs || {}, tables });
+    const c = { ...ctx, screen: String(screen), svgDefs: s.svgDefs || {}, tables };
+    delete c.states;
+    if (extra) {
+      c.map = { ...ctx.map, [String(screen)]: { ...((ctx.map || {})[String(screen)] || {}), ...extra.map } };
+      c.svgDefs = { ...c.svgDefs, [SPINNER_REF]: SPINNER };
+    }
+    return encodeScreen(sn, c);
   };
   // icon components: every ref an INSTANCE_SWAP property can take, sized and coloured as its first bound node
   const icons = new Map(); // ref -> { screen, sn }
@@ -157,8 +275,10 @@ export function cmpEncode(components, screens, ctx) {
     const p = {};
     for (const q of c.props) p[q.name] = [q.type, q.type === 'INSTANCE_SWAP' ? iconKey(q.default) : q.default];
     for (const v of c.variants) {
-      const tpl = nodeOf(v.template.screen, v.template.node);
-      const enc = encOf(v.template.screen, tpl);
+      const tpl0 = nodeOf(v.template.screen, v.template.node);
+      const st = v.st ? applyState(tpl0, v.st, (ctx.map || {})[String(v.template.screen)] || {}) : null;
+      const tpl = st ? st.spec : tpl0;
+      const enc = encOf(v.template.screen, tpl, st);
       delete enc.T.a; // placement belongs to each instance
       markTree(enc.T, tpl, String(v.template.screen), tpl.id);
       // a node bound to INSTANCE_SWAP is an instance of the default icon component in the main

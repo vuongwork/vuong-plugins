@@ -99,11 +99,18 @@ export function buildProxyHtml(spec, svgDefs = {}, fontMap, opts = {}) {
       const sides = b.map((s) => (s && s.w > 0 && s.style !== 'none' && s.style !== 'hidden' ? s : null));
       if (sides.every((s) => !s || s.style === 'solid')) {
         const [t, r, bt, l] = sides;
-        if (t) shadows.push(`inset 0 ${px(t.w)} 0 0 ${t.color}`);
-        if (r) shadows.push(`inset ${px(-r.w)} 0 0 0 ${r.color}`);
-        if (bt) shadows.push(`inset 0 ${px(-bt.w)} 0 0 ${bt.color}`);
-        if (l) shadows.push(`inset ${px(l.w)} 0 0 0 ${l.color}`);
-        data.push(`data-ss="${['t', 'r', 'b', 'l'].filter((x, i) => sides[i]).join('')}"`);
+        // the same stroke on all four sides: one spread shadow, whose inner edge follows the radius as a border's does
+        // (four one-side shadows draw crescents on a rounded box: a ring differed from the source in 6-8 % of its pixels)
+        if (sides.every((x) => x && x.w === t.w && x.color === t.color)) {
+          shadows.push(`inset 0 0 0 ${px(t.w)} ${t.color}`);
+          data.push('data-ss="a"');
+        } else {
+          if (t) shadows.push(`inset 0 ${px(t.w)} 0 0 ${t.color}`);
+          if (r) shadows.push(`inset ${px(-r.w)} 0 0 0 ${r.color}`);
+          if (bt) shadows.push(`inset 0 ${px(-bt.w)} 0 0 ${bt.color}`);
+          if (l) shadows.push(`inset ${px(l.w)} 0 0 0 ${l.color}`);
+          data.push(`data-ss="${['t', 'r', 'b', 'l'].filter((x, i) => sides[i]).join('')}"`);
+        }
       } else {
         const k = `s${rules.length}`; cls.push(k); data.push('data-sb');
         st.push('isolation:isolate');
@@ -407,11 +414,13 @@ export async function renderProxy(browser, html, width, opts = {}) {
         const stroke = ['none', 'none', 'none', 'none'];
         if (el.dataset.ss != null) {
           const layers = cs.boxShadow === 'none' ? [] : cs.boxShadow.split(/,(?![^(]*\))/).map((x) => x.trim());
-          const sides = [...el.dataset.ss], mine = layers.slice(layers.length - sides.length);
+          // 'a': one spread shadow draws all four sides
+          const all = el.dataset.ss === 'a', sides = all ? ['t', 'r', 'b', 'l'] : [...el.dataset.ss];
+          const mine = all ? sides.map(() => layers[layers.length - 1]) : layers.slice(layers.length - sides.length);
           sides.forEach((sd, k) => {
             const L = mine[k] || '', color = (/rgba?\([^)]*\)/.exec(L) || ['transparent'])[0];
             const nums = (L.replace(/rgba?\([^)]*\)/, '').match(/-?[\d.]+px/g) || []).map(parseFloat);
-            stroke['trbl'.indexOf(sd)] = `${Math.abs(sd === 't' || sd === 'b' ? nums[1] || 0 : nums[0] || 0)}px solid ${color}`;
+            stroke['trbl'.indexOf(sd)] = `${Math.abs(all ? nums[3] || 0 : sd === 't' || sd === 'b' ? nums[1] || 0 : nums[0] || 0)}px solid ${color}`;
           });
         } else if (el.dataset.sb != null) {
           const b = getComputedStyle(el, '::before');
@@ -422,7 +431,7 @@ export async function renderProxy(browser, html, width, opts = {}) {
         // background image, as computed
         {
           const layers = cs.boxShadow === 'none' ? [] : cs.boxShadow.split(/,(?![^(]*\))/).map((x) => x.trim());
-          const own = el.dataset.ss != null ? layers.slice(0, layers.length - el.dataset.ss.length) : layers;
+          const own = el.dataset.ss != null ? layers.slice(0, layers.length - (el.dataset.ss === 'a' ? 1 : el.dataset.ss.length)) : layers;
           o.shadow = own.length ? own.join(', ') : 'none';
           o.bgImage = cs.backgroundImage;
         }

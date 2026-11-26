@@ -203,8 +203,13 @@ test('R30/R31: dom reports the rendered strokes per side (shadow or overlay), th
     { id: 'n.0', t: 'F', w: 50, h: 20, sz: ['FIXED', 'FIXED'], paint: { border: [off, off, side(1, 'solid', 'rgb(255, 0, 0)'), side(2, 'solid', 'rgb(0, 0, 255)')], shadow: 'rgba(0, 0, 0, 0.2) 0px 2px 4px 0px' } },
     { id: 'n.1', t: 'F', w: 50, h: 20, sz: ['FIXED', 'FIXED'], paint: { border: [side(1, 'dashed', 'rgb(0, 128, 0)'), off, off, off], outline: '2px solid rgb(0, 0, 0)', opacity: 0.5 } },
     { id: 'n.2', t: 'F', w: 50, h: 20, sz: ['FIXED', 'FIXED'] },
+    // a ring: the same stroke on all four sides of a circle is one spread shadow (four one-side shadows draw crescents)
+    { id: 'n.3', t: 'F', w: 20, h: 20, sz: ['FIXED', 'FIXED'], paint: { radius: ['10px', '10px', '10px', '10px'], border: [0, 1, 2, 3].map(() => side(2, 'solid', 'rgb(0, 0, 255)')), shadow: 'rgba(0, 0, 0, 0.2) 0px 2px 4px 0px' } },
   ] };
+  assert.match(html({ spec }), /data-id="n\.3" data-ss="a"[^>]*box-shadow:rgba\(0, 0, 0, 0\.2\) 0px 2px 4px 0px, inset 0 0 0 2px rgb\(0, 0, 255\)/);
   const r = await renderProxy(browser, html({ spec }), 200);
+  assert.deepEqual(r.dom['n.3'].stroke, [0, 1, 2, 3].map(() => '2px solid rgb(0, 0, 255)'));
+  assert.equal(r.dom['n.3'].shadow, 'rgba(0, 0, 0, 0.2) 0px 2px 4px 0px');
   assert.deepEqual(r.dom['n.0'].stroke, ['none', 'none', '1px solid rgb(255, 0, 0)', '2px solid rgb(0, 0, 255)']);
   assert.equal(r.dom['n.1'].stroke[0], '1px dashed rgb(0, 128, 0)'); // overlay: the ::before border, other sides 0px none
   assert.ok(r.dom['n.1'].stroke.slice(1).every((x) => /^0px none /.test(x)), JSON.stringify(r.dom['n.1'].stroke));

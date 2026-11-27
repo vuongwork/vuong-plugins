@@ -9,6 +9,7 @@ Usage: apply_xlsx.py SRC.xlsx --maps "GLOB" --out OUT.xlsx
 """
 import argparse, glob, json, os, re, sys, zipfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from runlog import track
 from langcheck import foreign_words, load_keep, JP as JPc, VI as VIc
 from lxml import etree
 
@@ -69,6 +70,7 @@ def main():
     ap.add_argument('--keep', help='keep.txt (terms allowed to stay as written)')
     ap.add_argument('--report', help='write LEFT / REVIEW lists as JSON here (work dir)')
     a = ap.parse_args()
+    track(os.path.dirname(os.path.abspath(a.maps)), 'apply_xlsx')
     keep = load_keep(a.keep) if a.keep else []
     review = []
     tmap = {}
@@ -117,11 +119,23 @@ def main():
             used.add(new)
             renames[name] = new
 
+    # One pass over every sheet reference ('quoted name'! or bare name!). A reference only starts after an operator,
+    # bracket, comma, space or the start of the formula — so renaming 一覧 never touches 機能一覧!A1.
+    ref_re = None
+    if renames:
+        alts = '|'.join(re.escape(o) for o in sorted(renames, key=len, reverse=True))
+        ref_re = re.compile(r"(?<![^\s=(,:;+\-*/&^<>{!])(?:'((?:[^']|'')+)'|(%s))!" % alts)
+
     def fix_refs(s):
-        for old, new in renames.items():
-            q = "'%s'" % new.replace("'", "''")
-            s = s.replace("'%s'!" % old, q + '!').replace(old + '!', q + '!')
-        return s
+        if ref_re is None:
+            return s
+
+        def sub(m):
+            old = m.group(1).replace("''", "'") if m.group(1) is not None else m.group(2)
+            if old not in renames:
+                return m.group(0)
+            return "'%s'!" % renames[old].replace("'", "''")
+        return ref_re.sub(sub, s)
 
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     zout = zipfile.ZipFile(a.out, 'w', zipfile.ZIP_DEFLATED)

@@ -38,6 +38,18 @@ def venv_python(base):
     return os.path.join(base, 'venv', 'bin', 'python')
 
 
+# ---------- persistent data (translation memory, glossaries, test runs) ----------
+def vt_data():
+    """Common folder that must survive reboots: $VTRANS_DATA, else ~/.vuong-trans (NOT the system temp folder)."""
+    return os.environ.get('VTRANS_DATA') or os.path.join(os.path.expanduser('~'), '.vuong-trans')
+
+
+def project_dir(project):
+    """<vt_data>/projects/<project>/ — one folder per project/customer (tm/, glossary, keep.txt, runs/)."""
+    safe = ''.join(c if c.isalnum() or c in '-_.' else '_' for c in project).strip('._') or 'default'
+    return os.path.join(vt_data(), 'projects', safe)
+
+
 # ---------- fonts ----------
 # Candidates per role, in order of preference (file names, matched case-insensitively).
 # Noto Sans / Noto Sans CJK / DejaVu give the same result on every machine; the OS fonts after them

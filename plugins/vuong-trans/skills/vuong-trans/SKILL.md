@@ -5,153 +5,129 @@ description: Translate PowerPoint (.pptx), Excel (.xlsx) and PDF documents betwe
 
 # vuong-trans — PPTX/XLSX/PDF translation between Japanese / Vietnamese / English
 
-Produces a translated copy of the document with the same layout. Two parallel tracks:
-
 ```
 source file
- ├─ A. text track:  extract.py → (dedupe, chunk) → N translation subagents → apply_pptx.py / apply_xlsx.py
- └─ B. image track (pptx only): extract_images.py → ocr.py (easyocr) → M overlay subagents → overlay.py → apply_pptx.py --images
-                                                                              ↓
-                                                        render to PDF → look at sample slides → fix
+ ├─ A. text:  extract.py --project (dedupe + translation memory + chunks) → N translator subagents → apply_pptx.py / apply_xlsx.py → tm.py save
+ └─ B. images (pptx): extract_images.py (dedupe) → ocr.py (→ todo.json) → overlay subagents (todo only) → overlay.py → apply_pptx.py --images
+ PDF → references/pdf.md          then: C. verify → report (runlog.py)
 ```
 
-Why it is cheap: everything mechanical (extract, write back, font shrink, OCR, drawing, image swap) is a script and costs no model tokens. The model only does what needs understanding — translating and deciding overlay regions — and that work is split across subagents so the main session never holds slide contents or images. Strings are deduplicated before translation (100 slides ≈ 1,400 unique strings).
+Scripts do everything mechanical at no token cost; the model only translates and places overlay regions, split across
+subagents so the main session never holds slide contents or full images (only one thumbnail sheet of the images OCR left out). Strings are deduplicated (100 slides ≈ 1,400 unique
+strings) and strings translated before in the same project come from the translation memory (next version of a deck:
+84–89 % of characters re-used on a sample deck).
 
-Scripts live in `scripts/` next to this file (call it `$SK`). Put all intermediate files in a work dir under the session scratchpad / system temp folder, e.g. `$W=<scratchpad>/vtrans/<docname>` — never in the user's folder. Final outputs go next to the source in a sub-folder named after the target — `VN/`, `EN/` or `JP/` — with the same suffix on the file name (`<name>_VN.pptx`); below, `<SUF>` stands for that `VN|EN|JP` (ask only if the user specified otherwise).
-
-Runs on Linux, macOS and Windows. `python3` below = the system Python 3 (on Windows use `python` or `py -3` if `python3` is missing).
-Fonts are looked up in the OS font folders (Noto Sans / DejaVu Sans / Noto Sans CJK JP, with Segoe UI / Arial / Yu Gothic /
-Meiryo / Hiragino as fallbacks); if a script stops with "no font found", tell the user which font to install or to set
-`VTRANS_FONT_DIR` to a folder holding the font files.
+`$SK` = this skill's folder. Work files in `$W=<scratchpad>/vtrans/<docname>` — never in the user's folder. Outputs go next
+to the source in `VN/`, `EN/` or `JP/` with that suffix (`<name>_VN.pptx`); `<SUF>` below = `VN|EN|JP`.
+`python3` = system Python 3 (Windows: `python` / `py -3`). Fonts come from the OS font folders (Noto Sans / DejaVu / Noto Sans
+CJK JP, fallbacks Segoe UI / Arial / Yu Gothic / Meiryo / Hiragino); on "no font found" tell the user which font to install
+or to set `VTRANS_FONT_DIR`.
 
 ## 0. Decide
-- Target language: `vi`, `en` or `ja` (from the request); the source may be any of ja / vi / en or mixed. Always pass `--target` to extract.py and apply_pptx.py — without it the scripts fall back to the old Japanese-only mode and silently skip Vietnamese/English source text. File types: pptx → tracks A+B; xlsx → track A, then VIEW every image the scripts list from `xl/media/` (logos can stay; charts/diagrams with text must be redrawn or overlaid at the same pixel size and written back under the same filename); pdf → section D (draws over the PDF itself).
-- PDF exported from PowerPoint/Excel: ask the sender for the original pptx/xlsx first if possible — tracks A/B keep the layout editable; the PDF track only paints over.
-- If several files are requested, run them in the same pass: extract all, translate all unique strings together (one shared map keeps terminology consistent).
-- Build a short **glossary** for the domain before spawning translators: copy `references/glossary-logistics.md` if the domain is warehouse/HT/estimation, otherwise write 20–40 key terms yourself after skimming the extracted strings. Consistent terms across agents are the main quality lever.
-- **Proper-noun glossary (mandatory).** Translators see deduplicated strings with no slide context, so a
-  company name like `ABC金属` gets translated literally ("ABC Kim loại") instead of as the entity ("ABC Metals").
-  After extract, run `python3 $SK/scripts/find_entities.py $W/src.json > $W/entities.txt` and resolve every
-  candidate yourself into a `## Proper nouns` table in `$W/glossary.md`:
-  `| 原文 | Dùng trong VI/EN | Loại | Nguồn |` — company/org → official romanized name (ABC金属 → ABC Metals),
-  people → romanized, factory/site → "Nhà máy <địa danh>" / "<Place> Plant", product/model → keep as is.
-  If the official name is not certain, keep the original + romanization and mark it `[chưa xác minh]` —
-  never translate the meaning of a name. Show the table to the user in 1 short block if it has any `[chưa xác minh]` rows.
-- **Document context (2–3 lines)** for every brief: what the document is, who proposes/sends to whom
-  (e.g. "Đề xuất của công ty X gửi công ty Y về kho tự động"), and the end-user. Take it from the
-  title/cover strings; it fixes `Aの提案` / `Aへのご提案` → "Đề xuất … cho A", not "Đề xuất … A".
+- **Project**: `python3 $SK/scripts/tm.py project <file>` prints the default name (nearest parent folder that is not a date /
+  VN / EN / input… folder); same name for every file of one customer; tell the user. Data: `$VTRANS_DATA` (default
+  `~/.vuong-trans/projects/<project>/`: `tm/<target>.json`, `glossary_<target>.md`, `keep.txt`, `runs/`) — writing there may
+  need the user's approval outside a sandbox.
+- **Target** `vi` | `en` | `ja`; the source may be any of them or mixed. Always pass `--target` (without it the scripts fall back
+  to Japanese-only mode and silently skip vi/en source text). pptx → A+B; xlsx → A, then view every image listed from
+  `xl/media/`; pdf → `references/pdf.md` (ask first whether the original pptx/xlsx exists — it keeps the layout editable).
+- Several files → one pass: extract all, translate all unique strings together (one map keeps terminology consistent).
+- **Glossary** before spawning translators: copy `references/glossary-logistics.md` for warehouse/HT/estimation, else write
+  20–40 key terms after skimming the strings. Consistent terms across agents are the main quality lever.
+- **Proper nouns (mandatory)**: translators see strings without slide context, so `ABC金属` becomes "ABC Kim loại". Run
+  `python3 $SK/scripts/find_entities.py $W/src.json > $W/entities.txt` and resolve every candidate into a `## Proper nouns`
+  table in `$W/glossary.md`: `| 原文 | Dùng trong VI/EN | Loại | Nguồn |` — company → official romanized name, people →
+  romanized, site → "Nhà máy <địa danh>" / "<Place> Plant", product/model → as is. Unsure → original + romanization +
+  `[chưa xác minh]` (never translate a name's meaning); show those rows to the user. Put them in `$W/keep.txt` (one per line).
+- **Document context (2–3 lines)** for every brief: what the document is, who sends it to whom, the end-user (from the
+  title/cover). It fixes `Aへのご提案` → "Đề xuất … cho A", not "Đề xuất … A".
 
 ## A. Text track
-1. Extract unique strings and split into chunks (~350 strings per chunk works well):
+1. Extract:
    ```bash
-   python3 $SK/scripts/extract.py <file1> [file2 ...] --out $W --target <vi|en|ja> --keep $W/keep.txt --chunk 350
+   python3 $SK/scripts/extract.py <file1> [file2 ...] --out $W --target <lang> --keep $W/keep.txt --chunk 350 --project <P> [--loc]
    ```
-   `--target` extracts EVERY string that is not yet in the target language (Japanese, Vietnamese, English headings like
-   "Proposal", "Our Understanding", "Thank you"…), whatever the source language. Kept automatically: acronyms (WCS, AMR),
-   codes (M-01, P-0123), e-mails, URLs, file names, numbers. `$W/keep.txt` = one term per line that must stay as written
-   (proper nouns from the glossary, vendor/product names); build it from the proper-noun table before extracting.
-   Writes `$W/src.json` (all unique strings) and `$W/chunk_1.json …`. Keys are exact paragraph texts (pptx) / shared-string texts incl. phonetic runs (xlsx) — don't edit them.
-2. Spawn one subagent per chunk **in the same turn** (they run in parallel). Give each the brief in `references/brief-text.md` with the paths filled in. Use `effort: "lower"` only for EN; VI benefits from more reasoning (word-by-word is the classic JA→VI failure).
-   Each writes `$W/<lang>_chunk_k.json` = `{source: translation}`.
+   - Writes `$W/src.json` (all unique strings) and `$W/chunk_k.json` (only what the model must translate). Keys are exact
+     paragraph / shared-string texts — don't edit them.
+   - Extracts every string not yet in the target language (incl. English headings in a JA deck); acronyms, codes, e-mails,
+     URLs, file names, numbers and keep.txt terms are kept. Master/layout text only in the deck's main language (the
+     company template — addresses, copyright — stays as is).
+   - `--project`: TM hits → `$W/<lang>_chunk_0_tm.json` (applied with the other maps). Short (≤ 4 chars) or context-dependent
+     strings (> 1 meaning stored) still go to translators with earlier translations in `$W/tm_hints.json` — name it in the
+     brief. The project's saved glossary/keep.txt are copied into `$W` if missing: review instead of rebuilding. 0 chunks →
+     skip step 2.
+   - `--loc` (xlsx): `$W/loc.json` = sheet + cell / shape anchor of every string and image.
+2. Spawn one subagent per chunk **in the same turn**, brief = `references/brief-text.md` with paths filled in. `effort: "lower"`
+   only for EN (word-by-word is the classic JA→VI failure). Each writes `$W/<lang>_chunk_k.json` = `{source: translation}`.
+   After each one returns, record its usage line: `python3 $SK/scripts/runlog.py agent $W --step text --name chunk_k --tokens <total_tokens> --ms <duration_ms>`.
 3. Write back:
    ```bash
-   python3 $SK/scripts/apply_pptx.py <src.pptx> --maps "$W/<lang>_chunk_*.json" --out <dir>/<name>_<VN|EN|JP>.pptx \
-       --target <lang> --keep $W/keep.txt --report $W/check.json [--images $W/img]      # --fit report (default)
-   python3 $SK/scripts/apply_xlsx.py <src.xlsx> --maps "$W/<lang>_chunk_*.json" --out <dir>/<name>_<VN|EN|JP>.xlsx --target <lang> --keep $W/keep.txt --report $W/check_xlsx.json
+   python3 $SK/scripts/apply_pptx.py <src.pptx> --maps "$W/<lang>_chunk_*.json" --out <dir>/<SUF>/<name>_<SUF>.pptx \
+       --target <lang> --keep $W/keep.txt --report $W/check.json [--images $W/img] [--annotate-vi]
+   python3 $SK/scripts/apply_xlsx.py <src.xlsx> --maps "$W/<lang>_chunk_*.json" --out <dir>/<SUF>/<name>_<SUF>.xlsx --target <lang> --keep $W/keep.txt --report $W/check_xlsx.json
    ```
-   - pptx: replaces each paragraph's text into its first run (keeps that run's formatting). Overflow handling is the USER's choice:
-     the first run uses `--fit report` (changes nothing) and prints every overflowing frame (`OVER slide … shrink x0.85 or +24pt width`).
-     Show that list to the user and ask (AskUserQuestion) which option to use, then re-run with it:
-       1. `--fit shrink` — smaller font; every frame of the same kind (same base shape name + same original size) gets the SAME scale, so siblings stay uniform.
-       2. `--fit widen` — keep the original size; widen the frame (up to the slide edge) and push right-hand neighbours on the same row; reports frames that now touch other shapes and table cells that cannot be widened.
-     Never fix overflow by shortening the translation.
-   - xlsx: edits the zip XML directly (sharedStrings, drawings, comments, cached formula text results, sheet names) so shapes, images, formulas and formatting survive; renamed sheets are fixed inside formulas/defined names/charts. Sheet names are cut to 31 chars. `fullCalcOnLoad` is set so Excel recalculates on open.
-     - String literals that formulas or validation lists compare against (e.g. `IF(X="YES")`, list `"YES, NO"`) are auto-added to keep.txt by extract.py and never translated — translating them breaks the formula. Mention them to the user.
-     - Rich-text cells (several formatted runs) are merged into the first run's format → list those cells for the user to re-bold manually.
-     - Defined names and `externalLinks` caches are hidden and are left as is (renaming breaks references).
-     - Images: apply_xlsx.py prints `xl/media/*`; view each. A chart image is redrawn (e.g. matplotlib, Noto Sans CJK JP for ja, same size) and written back into the zip under the same name.
-   - Leftover check (with `--target`): `LEFT` = output still contains source-language script (Japanese when target ≠ ja, Vietnamese diacritics when target ≠ vi) — must be 0 or explicitly approved;
-     `REVIEW` = paragraphs left unchanged that still contain non-target words (e.g. "Our Understanding", "Thank you" in a JA deck). Translate them, or add the term to keep.txt
-     only if the user approves keeping it. Do not report "done" while LEFT/REVIEW items are unresolved.
+   - pptx overflow is the USER's choice: the default `--fit report` changes nothing and lists `OVER` frames. Show them and ask
+     (AskUserQuestion): `--fit shrink` (same scale for every frame of the same kind) or `--fit widen` (keep size, widen frame,
+     push right-hand neighbours). Never shorten the translation to fit.
+   - xlsx: zip XML is edited in place (sharedStrings, drawings, comments, cached formula results, sheet names); renamed sheets
+     are fixed in formulas / defined names / charts / validations; names cut to 31 chars; `fullCalcOnLoad` set. Tell the user:
+     formula/validation literals auto-kept (extract.py prints them), rich-text cells merged to the first run's format (list
+     them for manual re-bold). Defined names and `externalLinks` caches are left as is. Images: view each `xl/media/*`; redraw
+     a chart at the same size and write it back under the same name. Never re-pack an xlsx with `zip -r` (Excel Online refuses
+     directory entries) — use Python zipfile in the source order.
+   - `LEFT` (source-language script still in the output) must be 0 or approved; `REVIEW` (unchanged paragraphs with non-target
+     words) → translate, or add to keep.txt only if the user approves. Not "done" while either is open.
+4. After the user accepts: `python3 $SK/scripts/tm.py save --project <P> --target <lang> --maps "$W/<lang>_chunk_*.json" --file <name> --ctx "<document context>" --work $W`
+   (also saves glossary/keep.txt). Same `--file` again = correction; another file with a different translation = new meaning
+   (never auto-re-used). Term changed in the glossary → `tm.py forget --project <P> --target <lang> --match '<term>'` first.
 
 ## B. Image track (pptx)
-1. Extract images (pictures wider than 15 % of the slide). PNG/JPEG are taken as-is; WMF/EMF (typical for pasted Excel tables) are cropped from a high-DPI slide render so they stay sharp:
+1. `python3 $SK/scripts/extract_images.py <src.pptx> --out $W/img` — every picture whatever its size on the slide, icons
+   < 64 px skipped, identical pictures once (`dup_of` re-uses the overlay). WMF/EMF are cropped from a high-DPI LibreOffice
+   render; if soffice fails (sandbox: "no valid pipe path") `meta.json` is still written with those marked `missing` — ask the
+   user to approve running that one conversion outside the sandbox; never bypass silently.
+2. OCR, in the background right away (CPU, sample deck: 48 images in 100 s — ≈ 5 s per large image, 1 s per small one):
    ```bash
-   python3 $SK/scripts/extract_images.py <src.pptx> --out $W/img
-   ```
-   Needs LibreOffice for WMF. In a sandbox, soffice may fail with "no valid pipe path" — tell the user and ask them to approve running that one conversion outside the sandbox (it only reads their own file); never bypass the sandbox silently.
-2. OCR (start in background right away; ~40 s/image on CPU):
-   ```bash
-   python3 $SK/scripts/setup_env.py ocr     # once: private venv + easyocr models (ja/vi/en); LAST line printed = $OCRPY
+   python3 $SK/scripts/setup_env.py ocr     # once; LAST line printed = $OCRPY. Hosts: pypi.org, files.pythonhosted.org,
+                                            # download.pytorch.org, download-r2.pytorch.org, github.com, *.githubusercontent.com
    $OCRPY $SK/scripts/ocr.py $W/img --langs <ja,en | vi,en | en> --target <lang> --keep $W/keep.txt   # run_in_background
-   # --langs = language of the SOURCE images (easyocr cannot mix ja with vi). Boxes flagged "src": true still need translation.
-   # target ja: overlay.py / pdf_images.py switch to Noto Sans CJK automatically (Noto Sans has no Japanese glyphs).
    ```
-   setup needs network to pypi.org, files.pythonhosted.org, download.pytorch.org, download-r2.pytorch.org, github.com, objects/release-assets.githubusercontent.com. OCR gives reliable **box positions**; its recognized text is often wrong (vertical text, small fonts) — the overlay agents read the image themselves.
-3. **Pilot one image yourself first** (a diagram, not a table): write `$W/img/<lang>_<name>.json` in the region format described in `references/brief-image.md`, run `overlay.py $W/img --lang <lang> <name>`, view `$W/img/out/<name>.png`. This catches box/colour/font issues before fanning out, which is far cheaper than redoing 60 images.
-4. Spawn overlay subagents (≈7–8 images each, grouped in OCR order so the first group can start immediately) with `references/brief-image.md`. Each writes `$W/img/<lang>_<name>.json`, renders, views and fixes its own output.
-5. Re-render everything once with the final script (keeps fonts consistent), then build the pptx with `--images`:
-   ```bash
-   python3 $SK/scripts/overlay.py $W/img --lang <lang>
-   ```
-
-## D. PDF track (text layer + images, drawn over the PDF)
-Needs PyMuPDF in a private venv: `python3 $SK/scripts/setup_env.py pdf` (once; hosts pypi.org, files.pythonhosted.org) — the LAST line it prints is `$PY`.
-1. Extract the **lines** (not blocks) still needing translation, page-ordered chunks, pages without text layer:
-   ```bash
-   $PY $SK/scripts/pdf_extract.py <a.pdf> [b.pdf ...] --out $W --target <lang> --keep $W/keep.txt --chunk-lines 200
-   ```
-   → `lines.json`, `docs.json` (tag d1, d2… per file), `pages_k.json` (`{"d1 page 3": [lines in order]}`), `src.json`, `noTextPages.json`.
-   Run `find_entities.py $W/src.json` for the proper-noun table as usual.
-2. Translators: `references/brief-text.md` with these changes — input is `pages_k.json`; output a flat `{exact line: translation}`;
-   each line is drawn back into its own box (keep ≤ 1.6× JA length); neighbouring lines are one sentence split across lines →
-   read the whole page and split the Vietnamese so the lines read in order; a pure sentence tail may map to `""`.
-   Same short label needing different words on different pages → key `"<tag>|<page_index0>|<text>"`.
-3. Write back: `$PY $SK/scripts/apply_pdf.py $W --maps "$W/<lang>_*.json" --outdir $W/out --suffix _<SUF> --target <lang> --keep $W/keep.txt --report $W/check_pdf.json`
-   (redact each translated line → draw Noto Sans / Noto Sans CJK for ja; a line with no translation is left untouched and listed as missing). Default `--fit report` draws at the original size and lists too-long lines (`OVER`);
-   show them to the user and ask: `--fit shrink` (one common scale per page + original size + bold, so same-kind lines stay uniform)
-   or `--fit widen` (original size, line may run on to the page edge). `LEFT` / `REVIEW` lists work as in apply_pptx.py.
-4. Images (always, every file): crop from the TEXT-TRANSLATED pdfs, OCR, overlay agents, paste back:
-   ```bash
-   $PY $SK/scripts/pdf_images.py crop $W --pdfs $W/out/*_<SUF>.pdf       # pictures ≥ 90×50 pt + whole no-text pages
-   $OCRPY $SK/scripts/ocr.py $W/img --langs <ja,en | vi,en | en> --target <lang> --keep $W/keep.txt   # run_in_background
-   # → overlay agents (brief-image.md) for every image whose OCR has ≥ 2 boxes flagged "src", then
-   python3 $SK/scripts/overlay.py $W/img --lang <lang>
-   $PY $SK/scripts/pdf_images.py put $W --map <src.pdf>=$W/out/<name>_<SUF>.pdf ... --outdir <dir>/<SUF> --lang <lang>
-   ```
-   No-text pages (scans, CAD drawings with outlined text) are cropped as one whole-page image for OCR/overlay agents, but
-   `put` draws their regions as VECTOR boxes + text on the original page (never pastes the raster: hairlines went grey).
-   Pass `--lang <lang>` to `put` (ja → CJK font).
-5. Verify: the LEFT/REVIEW lists of apply_pdf.py (and `pdftotext` for the target-language check) only prove the TEXT layer —
-   also render every page at low DPI (`pdftoppm -r 40`, or PyMuPDF `page.get_pixmap(dpi=40)` with `$PY` where poppler is
-   not installed, e.g. Windows) and look at a contact sheet / thumbnails for source-language text left in pictures.
+   `--langs` = language of the SOURCE images. `$W/img/todo.json` = images with ≥ 2 boxes to translate or one real label —
+   ONLY these go to overlay agents (sample deck: 13 of 48). Boxes are reliable, recognized text is not (agents read the image).
+   Check progress by counting `ocr_*.json` (`pgrep -f ocr.py` matches itself).
+3. **Pilot one diagram yourself**: write `$W/img/<lang>_<name>.json` (format in `references/brief-image.md`), run
+   `python3 $SK/scripts/overlay.py $W/img --lang <lang> <name>`, view `$W/img/out/check_<name>.png`. Catches box/colour/font
+   issues before fanning out.
+4. Overlay subagents for `todo.json` (≈ 7–8 images each, OCR order) with `references/brief-image.md`; give each its own
+   scratch sub-folder. **Always view `$W/img/skipped_k.png` once** (thumbnails of every image OCR left out, ≈ 1,600 tokens
+   per 36 images): catches clearly visible text OCR did not recognise (vertical, stylised) — add every image showing text to
+   `todo.json`. Tiny text is not the sheet's job: ocr.py already re-reads at full detail every left-out image > 1600 px.
+   Record each agent: `runlog.py agent $W --step image --name <group> --tokens … --ms …`.
+5. Re-render all once with the final script, then apply_pptx.py `--images $W/img`: `python3 $SK/scripts/overlay.py $W/img --lang <lang>`.
 
 ## Content rules (all directions)
-- Never change, shorten or drop source meaning — not even to fit a box. Overflow is solved by font size or frame size (see `--fit`).
-- If the user points to a reference document in the target language (e.g. a previous proposal deck), use its wording for recurring
-  items (cover labels, closing line, section names, office list) and add those terms to the glossary before spawning translators.
+- Never change, shorten or drop source meaning — not even to fit a box.
+- A reference document in the target language (e.g. an earlier proposal) → use its wording for recurring items and add them
+  to the glossary before spawning translators.
 - English headings/labels are NOT exempt: in a ja/vi target every phrase is translated unless it is on the keep-list.
+- (vi) Katakana loanwords of English industry/IT terms stay English; English WMS terms carry the Vietnamese meaning in brackets
+  (`Putaway (cất hàng)`), never nested — rules and lists are in the briefs/glossary. Slides: translators write the terms
+  without brackets and `apply_pptx.py --annotate-vi` adds them at the first occurrence per slide; md/xlsx reading docs:
+  `scripts/annotate_vi.py`, then re-read every changed line.
+- Terminology change on an existing translation: give agents the `{source: old_translation}` map and change only the terms
+  (much cheaper than re-translating); for images edit `<lang>_<name>.json` and re-render.
 
 ## C. Verify (do not skip)
-- Render the output to PDF (`soffice --headless --convert-to pdf`) and view 4–6 slides: a text-heavy one, a table, a flow diagram, a title with a long name. Look for overflow, overlaps, leftover Japanese.
-- For xlsx, open with `pdftotext` or openpyxl and spot-check a few sheets; confirm formulas still compute (cached values present) and no sheet name > 31 chars.
-- Report to the user: output paths, counts (strings, images), what could not be done well (tiny boxes, screenshots with unreadable text), and terms the agents flagged as uncertain. Mention that text inside images is no longer editable.
+- Render to PDF (`soffice --headless --convert-to pdf`) and view 4–6 slides: text-heavy, a table, a flow diagram, a long title,
+  and one showing master text. Look for overflow, overlaps, leftover source language. Images: overlay agents viewed every
+  check sheet; text inside images is no longer editable — say so.
+- xlsx: spot-check a few sheets with `pdftotext` or openpyxl; formulas still compute; no sheet name > 31 chars.
+- Report to the user — paste `python3 $SK/scripts/runlog.py report $W` (time per step and end to end, subagent tokens,
+  strings/characters sent vs re-used from TM, images total / duplicate / given to agents, LEFT / REVIEW / OVER counts;
+  add `--usd-per-mtok <price>` only when the user gives a price), plus output paths, project name, what could not be done
+  well, and terms the agents flagged as uncertain.
 
 ## Pitfalls learned
-- (xlsx) Excel tables (`xl/tables/*.xml`): each `tableColumn name` must equal its header cell text. If the header is translated but the column name is not, Excel Desktop silently repairs the file, but Excel Online/SharePoint refuses to open it ("couldn't open the workbook"). apply_xlsx.py now sets every column name to the text actually in its header cell (after translation), so they always match.
-- (xlsx) Excel Online is also strict about: (1) sheet-name references inside data validations / conditional formats (`<xm:f>`, `<formula1>`) — apply_xlsx.py renames them too; (2) zip directory entries — never re-pack an xlsx with `zip -r`; let apply_xlsx.py write it, or write entries with Python zipfile in the source order, files only. If you hand-edit parts after apply_xlsx.py (e.g. swapping a chart image), re-pack the same way.
-- (vi) English WMS terms must carry the Vietnamese business meaning in brackets so non-specialists can follow: `Putaway (cất hàng)`, `Staging (tập kết hàng)`. Where the term already has a bracket (`Staging inspection (出荷検品)`) merge it: `(出荷検品 – kiểm hàng tập kết)`; never nest brackets.
-  - Reading docs (md summaries, xlsx feature lists): run `scripts/annotate_vi.py` — `annotate_markdown()` = first occurrence per `##` section, `annotate(text, set())` = per cell. Then re-read every changed line; fix doubled meanings by rewording the source phrase, not by patching output.
-  - Slides (text): translators write the English terms WITHOUT brackets; `apply_pptx.py --annotate-vi` adds the meaning at the first occurrence per slide (skips text inside quotes/file names and existing brackets). Images: overlay agents add the bracket themselves where the box has room.
-  - Revising an existing translation (terminology change) is much cheaper than re-translating: give agents the {source: old_translation} map + rules and have them change only the terms; for images edit `<lang>_<name>.json` and re-render. Give each agent its own scratch sub-folder — shared helper-script paths got overwritten when 6 agents ran in parallel.
-- (vi) Katakana loanwords of English industry/IT terms (バッチ, ピッキング, ロット, パレット, ロケーション, マスタ, ラベル…) must stay in English — translating them ("lô", "lấy hàng", "vị trí") makes the text harder for practitioners to read. Kanji terms are translated. Put this rule and the loanword list into every brief (both briefs and the glossary already carry it).
-- `・` (U+30FB) is inside the katakana range: translators should convert it to `•` / `/`, otherwise the "no Japanese left" check fails and Noto Sans can't draw it.
-- Noto Sans lacks `→ ① ▲ ○ ●`: overlay.py falls back to DejaVu per glyph, so agents may use them.
-- overlay.py picks the largest font that fits the box: a short label in a tall box becomes huge. Agents should size boxes to the text area, or paint a blank cover region (`"vi": " "`) over the Japanese and a smaller text box on top.
-- Japanese file names inside text (e.g. 「RFP.pdf 6ページ」より抜粋) get translated; if the user needs real file names, keep them romanized/original in the brief.
-- Large output: images are saved at 2× for sharp text; a 100-slide deck can reach ~50 MB.
-- (pdf) Redacting a whole text BLOCK deletes table numbers: PowerPoint tables often export one block per column spanning many cells. Work per line and redact only the middle 50 % of the line height (apply_pdf.py does this).
-- (pdf) Image names must be unique across files: an ad-hoc crop that derived the prefix from the first N chars of Japanese file names gave two files the same prefix, one file's crops overwrote the other's, so its pictures were never OCR'd and "no Japanese in images" was reported wrongly. pdf_images.py uses the d1/d2 tags from docs.json and asserts no duplicate names.
-- (pdf) "0 Japanese left" from pdftotext says nothing about pictures — look at rendered pages (thumbnails) before reporting done.
-- (pdf) Fragmented lines translated in isolation read badly; translate page-ordered chunks with neighbour context.
-- `pgrep -f ocr.py` inside a bash command matches the bash command itself — check progress by counting `ocr_*.json`, and run OCR with run_in_background (nohup/& gets killed when the sandboxed command ends).
+- Large output: overlays are saved at 2×; a 100-slide deck can reach ~50 MB.
+- Japanese file names inside text (「RFP.pdf 6ページ」より抜粋) get translated; if real names matter, put them in keep.txt.
+- Agents running in parallel overwrote each other's helper scripts in a shared folder: one scratch sub-folder per agent.

@@ -10,16 +10,21 @@ Writes WORKDIR/lines.json  {pdf_path: [{page,bbox,text,size,color,bold,dir}]}
        WORKDIR/noTextPages.json  pages without any text layer (scans / outlined drawings) -> image track
 Why lines: a PowerPoint/CAD table is often ONE text block spanning many cells; redacting a block
 deletes the numbers in it. Lines keep exact positions; page-ordered chunks keep sentence context.
+--project P: translation memory (tm.py). Pages whose lines are ALL known are left out of pages_k.json (their lines
+go to <lang>_chunk_0_tm.json); a page with any new line is sent whole, so sentences split over lines keep context.
 Needs PyMuPDF (pip install pymupdf in a venv).
 """
 import argparse, json, os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from runlog import track
 from langcheck import needs_translation, load_keep
 import pymupdf
 JP = re.compile(r'[぀-ヿ一-鿿ｦ-ﾟ]')
 ap = argparse.ArgumentParser(); ap.add_argument('pdfs', nargs='+'); ap.add_argument('--out', required=True)
 ap.add_argument('--chunk-lines', type=int, default=200); ap.add_argument('--target', choices=['vi', 'en', 'ja'])
-ap.add_argument('--keep'); a = ap.parse_args()
+ap.add_argument('--keep'); ap.add_argument('--project'); a = ap.parse_args()
+track(a.out, 'pdf_extract')
+if a.project and not a.target: ap.error('--project needs --target')
 KEEP = load_keep(a.keep) if a.keep else []
 wanted = (lambda t: needs_translation(t, a.target, KEEP)) if a.target else (lambda t: bool(JP.search(t)))
 os.makedirs(a.out, exist_ok=True)
@@ -45,10 +50,20 @@ json.dump(lines, open(f'{a.out}/lines.json', 'w', encoding='utf-8'), ensure_asci
 json.dump(docs, open(f'{a.out}/docs.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 json.dump(list(uniq), open(f'{a.out}/src.json', 'w', encoding='utf-8'), ensure_ascii=False)
 json.dump(notext, open(f'{a.out}/noTextPages.json', 'w', encoding='utf-8'), ensure_ascii=False)
+if a.project:
+    import tm
+    tm.restore_glossary(a.project, a.target, a.out)
+    reuse, hints, todo = tm.split(list(uniq), a.project, a.target)
+    tm.write_lookup(a.out, a.target, reuse, hints)
+    new = set(todo)
+    pages = [(key, pl) for key, pl in pages if any(t in new for t in pl)]
+    print(f'TM [{a.project}]: {len(reuse)} line text(s) re-used, {len(hints)} hinted; {len(pages)} page(s) still to translate')
+for old in __import__('glob').glob(f'{a.out}/pages_*.json'): os.remove(old)
 k, cur, n = 1, {}, 0
 for key, pl in pages:
     if n and n + len(pl) > a.chunk_lines:
         json.dump(cur, open(f'{a.out}/pages_{k}.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=0); k, cur, n = k + 1, {}, 0
     cur[key] = pl; n += len(pl)
 if cur: json.dump(cur, open(f'{a.out}/pages_{k}.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=0)
+else: k = 0
 print(f'{sum(map(len, lines.values()))} lines, {len(uniq)} unique, {k} chunk(s), {len(notext)} page(s) without text layer')

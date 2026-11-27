@@ -15,12 +15,14 @@ Then run ocr.py WORKDIR/img and overlay agents exactly as for pptx images.
 """
 import argparse, json, os, glob, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from runlog import track
 from common import find_font, fonts           # also switches stdout to UTF-8 (Windows)
 import pymupdf
 ap = argparse.ArgumentParser(); ap.add_argument('cmd'); ap.add_argument('work')
 ap.add_argument('--pdfs', nargs='*', default=[]); ap.add_argument('--dpi', type=int, default=200)
 ap.add_argument('--map', nargs='*', default=[]); ap.add_argument('--outdir'); ap.add_argument('--lang', default='vi')
 a = ap.parse_args()
+track(a.work, 'pdf_images_' + a.cmd)
 docs = json.load(open(f'{a.work}/docs.json', encoding='utf-8')); IMG = f'{a.work}/img'; os.makedirs(IMG, exist_ok=True)
 
 FONT, FONT_B = fonts(a.lang, semibold=True)   # Noto Sans (OS fallback on Windows/macOS); ja target -> Noto Sans CJK

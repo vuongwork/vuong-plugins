@@ -27,8 +27,11 @@ For each image NAME:
    - Set "bg" to the real background of that cell/shape and "fg" when text isn't plain black/white (e.g. white on a dark header). Table header cells: "align":"center","bold":true. Tables: one region per cell.
    - Status words in tables: 要/不要/採用/対象外/保留 → (vi) Cần / Không cần / Áp dụng / Ngoài phạm vi / Tạm hoãn; (en) Required / Not required / Adopted / Out of scope / On hold.
    - Glyphs: use "•" not 「・」; → ① ▲ ○ are fine (fallback font).
-3. Render: `python3 <SKILL_DIR>/scripts/overlay.py <IMGDIR> --lang <lang> NAME` → <IMGDIR>/out/NAME.png (2× scale).
-4. View the output. Check: no source text left, readable, nothing important covered, no overflow. Fix and re-render (≤ 3 rounds).
+3. Render: `python3 <SKILL_DIR>/scripts/overlay.py <IMGDIR> --lang <lang> NAME` → <IMGDIR>/out/NAME.png (2× scale)
+   and <IMGDIR>/out/check_NAME.png (only the painted areas: source left | output right).
+4. Check each round on check_NAME.png (a fraction of the image tokens): no source text left in a painted area, readable,
+   nothing important covered, no overflow. Fix and re-render (≤ 3 rounds). Then view the full out/NAME.png ONCE to catch
+   source text you never covered.
 
 Don't modify the scripts or other agents' files; keep scratch files in your own sub-folder.
 Final report (short): per image — number of regions and any spot you couldn't handle well; uncertain terms.

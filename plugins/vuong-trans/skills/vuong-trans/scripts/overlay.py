@@ -3,10 +3,14 @@
 Region file IMGDIR/<lang>_<name>.json: [{"box":[x1,y1,x2,y2], "vi": "...", "bg":"#rrggbb"?, "fg":"#rrggbb"?,
                                        "align":"center"?, "bold":true?}]   (key "text" also accepted for "vi")
 Coordinates are source-image pixels. Output IMGDIR/out/<name>.png at SCALE x.
+Also writes IMGDIR/out/check_<name>.png: only the painted areas (+ a margin), source left | output right, one row per
+area. Agents check THIS after each fix round instead of the whole 2x image (text covered ~5-16 % of the image area in
+the JA-IMG sample, so a check sheet costs a fraction of the vision tokens); view the full output once at the end.
 Usage: overlay.py IMGDIR --lang vi [NAME ...]     (no NAME = every region file of that language)
 """
 import argparse, glob, json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from runlog import track
 from common import find_font, fonts           # also switches stdout to UTF-8 (Windows)
 from PIL import Image, ImageDraw, ImageFont
 
@@ -73,9 +77,47 @@ def fit(draw, text, box, bold):
     return font, lines, lh
 
 
+def check_sheet(before, after, boxes, margin=16 * SCALE, gap=6):
+    """Side-by-side crops (before | after) of the painted areas; overlapping areas are merged into one row."""
+    areas = []
+    for b in boxes:
+        x1, y1, x2, y2 = max(0, b[0] - margin), max(0, b[1] - margin), min(after.width, b[2] + margin), min(after.height, b[3] + margin)
+        for a in areas:
+            if x1 < a[2] and a[0] < x2 and y1 < a[3] and a[1] < y2:
+                a[:] = [min(a[0], x1), min(a[1], y1), max(a[2], x2), max(a[3], y2)]
+                break
+        else:
+            areas.append([x1, y1, x2, y2])
+    merged = True
+    while merged:                                   # merging can create new overlaps
+        merged = False
+        for i in range(len(areas)):
+            for j in range(i + 1, len(areas)):
+                a, b = areas[i], areas[j]
+                if a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]:
+                    areas[i] = [min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])]
+                    del areas[j]
+                    merged = True
+                    break
+            if merged:
+                break
+    areas.sort(key=lambda a: (a[1], a[0]))
+    w = max(2 * (a[2] - a[0]) + gap for a in areas)
+    h = sum(a[3] - a[1] + gap for a in areas)
+    sheet = Image.new('RGB', (w, h), (255, 0, 255))   # magenta separators: never mistaken for document content
+    y = 0
+    for a in areas:
+        sheet.paste(before.crop(a), (0, y))
+        sheet.paste(after.crop(a), (a[2] - a[0] + gap, y))
+        y += a[3] - a[1] + gap
+    return sheet
+
+
 def render(d, name, lang):
     src = Image.open(f'{d}/{name}.png').convert('RGB')
     im = src.resize((src.width * SCALE, src.height * SCALE), Image.LANCZOS)
+    before = im.copy()
+    boxes = []
     draw = ImageDraw.Draw(im)
     for r in json.load(open(f'{d}/{lang}_{name}.json', encoding='utf-8')):
         text = r.get('vi', r.get('text', ''))
@@ -83,6 +125,7 @@ def render(d, name, lang):
         box = [max(0, box[0] - 2), max(0, box[1] - 2), min(im.width - 1, box[2] + 2), min(im.height - 1, box[3] + 2)]
         bg = hexrgb(r['bg']) if r.get('bg') else bg_color(im, box)
         draw.rectangle(box, fill=bg)
+        boxes.append(box)
         if not text.strip():
             continue                      # blank cover region
         fg = hexrgb(r['fg']) if r.get('fg') else ((0, 0, 0) if sum(bg) > 380 else (255, 255, 255))
@@ -98,6 +141,11 @@ def render(d, name, lang):
             y += lh
     os.makedirs(f'{d}/out', exist_ok=True)
     im.save(f'{d}/out/{name}.png', optimize=True)
+    if boxes:
+        sheet = check_sheet(before, im, boxes)
+        sheet.save(f'{d}/out/check_{name}.png', optimize=True)
+        return sheet.width * sheet.height / (im.width * im.height)
+    return 0.0
 
 
 def use_lang_fonts(lang):
@@ -114,12 +162,13 @@ def main():
     ap.add_argument('names', nargs='*')
     ap.add_argument('--lang', default='vi')
     a = ap.parse_intermixed_args()          # allow "IMGDIR --lang vi NAME" and "IMGDIR NAME --lang vi"
+    track(a.imgdir, 'overlay')
     use_lang_fonts(a.lang)
     pre = f'{a.imgdir}/{a.lang}_'
     names = a.names or sorted(f[len(pre):-5] for f in glob.glob(pre + '*.json'))
     for n in names:
-        render(a.imgdir, n, a.lang)
-        print('ok', n)
+        ratio = render(a.imgdir, n, a.lang)
+        print(f'ok {n}  (check_{n}.png = {ratio:.0%} of the full output area)')
 
 
 if __name__ == '__main__':

@@ -8,6 +8,8 @@ Work in progress: this is the layout-engine skeleton.
 
 `PLUGIN` below is this folder (`plugins/vuong-design`). Every step reads its arguments from one project file, and `next.mjs` tells you where you are and what to run next, so you never need to remember the order or the flags.
 
+In Claude Code you can also just ask, e.g. "take design/screens.html to Figma" or "what is the next design step?". The `design-pipeline` skill then runs these steps with you: it creates the project file, runs `next.mjs` and the command it prints, and opens the answer and approve pages for you to decide.
+
 1. **Project file.** Create `vd-project.json` in your project (paths are relative to it; see [Project file](#project-file)):
    ```json
    { "version": 1, "html": "design/screens.html", "out": "build/vd-ds",

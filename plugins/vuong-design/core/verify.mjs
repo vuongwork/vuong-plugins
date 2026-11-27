@@ -139,7 +139,7 @@
 // R66, the normalised spec (plan 2 Task 6). input.norm = { spec (applyNorm's target spec), applied (its records
 // { entry, cat, code, node, run?, prop, from, to }), proxy: {A, B} (renderProxy of norm.spec: model 'figma' plus mark
 // 'norm'; a missing / wrong mark, or the modelled proxy passed again, throws), settled? (R93: settleHug's list; a HUG
-// frame w / h it settled is not a norm-spec finding) }. Without input.norm nothing below runs
+// frame w / h it settled, and the abs.x / abs.y it moved with it, is not a norm-spec finding) }. Without input.norm nothing below runs
 // and the report has no `norm` key (plan-1 behaviour byte for byte). With it the chain is source -> layout (roots) ->
 // modelled (figmaModel, R18) -> norm, each step explained on its own: the plan's condition (c) "the rest is within
 // tolerance or figmaModel" is the plan-1 verdict on the layout and modelled proxies, unchanged.
@@ -1321,7 +1321,9 @@ export function verifyScreen(input, opts = {}) {
         if (va === vb) continue;
         if (p === 'font.remeasure' && vb === true && va === undefined && recsOf(id).some((r) => r.cat === 'type' && !recEq('type', r.from, r.to))) continue;
         // R93: a HUG frame size settled from the norm proxy (settleHug) is the layout's, not a record's
-        if ((p === 'w' || p === 'h') && ns.t === 'F' && Array.isArray(ns.sz) && ns.sz[p === 'w' ? 0 : 1] === 'HUG'
+        // (and the abs.x / abs.y of an absolute one pinned right / bottom / centre, which moves with that size)
+        const ax = { w: 0, h: 1, 'abs.x': 0, 'abs.y': 1 }[p];
+        if (ax !== undefined && ns.t === 'F' && Array.isArray(ns.sz) && ns.sz[ax] === 'HUG'
           && (norm.settled || []).some((x) => x.node === id && x.axis === p && x.from === va && x.to === vb)) continue;
         const szm = /^sz\.([01])$/.exec(p);
         if (szm) { // R74: FILL / HUG -> FIXED only from a record that says so

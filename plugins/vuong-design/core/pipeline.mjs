@@ -103,9 +103,11 @@ export function replayApplied(spec, applied) {
 }
 
 // R93: apply-norm does not resize HUG parents (a changed padding / gap / size inside them): the norm proxy lays them
-// out. settleHug(spec, boxes) -> { spec, settled: [{ node, axis: 'w' | 'h', from, to }] } writes the proxy's size (boxes
+// out. settleHug(spec, boxes) -> { spec, settled: [{ node, axis: 'w' | 'h' | 'abs.x' | 'abs.y', from, to }] } writes the proxy's size (boxes
 // = the norm proxy's at A) into a copy of the target spec on every HUG axis of a frame with children, when it differs
 // by more than 0.01 px, so spec-norm (and the Figma encoding built from it) holds the size Figma's auto layout gives.
+// An absolute node pinned right / bottom (abs.c R, abs.cy B) or centred (C) keeps that edge / centre: its abs.x / abs.y
+// moves by the growth (all of it, or half), listed with axis 'abs.x' / 'abs.y'.
 // Texts, icons, images and leaf frames (HUG there is FIXED, as in the builder) keep their size. The input is not mutated.
 export function settleHug(spec, boxes = {}) {
   const out = JSON.parse(JSON.stringify(spec)), settled = [];
@@ -114,8 +116,18 @@ export function settleHug(spec, boxes = {}) {
     if (n.t === 'F' && Array.isArray(n.sz) && Array.isArray(n.kids) && n.kids.length && b) {
       for (const [i, axis] of [[0, 'w'], [1, 'h']]) {
         if (n.sz[i] !== 'HUG' || typeof n[axis] !== 'number' || Math.abs(b[2 + i] - n[axis]) <= 0.01) continue;
+        const grow = b[2 + i] - n[axis];
         settled.push({ node: n.id, axis, from: n[axis], to: b[2 + i] });
         n[axis] = b[2 + i];
+        // an absolute node pinned to the far side (R / B) or centred keeps that anchor, as the proxy lays it out; Figma
+        // places it at abs.x / abs.y, so the position moves with the size
+        const pos = i ? 'y' : 'x', c = n.abs && (i ? n.abs.cy : n.abs.c);
+        const k = c === (i ? 'B' : 'R') ? 1 : c === 'C' ? 0.5 : 0;
+        if (k && typeof n.abs[pos] === 'number') {
+          const to = Math.round((n.abs[pos] - grow * k) * 100) / 100;
+          settled.push({ node: n.id, axis: `abs.${pos}`, from: n.abs[pos], to });
+          n.abs[pos] = to;
+        }
       }
     }
     (n.kids || []).forEach(walk);

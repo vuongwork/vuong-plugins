@@ -558,4 +558,10 @@ test('R93 settleHug writes the norm proxy size into HUG frame axes only, without
   assert.deepEqual([out.kids[2].w, out.kids[2].h], [50, 20]); // within 0.01 px
   assert.equal(spec.kids[0].h, 36);
   assert.deepEqual(settleHug(spec, {}).settled, []);
+  // a bottom sheet (absolute, pinned to the bottom) keeps its bottom edge; a centred one moves by half; a top one stays
+  const sheet = (cy) => ({ id: 'r', t: 'F', w: 300, h: 600, sz: ['FIXED', 'FIXED'], kids: [
+    { id: 'r.0', t: 'F', w: 300, h: 400, sz: ['FIXED', 'HUG'], abs: { x: 0, y: 200, c: 'LR', cy }, kids: [{ id: 'r.0.0', t: 'T', w: 10, h: 10 }] }] });
+  const ys = ['B', 'C', 'T'].map((cy) => settleHug(sheet(cy), { 'r.0': [0, 0, 300, 420] }));
+  assert.deepEqual(ys.map((x) => x.spec.kids[0].abs.y), [180, 190, 200]);
+  assert.deepEqual(ys[0].settled, [{ node: 'r.0', axis: 'h', from: 400, to: 420 }, { node: 'r.0', axis: 'abs.y', from: 200, to: 180 }]);
 });

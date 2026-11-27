@@ -66,3 +66,6 @@ Sonnet, because lint checks the result mechanically. Do not read `lint.json` int
 
 The file lints with 0 errors (warnings listed), layout ran, and the answer names the HTML path, the lint line, and the
 layout line (plus diagnose lines for a failing screen). Nothing else is pasted into the conversation.
+
+Next: the design system and Figma are the `design-pipeline` skill (a `vd-project.json` whose `html` is this file, then
+`core/next.mjs`). Offer it; do not start it unasked.

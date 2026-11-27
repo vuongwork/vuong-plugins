@@ -3,6 +3,7 @@
 // the rules file, so the user never edits vd-rules.json by hand.
 //
 //   node core/answer.mjs --out <ds output folder> [--rules <vd-rules.json>] [--port <n>] [--no-open]
+//   node core/answer.mjs --project <vd-project.json> [options]   (R89: out and rules from the project file)
 //
 // Reads <out>/design-system.html and <out>/questions.json. Rules file: --rules, else the one the run read (embedded
 // in the page, #vd-answer-ctx), else a usage error. A missing rules file is created ({ version: 1, answers: {} }).
@@ -27,6 +28,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { readRules, RULES_VERSION } from './rules-file.mjs';
+import { readProject, projectDefaults } from './project-file.mjs';
 
 const FREE_MAX = 500;
 const BODY_MAX = 1 << 20;
@@ -129,12 +131,13 @@ export function openBrowser(url) {
   try { spawn(cmd, args, { stdio: 'ignore', detached: true, windowsVerbatimArguments: process.platform === 'win32' }).unref(); } catch { /* the URL is printed anyway */ }
 }
 
-const USAGE = 'usage: node core/answer.mjs --out <ds output folder> [--rules <vd-rules.json>] [--port <n>] [--no-open]';
+const USAGE = 'usage: node core/answer.mjs --out <ds output folder> [--rules <vd-rules.json>] [--port <n>] [--no-open]\n       node core/answer.mjs --project <vd-project.json> [options]';
 
 export async function main(argv, { log = (s) => process.stdout.write(`${s}\n`), cwd = process.cwd(), open = openBrowser } = {}) {
   let o;
   try {
-    o = parseArgs({ args: argv, options: { out: { type: 'string' }, rules: { type: 'string' }, port: { type: 'string' }, 'no-open': { type: 'boolean' } } }).values;
+    o = parseArgs({ args: argv, options: { out: { type: 'string' }, rules: { type: 'string' }, port: { type: 'string' }, 'no-open': { type: 'boolean' }, project: { type: 'string' } } }).values;
+    if (o.project) Object.assign(o, projectDefaults(readProject(resolve(cwd, o.project)), o, ['out', 'rules'], { create: ['rules'] }));
   } catch (e) { log(`${e.message}\n${USAGE}`); return { code: 2 }; }
   if (!o.out) { log(USAGE); return { code: 2 }; }
   const dir = resolve(cwd, o.out);

@@ -3,6 +3,8 @@
 // there into the allowlist file, so the user never copies allowlistDraft entries by hand.
 //
 //   node core/approve.mjs --out <run output folder> --allowlist <vd-allowlist.json> [--port <n>] [--no-open]
+//   node core/approve.mjs --project <vd-project.json> [--figma] [options]   (R89: allowlist and out from the project
+//     file; out is the ds folder, or with --figma the figma folder, whose report is the check on real Figma)
 //
 // Reads <out>/report.html and <out>/report.json. A missing allowlist file is created ({ "allowlist": [] }).
 // Serves on 127.0.0.1 only (port 0 = any free port, the default) and opens the page unless --no-open.
@@ -30,6 +32,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { openBrowser } from './answer.mjs';
 import { readAllowlist } from './layout.mjs';
+import { readProject, projectDefaults } from './project-file.mjs';
 
 const REASON_MAX = 500;
 const BODY_MAX = 1 << 20;
@@ -136,12 +139,20 @@ export function startApproveServer({ dir, allowlistPath, port = 0, host = '127.0
   });
 }
 
-const USAGE = 'usage: node core/approve.mjs --out <run output folder> --allowlist <vd-allowlist.json> [--port <n>] [--no-open]';
+const USAGE = 'usage: node core/approve.mjs --out <run output folder> --allowlist <vd-allowlist.json> [--port <n>] [--no-open]\n       node core/approve.mjs --project <vd-project.json> [--figma] [options]';
 
 export async function main(argv, { log = (s) => process.stdout.write(`${s}\n`), cwd = process.cwd(), open = openBrowser } = {}) {
   let o;
   try {
-    o = parseArgs({ args: argv, options: { out: { type: 'string' }, allowlist: { type: 'string' }, port: { type: 'string' }, 'no-open': { type: 'boolean' } } }).values;
+    o = parseArgs({ args: argv, options: { out: { type: 'string' }, allowlist: { type: 'string' }, port: { type: 'string' }, 'no-open': { type: 'boolean' }, project: { type: 'string' }, figma: { type: 'boolean' } } }).values;
+    if (o.project) {
+      const p = readProject(resolve(cwd, o.project));
+      if (o.figma && !o.out) {
+        if (!p.figma || !p.figma.out) throw new Error(`${p.path}: --figma needs "figma": { "out": ... }`);
+        o.out = p.figma.out;
+      }
+      Object.assign(o, projectDefaults(p, o, ['out', 'allowlist'], { create: ['allowlist'] }));
+    }
   } catch (e) { log(`${e.message}\n${USAGE}`); return { code: 2 }; }
   if (!o.out || !o.allowlist) { log(USAGE); return { code: 2 }; }
   const dir = resolve(cwd, o.out);

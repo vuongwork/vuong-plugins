@@ -22,6 +22,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { readProject, projectDefaults } from './project-file.mjs';
 import { fileURLToPath } from 'node:url';
 import { findComponents, componentsDraft, readComponentsFile, overridableFrom } from './components.mjs';
 import { loadFacts } from './figma-probe.mjs';
@@ -30,7 +31,7 @@ import { readRules } from './rules-file.mjs';
 import { renderComponents, componentsSummary } from './components-report.mjs';
 import { defaultFontMap } from './font-map.mjs';
 
-export const CMP_USAGE = 'usage: node core/cmp.mjs --ds <ds output dir> [--components <vd-components.json>] [--rules <vd-rules.json>]';
+export const CMP_USAGE = 'usage: node core/cmp.mjs --ds <ds output dir> [--components <vd-components.json>] [--rules <vd-rules.json>]\n       node core/cmp.mjs --project <vd-project.json> [options]';
 class UsageError extends Error {}
 const json = (x) => `${JSON.stringify(x, null, 1)}\n`;
 const safe = (s) => String(s).replace(/[^A-Za-z0-9._-]/g, '_');
@@ -65,7 +66,9 @@ export async function main(argv, deps = {}) {
   const err = deps.err || ((s) => process.stderr.write(`${s}\n`));
   try {
     let o;
-    try { o = parseArgs({ args: argv, options: { ds: { type: 'string' }, components: { type: 'string' }, rules: { type: 'string' } }, strict: true, allowPositionals: false }).values; } catch (e) { throw new UsageError(e.message); }
+    try { o = parseArgs({ args: argv, options: { ds: { type: 'string' }, components: { type: 'string' }, rules: { type: 'string' }, project: { type: 'string' } }, strict: true, allowPositionals: false }).values; } catch (e) { throw new UsageError(e.message); }
+    // R89: --project gives ds (the project's out), components and rules (when those files exist)
+    if (o.project) { try { Object.assign(o, projectDefaults(readProject(resolve(deps.cwd || process.cwd(), o.project)), o, ['ds', 'components', 'rules'])); } catch (e) { throw new UsageError(e.message); } }
     if (!o.ds) throw new UsageError('--ds is required');
     const cwd = deps.cwd || process.cwd();
     const pick = (given, file) => (given ? resolve(cwd, given) : existsSync(join(cwd, file)) ? join(cwd, file) : null);

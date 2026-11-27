@@ -4,6 +4,52 @@ Static HTML → design system → Figma with variables, components and IDs, veri
 
 Work in progress: this is the layout-engine skeleton.
 
+## Quick start
+
+`PLUGIN` below is this folder (`plugins/vuong-design`). Every step reads its arguments from one project file, and `next.mjs` tells you where you are and what to run next, so you never need to remember the order or the flags.
+
+1. **Project file.** Create `vd-project.json` in your project (paths are relative to it; see [Project file](#project-file)):
+   ```json
+   { "version": 1, "html": "design/screens.html", "out": "build/vd-ds",
+     "rules": "vd-rules.json", "allowlist": "vd-allowlist.json", "figma": { "out": "build/vd-figma", "file": "My design" } }
+   ```
+   No HTML yet? Ask Claude to use the `spec-to-html` skill on your spec: it writes a page in the input profile, so `root` and `widen` can be left out.
+2. **Where am I?** `node PLUGIN/core/next.mjs --project vd-project.json` lists the steps done and prints the next command. Run it after every step.
+3. **Design system.** `node PLUGIN/core/ds.mjs --project vd-project.json` (about 10 s per screen). Its output is `report.html` (does every screen match?) and `design-system.html` (tokens, questions).
+4. **Answer the questions** in the browser: `node PLUGIN/core/answer.mjs --project vd-project.json`, Submit, run ds again.
+5. **Approve what is fine** in the browser: `node PLUGIN/core/approve.mjs --project vd-project.json`. Tick the findings that are fine, Submit, run ds again. Repeat 4-5 until every screen passes.
+6. **Components** (with `"components"` in the project): `node PLUGIN/core/cmp.mjs --project vd-project.json`.
+7. **Figma.**
+   - Once: in Figma Desktop, Plugins → Development → Import plugin from manifest → `PLUGIN/figma-plugin/manifest.json`.
+   - Each time: open the file and run the "vuong-design bridge" plugin, leaving its window open.
+   - Then run the commands `next.mjs` prints, in order:
+     - `figma.mjs plan`
+     - `figma.mjs serve … --send pending --shots`
+     - `figma.mjs check`
+     - `approve.mjs --project … --figma` for what Figma draws differently.
+
+Requirements: Node 18+ and Playwright for the steps that open a browser (`ds`, `layout`, `figma check`); see [Setup](#setup).
+
+## Project file
+
+`vd-project.json` (R89, `core/project-file.mjs`) holds the arguments of every step. `layout.mjs`, `ds.mjs`, `answer.mjs`, `approve.mjs`, `cmp.mjs` and `next.mjs` take `--project <file>`. A flag given on the command line overrides the file. Paths are relative to the folder of the project file. An unknown key is an error, so a typo is never ignored silently.
+
+| key | used by | meaning |
+|---|---|---|
+| `version` | all | `1` (required) |
+| `about` | none | free text |
+| `html` | layout, ds | the source page (required) |
+| `root`, `widen`, `name` | layout, ds | as `--root`, `--widen`, `--name`; leave them out for a page in the input profile |
+| `viewport`, `widenBy` | layout, ds | as `--viewport`, `--widen-by` (px) |
+| `webFonts` | layout, ds | `false` = `--no-webfonts` |
+| `out` | all | the ds output folder (`--out` of layout / ds / answer / approve, `--ds` of cmp / figma plan) |
+| `rules`, `names` | ds, answer, cmp | the rules and names files; used once they exist (answer creates the rules file) |
+| `allowlist` | layout, ds, approve, figma check | the allowlist; used once it exists (approve creates it) |
+| `components` | cmp | the components file |
+| `figma.out`, `figma.file`, `figma.page` | next, approve `--figma` | the `figma.mjs` folder, the Figma file name (`serve --file`) and page (`plan --page`) |
+
+`next.mjs` never runs a step. It reads what the steps wrote and compares file times: a page, rules, names or allowlist file newer than `report.json` means ds must run again, and a ds report newer than the Figma `state.json` means plan must run again. Then it prints the first step not done, with its command. A failing screen with nothing to approve (an unexplained norm root, a data finding, an unchecked node) stops it with the reason: the HTML or the plugin must change.
+
 ## Setup
 
 - Node >= 18. No npm dependencies in this plugin.

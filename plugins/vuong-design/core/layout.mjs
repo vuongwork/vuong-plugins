@@ -5,6 +5,9 @@
 //        [--no-lint] [--widen-by <px>] [--viewport <px>] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>] [--tol-text-round <px>] [--no-webfonts]
 //        [--allowlist <json>] [--mutate [--mutate-sample <n>]]
 //   node core/layout.mjs --corpus <corpus.json> [--corpus-dir <dir>] --out <dir> [same options]
+//   node core/layout.mjs --project <vd-project.json> [any option above, overriding the project file]
+//     R89: the project file (project-file.mjs) gives html, root, widen, name, viewport, widen-by, out, allowlist (when
+//     the file exists), no-webfonts (webFonts: false) and, for ds.mjs, rules and names (when the files exist).
 //     corpus mode: every file of the corpus (paths relative to --corpus-dir, default $VD_CORPUS_DIR) with its own
 //     root / widen; the corpus's `allowlist` is used unless --allowlist is given.
 //
@@ -28,11 +31,13 @@ import { basename, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lintFile, summarize as lintSummary, DEFAULT_ROOT, DEFAULT_WIDEN } from './lint.mjs';
 import { runFile, gate, summarize, loadCorpus, specJson, allowlistEntry } from './pipeline.mjs';
+import { readProject, projectDefaults } from './project-file.mjs';
 
 export class UsageError extends Error {}
 
 export const USAGE = `usage: node core/layout.mjs --html <file> [--root <selector>] --out <dir> [options]
        node core/layout.mjs --corpus <corpus.json> [--corpus-dir <dir>] --out <dir> [options]
+       node core/layout.mjs --project <vd-project.json> [options]
 options: --no-lint --widen <sel> --name <sel> --widen-by <px> --viewport <px> --tol-frame <px> --tol-text <px> --tol-model <px> --tol-text-round <px>
          --no-webfonts --allowlist <json> --mutate --mutate-sample <n>`;
 
@@ -42,7 +47,7 @@ const OPTIONS = {
   'tol-frame': { type: 'string' }, 'tol-text': { type: 'string' }, 'tol-model': { type: 'string' }, 'tol-text-round': { type: 'string' },
   'no-webfonts': { type: 'boolean' }, 'no-lint': { type: 'boolean' }, out: { type: 'string' }, allowlist: { type: 'string' },
   mutate: { type: 'boolean' }, 'mutate-sample': { type: 'string' },
-  corpus: { type: 'string' }, 'corpus-dir': { type: 'string' }, help: { type: 'boolean', short: 'h' },
+  corpus: { type: 'string' }, 'corpus-dir': { type: 'string' }, help: { type: 'boolean', short: 'h' }, project: { type: 'string' },
 };
 
 const number = (name, v, { positive = false, int = false } = {}) => {
@@ -57,10 +62,17 @@ const number = (name, v, { positive = false, int = false } = {}) => {
 // extra = { options } (ds.mjs): more string options, returned under their own names
 export function parseCli(argv, env = process.env, extra = null) {
   let values;
+  const options = { ...OPTIONS, ...((extra && extra.options) || {}) };
   try {
-    ({ values } = parseArgs({ args: argv, options: { ...OPTIONS, ...((extra && extra.options) || {}) }, strict: true, allowPositionals: false }));
+    ({ values } = parseArgs({ args: argv, options, strict: true, allowPositionals: false }));
   } catch (e) { throw new UsageError(e.message); }
   if (values.help) return { help: true };
+  if (values.project) {
+    if (values.corpus) throw new UsageError('use either --project or --corpus, not both');
+    let p;
+    try { p = readProject(values.project); } catch (e) { throw new UsageError(e.message); }
+    Object.assign(values, projectDefaults(p, values, Object.keys(options)));
+  }
   if (!values.out) throw new UsageError('--out <dir> is required');
   if (values.html && values.corpus) throw new UsageError('use either --html or --corpus, not both');
   if (!values.html && !values.corpus) throw new UsageError('--html <file> or --corpus <corpus.json> is required');

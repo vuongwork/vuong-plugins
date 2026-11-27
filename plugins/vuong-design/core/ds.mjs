@@ -44,6 +44,7 @@ import { specJson } from './pipeline.mjs';
 
 export const DS_USAGE = `usage: node core/ds.mjs --html <file> --root <selector> --out <dir> [--rules <json>] [--names <json>] [layout options]
        node core/ds.mjs --corpus <corpus.json> [--corpus-dir <dir>] --out <dir> [--rules <json>] [--names <json>] [layout options]
+       node core/ds.mjs --project <vd-project.json> [any option, overriding the project file]
 options: --rules <json> (default ./vd-rules.json when present) --names <json> (default ./vd-names.json when present)
          --widen <sel> --name <sel> --widen-by <px> --viewport <px> --tol-frame <px> --tol-text <px> --tol-model <px>
          --no-webfonts --allowlist <json> --mutate --mutate-sample <n>`;
@@ -121,7 +122,7 @@ export const DS_EXT = {
     if (o.rules && !existsSync(rulesPath)) throw new UsageError(`rules file not found: ${rulesPath}`);
     if (o.names && !existsSync(namesPath)) throw new UsageError(`names file not found: ${namesPath}`);
     const rules = readRules(rulesPath), names = readNames(namesPath), checklist = loadChecklist();
-    return { rules, names, checklist, rulesPath, namesPath, files: new Map(), open: 0, args: { rules: rulesPath, names: namesPath } };
+    return { rules, names, checklist, rulesPath, namesPath, project: o.project ? resolve(o.project) : null, files: new Map(), open: 0, args: { rules: rulesPath, names: namesPath } };
   },
   normalize(job, items, state) {
     const dark = hasDarkMode(job.path);
@@ -158,8 +159,9 @@ export const DS_EXT = {
   },
   finish({ state, log, pass }) {
     for (const s of state.summary || []) log(`${s.file}: ${s.auto} auto, ${s.answered} answered, ${s.ask} asked; ${s.unexplained} unexplained norm root(s)`);
-    if (pass === false) log(`approve findings in the browser: node ${join(dirname(fileURLToPath(import.meta.url)), 'approve.mjs')} --out <output folder> --allowlist <vd-allowlist.json>`);
-    if (state.open) log(`answer them in the browser: node ${join(dirname(fileURLToPath(import.meta.url)), 'answer.mjs')} --out <output folder>${state.rulesPath ? '' : ' --rules <vd-rules.json>'}`);
+    const tool = (f) => `node ${join(dirname(fileURLToPath(import.meta.url)), f)}`;
+    if (pass === false) log(`approve findings in the browser: ${tool('approve.mjs')} ${state.project ? `--project ${state.project}` : '--out <output folder> --allowlist <vd-allowlist.json>'}`);
+    if (state.open) log(`answer them in the browser: ${tool('answer.mjs')} ${state.project ? `--project ${state.project}` : `--out <output folder>${state.rulesPath ? '' : ' --rules <vd-rules.json>'}`}`);
     log(`${state.open} open question${state.open === 1 ? '' : 's'}${state.rulesPath ? ` (rules: ${state.rulesPath})` : ' (no rules file)'}; draft answers: vd-rules.draft.json in the output folder`);
   },
 };

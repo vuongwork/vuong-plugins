@@ -423,3 +423,13 @@ test('R86: authored gaps are 0, the CSS row / column gap and that plus adjacent 
   assert.equal(gp('rel'), undefined, 'only absolute children: 0, left out');
   assert.deepEqual(gp('row'), [0, 6, 10]);
 });
+
+test('R94 bare text in a flex box keeps its own style when the page styles "box span"', { skip }, async () => {
+  const s = (await captureScreens(join(FIX, 'capture-bare-span.html'), { root: '.scr' })).screens[0];
+  const font = (cls, i) => { const box = walk(s.tree).find((n) => n.cls === cls); const k = box.kids[i]; return (k.kids && k.kids[0] && k.kids[0].font) || k.font; };
+  for (const f of [font('hd one', 0), font('hd two', 0)]) assert.deepEqual([f.fs, f.fw, f.c], ['16px', '700', 'rgb(10, 20, 30)']);
+  const note = font('hd two', 1);
+  assert.deepEqual([note.fs, note.fw], ['11px', '400'], 'the real span still takes the span rule');
+  const wrap = walk(s.tree).find((n) => n.cls === 'hd one').kids[0];
+  assert.equal(wrap.tag, 'span', 'the wrapper is recorded as a span');
+});

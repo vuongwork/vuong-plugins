@@ -318,12 +318,14 @@ function measurePage({ rootSel, widenSel, extras, nameOf, vars: wantVars }) {
     if (which === 'before') el.insertBefore(sp, el.firstChild); else el.appendChild(sp);
   }
 
-  // 3. wrap bare text inside flex/grid containers (an anonymous flex/grid item == a blockified span: layout-neutral)
+  // 3. wrap bare text inside flex/grid containers (an anonymous flex/grid item == a blockified span: layout-neutral).
+  //    R94: the wrapper is a custom element (inline, like a span) recorded as tag 'span': a real <span> would match the
+  //    page's own span selectors (".sec span { … }") and give the text a style it never had.
   for (const r of roots) for (const el of [r, ...r.querySelectorAll('*')]) {
     if (el.closest('svg')) continue;
     if (!/flex|grid/.test(getComputedStyle(el).display)) continue;
     for (const ch of [...el.childNodes]) if (ch.nodeType === 3 && ch.textContent.trim()) {
-      const sp = document.createElement('span'); sp.dataset.tw = '1';
+      const sp = document.createElement('vd-tw'); sp.dataset.tw = '1';
       origIdx.set(sp, origIdx.get(ch));
       el.insertBefore(sp, ch); sp.appendChild(ch);
     }
@@ -806,7 +808,7 @@ function measurePage({ rootSel, widenSel, extras, nameOf, vars: wantVars }) {
         return out;
       }
       if (outside(b, clip)) { excl(id, 'clipped'); return null; }
-      const tag = el.tagName.toLowerCase();
+      const tag = el.dataset?.tw ? 'span' : el.tagName.toLowerCase();
       const cls = clsOf(el);
       const pseudo = !!el.dataset?.pseudo;
       const r = rel(b);

@@ -188,7 +188,8 @@ const HOWTO = `<details class="howto" open><summary><strong>How to read this pag
 <ul>
 <li><b>Tokens</b> are named design values, in three tiers. <b>primitive</b>: every value the screens use after normalisation (colours, spacing, sizes and radii in px, type styles), named by value (<code>space.12</code>, <code>color.c01</code> = the most used colour). <b>role</b>: a name for what a value is for (<code>role.text-muted</code> → <code>primitive.color.c03</code>); one role groups the elements with the same structure (same tag and classes inside the same kind of parent), and a CSS variable of the source keeps its own name. <b>component</b>: empty for now (filled when Figma components are made).</li>
 <li>Every value was checked by fixed rules, each decision has a reason code. Its status: <b>auto</b> = changed by a rule without asking (a colour the eye cannot tell apart, ΔE2000 below 1, in the same role; an off-scale value where most of its role already uses a scale value); <b>ask</b> = a proposal that needs your answer, not applied; <b>answered</b> = applied from your answer; <b>kept</b> = already fine (on the 4 px grid, named by a CSS variable, flexible, a pill) and left as it is (only counted).</li>
-<li><b>How to answer</b>: copy the JSON under a question into <code>vd-rules.json</code> at the project root (one file for all answers: keep <code>"version": 1</code> and put every answer inside the one <code>"answers"</code> object), then re-run. The draft at the end of the Questions section answers every open question with its proposal in one file. Project questions (<code>accept-all</code>) settle a whole kind of question at once; answer <code>ask-each</code> to decide one by one.</li>
+<li><b>How to answer on this page</b>: pick an option (or type a free answer) under each question you want to settle, then press <b>Submit</b> in the bar at the bottom. Opened with <code>node core/answer.mjs --out &lt;this folder&gt;</code>, Submit merges your answers into the rules file (<code>vd-rules.json</code>, a backup is kept); opened as a plain file, Submit downloads the merged <code>vd-rules.json</code> to save over the old one. Questions you leave blank stay open. Then re-run.</li>
+<li><b>How to answer by hand</b>: copy the JSON under a question into <code>vd-rules.json</code> at the project root (one file for all answers: keep <code>"version": 1</code> and put every answer inside the one <code>"answers"</code> object), then re-run. The draft at the end of the Questions section answers every open question with its proposal in one file. Project questions (<code>accept-all</code>) settle a whole kind of question at once; answer <code>ask-each</code> to decide one by one.</li>
 <li><b>Nothing changes until you answer.</b> An open question keeps the original value in the spec and in the tokens; a question you never answer is never applied.</li>
 <li>Units: <b>px</b> = CSS pixels; <b>ΔE</b> = CIEDE2000 colour difference (below 1 invisible, below 3 hard to see); <b>N:1</b> = WCAG contrast ratio (AA needs 4.5:1, large text 3:1); <b>nodes</b> = elements on the screens; <b>uses</b> = single property uses (one node can use a value several times). Colours: hex and <code>oklch(lightness chroma hue)</code>.</li>
 <li>Images under a change: the <b>left</b> one is the source page, the <b>right</b> one the normalised rebuild.</li>
@@ -226,17 +227,17 @@ function fmtOption(q, o) {
 function questionCard(q, kind) {
   const nodesLabel = kind === 'project' ? `settles ${plural(q.affects, 'node')}` : kind === 'group' ? `affects ${plural(q.affects, 'node')}` : `applies to ${plural(q.affects, 'screen')}`;
   const opts = Array.isArray(q.options)
-    ? `<div class="opts">Options: ${q.options.map((o) => `<span class="v opt${String(o) === String(q.default) ? ' def' : ''}">${fmtOption(q, o)}${String(o) === String(q.default) ? ' (proposed)' : ''}</span>`).join(' ')}</div>`
-    : `<div class="opts">Free answer. Proposed: <span class="v opt def">${esc(q.default)}</span></div>`;
+    ? `<div class="opts">Options: ${q.options.map((o) => `<label class="v opt${String(o) === String(q.default) ? ' def' : ''}"><input type="radio" name="${esc(q.key)}" value="${esc(JSON.stringify(o))}">${fmtOption(q, o)}${String(o) === String(q.default) ? ' (proposed)' : ''}</label>`).join(' ')}</div>`
+    : `<div class="opts">Free answer. Proposed: <span class="v opt def">${esc(q.default)}</span> <input type="text" class="free" name="${esc(q.key)}" placeholder="${esc(q.default)}" aria-label="your answer"></div>`;
   const roles = Array.isArray(q.roles) && q.roles.length
     ? (q.roles.length <= 3 ? `<p class="muted small">Where: ${q.roles.map((r) => `<code>${esc(roleWords(r))}</code>`).join(', ')}</p>`
       : `<details class="small"><summary>Where: ${plural(q.roles.length, 'role')}</summary><ul>${q.roles.map((r) => `<li><code>${esc(roleWords(r))}</code></li>`).join('')}</ul></details>`)
     : '';
   // one line: a whole rules file holding this one answer
   const json = `{"version": 1, "answers": {${JSON.stringify(q.key)}: ${JSON.stringify(q.default)}}}`;
-  return `<div class="q" data-kind="${kind}" data-key="${esc(q.key)}" data-affects="${Number(q.affects) || 0}">` +
+  return `<div class="q" data-kind="${kind}" data-key="${esc(q.key)}" data-affects="${Number(q.affects) || 0}" data-default="${esc(JSON.stringify(q.default))}">` +
     `<div class="qhead"><span class="code">${esc(q.code)}</span> <code>${esc(q.key)}</code> <span class="v count">${esc(nodesLabel)}</span></div>` +
-    `<p class="qtext">${esc(q.text)}</p>${opts}${roles}<pre class="json">${esc(json)}</pre></div>`;
+    `<p class="qtext">${esc(q.text)}</p>${opts}${roles}<details class="small qjson"><summary>JSON for the rules file</summary><pre class="json">${esc(json)}</pre></details></div>`;
 }
 
 function renderQuestions(questions) {
@@ -508,10 +509,59 @@ pre.json,pre.json-all{background:var(--code);border-radius:6px;padding:6px 8px;f
 .badge{font-size:11px;padding:0 6px;border-radius:4px;color:#fff}.badge.covered{background:var(--ok)}.badge.missing{background:var(--miss)}.badge.answered{background:var(--ans)}
 .cov ul{list-style:none;padding-left:4px;margin:4px 0}.cov li{margin:2px 0}
 .pair{display:flex;flex-wrap:wrap;gap:12px;margin-top:4px}figure{margin:0;max-width:100%}figure img{display:block;max-width:100%;height:auto;background:#fff;border:1px solid var(--line);image-rendering:pixelated}figcaption{font-size:12px;color:var(--muted)}
+label.opt{cursor:pointer}label.opt input{margin:0 4px 0 0;vertical-align:-1px}label.opt:has(input:checked){background:var(--accent);border-color:var(--accent);color:#fff}
+input.free{font:13px system-ui,sans-serif;padding:2px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);min-width:0;max-width:100%;width:260px}
+.q.done{border-color:var(--ok);box-shadow:inset 3px 0 0 var(--ok)}
+.qjson>summary{margin:4px 0 0;color:var(--muted)}
+#answerbar{position:sticky;bottom:0;z-index:5;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:12px 0;display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;box-shadow:0 -2px 10px rgba(0,0,0,.08)}
+#answerbar .count{font-weight:600;margin-right:auto}#answerbar .msg{flex-basis:100%;font-size:13px}#answerbar .msg:empty{display:none}#answerbar .msg.err{color:var(--miss)}#answerbar .msg.ok{color:var(--ok)}
+#answerbar button{font:13px system-ui,sans-serif;padding:5px 12px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer}#answerbar button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}#answerbar button:disabled{opacity:.5;cursor:default}
 @media (max-width:600px){body{padding:10px}section{padding:10px}th,td{padding:3px 4px}.swatches{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}table.bars td.vis{width:40%}}
 `;
 
-export function renderDsReport({ tokens = {}, entries = [], questions = [], coverage = null, counts = null, samples = {}, crops = [], title = 'Design system proposal', generated = '' } = {}) {
+// The answer form (R86): every open question card carries radio buttons (options) or a text box (free answer). The
+// sticky bar counts the answers and submits them: served by core/answer.mjs (http) it POSTs { answers } to ./answers,
+// which merges them into the rules file; opened as a file it downloads the merged vd-rules.json instead (the rules
+// read by the run, embedded in #vd-answer-ctx, plus the new answers). Choices survive a reload (localStorage).
+const ANSWER_JS = `(function(){
+var ctx={};try{ctx=JSON.parse(document.getElementById('vd-answer-ctx').textContent)||{};}catch(e){}
+var bar=document.getElementById('answerbar');if(!bar)return;
+var cards=[].slice.call(document.querySelectorAll('#questions .q[data-key]'));
+var served=/^https?:$/.test(location.protocol);
+var $=function(s){return bar.querySelector(s);};
+var count=$('.count'),msg=$('.msg'),submit=$('.submit');
+submit.textContent=served?'Submit: save to the rules file':'Submit: download vd-rules.json';
+var LS='vd-answers:'+(ctx.rulesPath||location.pathname);
+function read(c){var r=c.querySelector('input[type=radio]:checked');if(r)return JSON.parse(r.value);var t=c.querySelector('input.free');if(t&&t.value.trim())return t.value.trim();return undefined;}
+function put(c,v){var rs=c.querySelectorAll('input[type=radio]');for(var i=0;i<rs.length;i++)rs[i].checked=v!==undefined&&rs[i].value===JSON.stringify(v);var t=c.querySelector('input.free');if(t)t.value=v===undefined?'':String(v);}
+function collect(){var a={};cards.forEach(function(c){var v=read(c);if(v!==undefined)a[c.dataset.key]=v;});return a;}
+function say(t,k){msg.textContent=t;msg.className='msg'+(k?' '+k:'');}
+function update(){var a=collect(),n=Object.keys(a).length;count.textContent=n+' of '+cards.length+' open questions answered';cards.forEach(function(c){c.classList.toggle('done',read(c)!==undefined);});submit.disabled=!n;try{localStorage.setItem(LS,JSON.stringify(a));}catch(e){}}
+try{var saved=JSON.parse(localStorage.getItem(LS)||'{}');cards.forEach(function(c){if(saved[c.dataset.key]!==undefined)put(c,saved[c.dataset.key]);});}catch(e){}
+document.getElementById('questions').addEventListener('input',update);
+document.getElementById('questions').addEventListener('change',update);
+$('.useall').onclick=function(){cards.forEach(function(c){if(read(c)===undefined)put(c,JSON.parse(c.dataset.default));});update();say('Every unanswered question now holds its proposal. Change any you disagree with, then submit.');};
+$('.clear').onclick=function(){cards.forEach(function(c){put(c,undefined);});update();say('');};
+function merged(a){var r=JSON.parse(JSON.stringify(ctx.rules||{version:1,answers:{}}));r.version=1;r.answers=r.answers||{};for(var k in a)r.answers[k]=a[k];return r;}
+function download(a){var blob=new Blob([JSON.stringify(merged(a),null,2)+'\\n'],{type:'application/json'});var u=URL.createObjectURL(blob);var l=document.createElement('a');l.href=u;l.download='vd-rules.json';document.body.appendChild(l);l.click();l.remove();setTimeout(function(){URL.revokeObjectURL(u);},1000);
+say('Downloaded vd-rules.json: the '+Object.keys((ctx.rules&&ctx.rules.answers)||{}).length+' answers of the run plus your '+Object.keys(a).length+'. Save it over '+(ctx.rulesPath||'vd-rules.json at the project root')+', then re-run ds.mjs. To save it directly, open this page with: node core/answer.mjs --out <this folder>','ok');}
+submit.onclick=function(){var a=collect();if(!served)return download(a);submit.disabled=true;say('Saving…');
+fetch('answers',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({answers:a})}).then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});}).then(function(x){
+if(x.ok){say('Saved '+x.j.saved+' answer(s) into '+x.j.path+' ('+x.j.total+' answers in the file; backup: '+x.j.backup+'). Re-run ds.mjs to apply them.','ok');try{localStorage.removeItem(LS);}catch(e){}}
+else say('Not saved: '+x.j.error,'err');}).catch(function(e){say('The answer server did not reply ('+e.message+'). Nothing was saved; start it again or use the download.','err');}).then(function(){submit.disabled=false;});};
+$('.dl').onclick=function(){download(collect());};
+update();
+})();`;
+
+function answerBar(questions, answer) {
+  if (!questions.some(isOpen)) return '';
+  const ctx = { rulesPath: (answer && answer.rulesPath) || null, rules: (answer && answer.rules) || { version: 1, answers: {} } };
+  return `<div id="answerbar"><span class="count"></span><button type="button" class="useall">Use proposals for the rest</button><button type="button" class="clear">Clear</button>` +
+    `<button type="button" class="dl">Download vd-rules.json</button><button type="button" class="submit primary"></button><div class="msg"></div></div>\n` +
+    `<script type="application/json" id="vd-answer-ctx">${JSON.stringify(ctx).replace(/</g, '\\u003c')}</script>\n<script>${ANSWER_JS}</script>`;
+}
+
+export function renderDsReport({ tokens = {}, entries = [], questions = [], coverage = null, counts = null, samples = {}, crops = [], title = 'Design system proposal', generated = '', answer = null } = {}) {
   const ix = { ...indexTokens(tokens), open: openSet(entries) };
   const toc = [['questions', 'Questions'], ['colours', 'Colours'], ['spacing', 'Spacing'], ['radius', 'Radius'], ['type', 'Type'], ['shadows', 'Shadows'], ['changes', 'Changes'], ['coverage', 'Coverage']]
     .map(([id, l]) => `<a href="#${id}">${l}</a>`).join('');
@@ -533,6 +583,7 @@ ${renderType(ix, samples || {})}
 ${renderShadows(ix)}
 ${renderChanges(entries, counts, crops)}
 ${renderCoverage(coverage)}
+${answerBar(questions, answer)}
 </body></html>
 `;
 }

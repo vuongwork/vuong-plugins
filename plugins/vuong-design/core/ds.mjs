@@ -147,6 +147,7 @@ export const DS_EXT = {
     writeFileSync(join(dir, 'design-system.html'), renderDsReport({
       tokens: built.tokens, entries: norm.entries, questions, coverage: cov, counts: norm.counts, samples, crops,
       title: `Design system proposal: ${job.file}`, generated: new Date().toISOString(),
+      answer: { rulesPath: state.rulesPath, rules: state.rules },
     }));
     const open = norm.questions.filter(isOpen).length;
     state.open += open;
@@ -157,6 +158,7 @@ export const DS_EXT = {
   },
   finish({ state, log }) {
     for (const s of state.summary || []) log(`${s.file}: ${s.auto} auto, ${s.answered} answered, ${s.ask} asked; ${s.unexplained} unexplained norm root(s)`);
+    if (state.open) log(`answer them in the browser: node ${join(dirname(fileURLToPath(import.meta.url)), 'answer.mjs')} --out <output folder>${state.rulesPath ? '' : ' --rules <vd-rules.json>'}`);
     log(`${state.open} open question${state.open === 1 ? '' : 's'}${state.rulesPath ? ` (rules: ${state.rulesPath})` : ' (no rules file)'}; draft answers: vd-rules.draft.json in the output folder`);
   },
 };

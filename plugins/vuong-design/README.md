@@ -108,9 +108,17 @@ Outputs in `<out>` (or `<out>/<file stem>/`), in addition to everything `layout.
 | `vd-rules.draft.json` | a draft rules file with the open questions and their defaults (copy what you accept into `vd-rules.json`) |
 | `coverage.json` | checklist items (covered / missing / answered), WCAG contrast failures, touch targets under 44 px |
 | `spec-norm-<id>.json` | the target spec of each screen (the modelled spec with the applied entries; equal to `spec-<id>.json` when nothing applies) |
-| `design-system.html` | the visual proposal: verdict, How to read, questions with their JSON, colours, spacing, radius, type, shadows, changes (source vs norm crops), coverage |
+| `design-system.html` | the visual proposal: verdict, How to read, questions as a form (an option or a free answer per open question, a Submit bar), colours, spacing, radius, type, shadows, changes (source vs norm crops), coverage |
 
 `tokens.json`, `tokens.css`, `token-map.json`, `normalisation.json`, `questions.json`, `vd-rules.draft.json` and `coverage.json` are deterministic (no clock; the order of screens does not matter).
+
+### Answering the questions
+
+```
+node plugins/vuong-design/core/answer.mjs --out <ds output folder> [--rules <vd-rules.json>] [--port <n>] [--no-open]
+```
+
+Serves `design-system.html` of that folder on 127.0.0.1 and opens it. Pick an answer under each question you want to settle (or "Use proposals for the rest"), then Submit: the answers are checked against `questions.json` (an option of the question, or a non-empty free text; one bad answer saves none) and merged into the rules file the run read (or `--rules`). Every other key of the file (`notes`, `states`, earlier answers) is kept, the old file is copied to `<rules>.bak`. Re-run `ds.mjs` to apply them. Opened as a plain file, Submit downloads the merged `vd-rules.json` instead. Choices survive a reload until they are saved.
 
 ## Acceptance
 

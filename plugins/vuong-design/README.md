@@ -155,7 +155,7 @@ Outputs in `<out>` (or `<out>/<file stem>/`), in addition to everything `layout.
 | `questions.json` | the normalisation questions (project questions, group questions) and the §8.4 project confirmations, answered or not |
 | `vd-rules.draft.json` | a draft rules file with the open questions and their defaults (copy what you accept into `vd-rules.json`) |
 | `coverage.json` | checklist items (covered / missing / answered), WCAG contrast failures, touch targets under 44 px |
-| `spec-norm-<id>.json` | the target spec of each screen (the modelled spec with the applied entries; equal to `spec-<id>.json` when nothing applies) |
+| `spec-norm-<id>.json` | the target spec of each screen (the modelled spec with the applied entries; equal to `spec-<id>.json` when nothing applies). R93: the HUG sizes of its frames are the norm proxy's at width A, since an applied padding, gap or size changes them and `apply-norm` does not resize HUG parents |
 | `design-system.html` | the visual proposal: verdict, How to read, questions as a form (an option or a free answer per open question, a Submit bar), colours, spacing, radius, type, shadows, changes (source vs norm crops), coverage |
 
 `tokens.json`, `tokens.css`, `token-map.json`, `normalisation.json`, `questions.json`, `vd-rules.draft.json` and `coverage.json` are deterministic (no clock; the order of screens does not matter).

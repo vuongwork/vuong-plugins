@@ -21,7 +21,8 @@
 //   (progress callback), normalize (plan 2, ds.mjs: async ([{ screen, inferred, modelled }] of every screen of the
 //   file) -> [{ spec, applied } | null] in the same order: each screen's target spec; a target with at least one
 //   applied record runs as opts.norm of runScreen and of runMutations, and the screen entry carries it as `target`;
-//   without normalize, or with no applied record: the plan-1 run). Capture launches its own browser; proxies and
+//   without normalize, or with no applied record: the plan-1 run). R93: a target that ran as opts.norm has its HUG frame
+//   sizes settled from the norm proxy at A (settleHug; target.settled lists them). Capture launches its own browser; proxies and
 //   verify use `browser`.
 // gate(report, allowlist, { file, screen, tree }) -> { pass, open: { roots, approvals, crops }, allowed: { roots, approvals,
 //   crops } }: the screen gate after the allowlist (spec §14 layer 5). Allowlist entries are
@@ -101,6 +102,28 @@ export function replayApplied(spec, applied) {
   return applyNorm(spec, [...byEntry.values()], '_').spec;
 }
 
+// R93: apply-norm does not resize HUG parents (a changed padding / gap / size inside them): the norm proxy lays them
+// out. settleHug(spec, boxes) -> { spec, settled: [{ node, axis: 'w' | 'h', from, to }] } writes the proxy's size (boxes
+// = the norm proxy's at A) into a copy of the target spec on every HUG axis of a frame with children, when it differs
+// by more than 0.01 px, so spec-norm (and the Figma encoding built from it) holds the size Figma's auto layout gives.
+// Texts, icons, images and leaf frames (HUG there is FIXED, as in the builder) keep their size. The input is not mutated.
+export function settleHug(spec, boxes = {}) {
+  const out = JSON.parse(JSON.stringify(spec)), settled = [];
+  const walk = (n) => {
+    const b = boxes[n.id];
+    if (n.t === 'F' && Array.isArray(n.sz) && Array.isArray(n.kids) && n.kids.length && b) {
+      for (const [i, axis] of [[0, 'w'], [1, 'h']]) {
+        if (n.sz[i] !== 'HUG' || typeof n[axis] !== 'number' || Math.abs(b[2 + i] - n[axis]) <= 0.01) continue;
+        settled.push({ node: n.id, axis, from: n[axis], to: b[2 + i] });
+        n[axis] = b[2 + i];
+      }
+    }
+    (n.kids || []).forEach(walk);
+  };
+  walk(out);
+  return { spec: out, settled };
+}
+
 export function sampleIndexes(N, n) {
   if (n == null || n >= N) return [...Array(N).keys()];
   if (!(n > 0)) return [];
@@ -127,7 +150,9 @@ export async function runFile(browser, htmlPath, opts = {}) {
     const target = targets[i] || null;
     const norm = target && Array.isArray(target.applied) && target.applied.length ? target : null;
     const r = await runScreen(browser, screen, inferred, fontMap, { proxy: proxyOpts, verify: opts.verify, ...(norm ? { norm } : {}) });
-    const entry = { screen, inferred, ...r, ...(target ? { target } : {}) };
+    // R93: the target's HUG frame sizes, measured on the norm proxy (apply-norm leaves them stale on purpose)
+    const settled = target && r.norm ? { ...target, ...settleHug(target.spec, r.norm.A.boxes) } : target;
+    const entry = { screen, inferred, ...r, ...(settled ? { target: settled } : {}) };
     if (mutateAt.has(i)) {
       const { runMutations } = await import('./mutate.mjs');
       entry.mutations = await runMutations(browser, screen, inferred, fontMap, { proxy: proxyOpts, verify: opts.verify, screenIndex: i, ...(norm ? { norm } : {}) });

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { mkdtempSync, readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { parseCli, main, UsageError, readAllowlist } from '../core/layout.mjs';
-import { gate, sampleIndexes, summarize, loadCorpus, allowlistEntry } from '../core/pipeline.mjs';
+import { gate, sampleIndexes, summarize, loadCorpus, allowlistEntry, settleHug } from '../core/pipeline.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIX = join(HERE, 'fixtures');
@@ -538,4 +538,24 @@ test('lint gate: a profile file runs without --root; report.json has every scree
 
 test('lint gate: a selector that matches nothing is still a usage error (exit 2) from the pipeline', { skip }, async () => {
   assert.equal(await main(['--html', join(FIX, 'lint-clean.html'), '--root', '.nothing', '--no-webfonts', '--out', tmp()], { fontMap: fmLint, browser, log: () => {} }), 2);
+});
+
+test('R93 settleHug writes the norm proxy size into HUG frame axes only, without mutating the input', () => {
+  const spec = { id: 'n', t: 'F', w: 300, h: 200, sz: ['FIXED', 'FIXED'], kids: [
+    { id: 'n.0', t: 'F', w: 300, h: 36, sz: ['FILL', 'HUG'], kids: [{ id: 'n.0.0', t: 'T', w: 40, h: 16, sz: ['HUG', 'HUG'] }] },
+    { id: 'n.1', t: 'F', w: 80, h: 36, sz: ['HUG', 'HUG'], kids: [{ id: 'n.1.0', t: 'F', w: 12, h: 12, sz: ['HUG', 'HUG'] }] },
+    { id: 'n.2', t: 'F', w: 50, h: 20, sz: ['HUG', 'HUG'], kids: [{ id: 'n.2.0', t: 'T', w: 30, h: 16 }] },
+  ] };
+  const boxes = { n: [0, 0, 310, 210], 'n.0': [0, 0, 300, 40], 'n.0.0': [0, 0, 44, 18], 'n.1': [0, 0, 84, 40], 'n.1.0': [0, 0, 14, 14], 'n.2': [0, 0, 50.005, 20] };
+  const { spec: out, settled } = settleHug(spec, boxes);
+  assert.deepEqual(settled, [
+    { node: 'n.0', axis: 'h', from: 36, to: 40 },
+    { node: 'n.1', axis: 'w', from: 80, to: 84 },
+    { node: 'n.1', axis: 'h', from: 36, to: 40 },
+  ]);
+  assert.deepEqual([out.w, out.h, out.kids[0].w, out.kids[0].h], [300, 200, 300, 40]); // FIXED root, FILL width kept
+  assert.deepEqual([out.kids[0].kids[0].w, out.kids[1].kids[0].w], [40, 12]); // text and leaf frame kept
+  assert.deepEqual([out.kids[2].w, out.kids[2].h], [50, 20]); // within 0.01 px
+  assert.equal(spec.kids[0].h, 36);
+  assert.deepEqual(settleHug(spec, {}).settled, []);
 });

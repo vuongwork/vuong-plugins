@@ -721,10 +721,10 @@ export async function localScreen(browser, sc, { id, fontMap, webFonts = true, e
   const { applyFigmaModel } = await import('./figma-model.mjs');
   const { applyNorm } = await import('./apply-norm.mjs');
   const { buildProxyHtml, renderProxy } = await import('./proxy.mjs');
-  const { replayApplied } = await import('./pipeline.mjs');
+  const { replayApplied, settleHug } = await import('./pipeline.mjs');
   const inferred = inferScreen(sc);
   const modelled = applyFigmaModel(inferred.spec, fontMap, { rendered: sc.fontsRendered });
-  const target = applyNorm(modelled.spec, entries, id);
+  let target = applyNorm(modelled.spec, entries, id);
   const normOn = Array.isArray(target.applied) && target.applied.length > 0;
   const fc = sc.fontCss || {};
   const po = { fontLinks: fc.links || [], fontFaces: fc.faces || [], ...(webFonts ? {} : { webFonts: false }) };
@@ -734,6 +734,7 @@ export async function localScreen(browser, sc, { id, fontMap, webFonts = true, e
   let normP = null, normLayout = null, normLayoutError = null;
   if (normOn) {
     normP = await two(target.spec, 'norm');
+    target = { ...target, ...settleHug(target.spec, normP.A.boxes) }; // R93: as ds.mjs wrote spec-norm
     try { normLayout = await two(replayApplied(inferred.spec, target.applied), 'normLayout'); } catch (e) { normLayoutError = e.message; }
   }
   return { inferred, modelled, target, normOn, layout, modP, normP, normLayout, normLayoutError };
@@ -818,7 +819,7 @@ async function check(argv, log, deps) {
         extra.cropsRefVsFigma = ids.length && normP ? await measureCrops(browser, sc, fig, { ...verifyOpts, ids, base: normP, widths: ['A'] }) : [];
       }
       const input = (figP, cr = crops, rf = null) => (normOn
-        ? { screen: sc, spec: modelled.spec, proxy: modP, layout, flags, norm: { spec: target.spec, applied: target.applied, proxy: figP, entries: inp.entries }, normLayout, crops: cr, pixel, ...extra, ...(rf ? { cropsRefVsFigma: rf } : {}) }
+        ? { screen: sc, spec: modelled.spec, proxy: modP, layout, flags, norm: { spec: target.spec, applied: target.applied, settled: target.settled, proxy: figP, entries: inp.entries }, normLayout, crops: cr, pixel, ...extra, ...(rf ? { cropsRefVsFigma: rf } : {}) }
         : { screen: sc, spec: modelled.spec, proxy: figP, layout, flags, crops: cr, pixel });
       // an instance of another component than the encoded one (not an icon: its identity is the icon check) is a finding
       const verifyFig = (figP, ...a) => { const r = verifyScreen(input(figP, ...a), verifyOpts); for (const w of figP.swapped || []) r.data.push(w); if ((figP.swapped || []).length) r.pass = false; return r; };

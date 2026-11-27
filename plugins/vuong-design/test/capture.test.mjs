@@ -433,3 +433,14 @@ test('R94 bare text in a flex box keeps its own style when the page styles "box 
   const wrap = walk(s.tree).find((n) => n.cls === 'hd one').kids[0];
   assert.equal(wrap.tag, 'span', 'the wrapper is recorded as a span');
 });
+
+test('R96 sizes and spacing written as % are recorded as written (rel), on elements, inline styles and pseudos', { skip }, async () => {
+  const s = (await captureScreens(join(FIX, 'capture-rel.html'), { root: '.scr' })).screens[0];
+  const by = (cls) => walk(s.tree).find((n) => n.cls === cls);
+  assert.deepEqual(by('box').rel, { paddingT: '5%', paddingR: '5%', paddingB: '5%', paddingL: '5%' });
+  const after = walk(s.tree).find((n) => n.kind === 'pseudo' || (n.id && n.id.endsWith('.a')));
+  assert.ok(after, 'the ::after is captured');
+  assert.deepEqual([after.rel.width, after.rel.height], ['25%', '50%']);
+  assert.equal(by('px').rel, undefined, 'px sizes carry no rel');
+  assert.equal(by('inl').rel.width, '50%');
+});

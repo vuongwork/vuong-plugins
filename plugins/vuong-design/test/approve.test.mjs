@@ -63,13 +63,16 @@ const view = (items, screen = 's0') => ({ file: 'f.html', summary: { ...summary,
 
 test('report.html: an approve box on every finding that can be approved, a note on the others, the bar only when needed', () => {
   const items = [
-    it('crop', 'n.3', { ratio: 0.2, diff: 10, peak: 48, sizeExplainedBy: 'norm' }, { approvable: true }),
+    it('crop', 'n.3', { ratio: 0.2, diff: 10, peak: 48, sizeExplainedBy: 'norm' }, { approvable: true, normCause: ['n.3 paddingT 1 → 4 (GRID4)'] }),
     it('root', 'n.5', { delta: [0, 1, 0, 0], layer: 'norm' }, { approvable: false }),
     it('crop', 'n.4', { ratio: 0.1, diff: 5, peak: 20, root: 'n.5' }, { approvable: false }),
   ];
   const html = renderReportHtml({ screens: [view(items), view([it('crop', 'n.3', { ratio: 0.2, diff: 10, peak: 48, sizeExplainedBy: 'norm' }, { approvable: true })], 's1')] });
   assert.equal((html.match(/<input type="checkbox" class="ap">/g) || []).length, 1, 'the repeat on s1 has no box of its own');
-  assert.match(html, /class="approve" data-file="f\.html" data-screen="s0" data-akind="crop" data-node="n\.3" data-width="A" data-anchor="[^"]+" data-explained="norm"/);
+  assert.match(html, /class="approve" data-file="f\.html" data-screen="s0" data-akind="crop" data-node="n\.3" data-width="A" data-anchor="[^"]+">/);
+  // R96: a difference from a normalisation answer names that answer; no button ticks such items in bulk
+  assert.match(html, /class="normcause">Caused by a normalisation answer, not by the build: <code>n\.3 paddingT 1 → 4 \(GRID4\)<\/code>/);
+  assert.doesNotMatch(html, /ap-explained|data-explained/);
   assert.match(html, /class="item repeat" data-of="[^"]+" data-file="f\.html" data-screen="s1" data-akind="crop"/);
   assert.match(html, /Cannot be approved: a layout error the plugin must explain/);
   assert.match(html, /Approved together with the layout error on <code>n\.5<\/code>/);

@@ -4,7 +4,7 @@
 //
 // inventory(screens: [{ screen: IR screen, spec: modelled SNode root }]) -> { uses: Use[], vars }
 //
-// Use = { screen, node, cat, prop, value, raw, role, token?, tokenMismatch?, tokens?, flex?, unparsed?, noise?, run?,
+// Use = { screen, node, cat, prop, value, raw, role, token?, tokenMismatch?, tokens?, flex?, unparsed?, noise?, rel?, run?,
 //         rawCandidates?, sizes?, fixed?, natural?, img?, box?, pill? }
 //  - screen: IR screen id (name when id is missing); node: SNode id (= source INode id unless synthetic).
 //  - cat / prop:
@@ -30,6 +30,8 @@
 //    Several such entries with the same `to` (two source fonts both measured in Inter): raw stays the IR list and
 //    rawCandidates = the sorted `from`s. No matching entry (no override, or a font Figma has): raw = the IR list.
 //  - flex: 'sb' for a space-between primary axis (Figma auto spacing): prop gap, no value.
+//  - rel (R96): on a space / size use whose IR node has rel[prop] (capture: the value was written as % or calc()):
+//    that written value. normalize keeps it (RELATIVE): the px follows from the box it sits in.
 //  - noise (R67): true on a space, size or radius use whose value is under 0.5 px. Such values are residues of the
 //    measured geometry (capture rounds rects to 0.01 px and infer derives padding as differences of them, and the
 //    R38 FILL split leaves 0.01-0.03 px on buttons / rows), not authored values: the use is listed for tracing (value
@@ -262,6 +264,7 @@ function screenUses(screen, spec) {
     const add = (cat, prop, v, extra = {}) => {
       const u = { screen: sid, node: sn.id, cat, prop, ...v, role: `${cat}|${prop}|${sig}|${parentSig}` };
       if (NOISE_CATS.has(cat) && typeof v.value === 'number' && Math.abs(v.value) < NOISE_PX) u.noise = true; // R67
+      if (ir && ir.rel && ir.rel[prop] !== undefined) u.rel = ir.rel[prop]; // R96: written relative to the box ('27%')
       const { token, ...rest } = extra;
       const t = token === undefined ? {} : cat === 'color' ? colTok(token, v.value) : LEN_CATS.has(cat) ? lenTok(token, v.value) : { token };
       for (const [k, x] of Object.entries({ ...t, ...rest })) if (x !== undefined) u[k] = x;
@@ -314,7 +317,8 @@ function screenUses(screen, spec) {
 
     // ---- size: FIXED axes of frames and images ----
     if ((sn.t === 'F' || sn.t === 'I') && !sn.syn && !isRoot && Array.isArray(sn.sz)) {
-      const im = sn.t === 'I' ? { sizes, img: true } : {};
+      // R96: leaf = a frame without children (a dot, a box, a badge with no child): its size is a component detail
+      const im = sn.t === 'I' ? { sizes, img: true } : { leaf: !(sn.kids && sn.kids.length) || undefined };
       // R80: an axis pinned to stretch with its parent (abs LR / TB / SCALE) has no authored size
       const stretch = (c) => c === 'LR' || c === 'TB' || c === 'SCALE';
       if (sn.sz[0] === 'FIXED' && !(sn.abs && stretch(sn.abs.c))) addLen('size', 'width', sn.w, tok.width, im);

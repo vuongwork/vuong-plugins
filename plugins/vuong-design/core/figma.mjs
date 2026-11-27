@@ -879,7 +879,7 @@ async function check(argv, log, deps) {
         effectsNotRead: (() => { const ns = effectNodes(sc.tree); return { count: ns.length, nodes: ns }; })(),
         proxyVsFigma: { ref: normOn ? 'norm' : 'modelled', ...proxyVsFigma(normOn ? normP : modP, fig, ids) },
       };
-      const entry = { screen: sc, inferred, modelled, report, proxy: normOn ? modP : fig, layout, norm: normOn ? fig : null, normLayout, figma: fig, ...(mutations ? { mutations } : {}) };
+      const entry = { screen: sc, inferred, modelled, report, proxy: normOn ? modP : fig, layout, norm: normOn ? fig : null, normLayout, figma: fig, ...(normOn ? { target } : {}), ...(mutations ? { mutations } : {}) };
       const where = { file: inp.ir.file, screen: x.id, tree: sc.tree };
       const g = gate(report, allowlist, where);
       const summary = summarize(inp.ir.file, entry, g);

@@ -31,7 +31,7 @@ const screen = {
 function fixture() {
   seq = 0;
   const uses = [
-    // GRID4 without majority: 13 and 14 in their own roles -> group questions + project.grid4
+    // off-grid 13 and 14 with no majority: kept (R96 OFF_GRID, no question without project.grid4 ask-each)
     use('space', 'paddingT', 13, 'div.card|div.in', { node: '0.1' }),
     use('space', 'paddingT', 13, 'div.card|div.in', { node: '0.2' }),
     use('space', 'paddingT', 14, 'div.box|div.in', { node: '0.3' }),
@@ -105,7 +105,7 @@ test('project questions come first (settles N nodes), then group questions by no
   const kinds = cards.map((c) => c.kind);
   const lastProject = kinds.lastIndexOf('project'), firstGroup = kinds.indexOf('group');
   assert.ok(lastProject >= 0 && firstGroup > lastProject, `project before group: ${kinds.join(',')}`);
-  for (const k of ['project.grid4', 'project.lineHeightInt', 'project.colorNear']) assert.equal(cards.find((c) => c.key === k).kind, 'project');
+  for (const k of ['project.lineHeightInt', 'project.colorNear']) assert.equal(cards.find((c) => c.key === k).kind, 'project');
   const group = cards.filter((c) => c.kind === 'group').map((c) => c.affects);
   assert.deepEqual(group, [...group].sort((a, b) => b - a));
   assert.match(html, /settles \d+ nodes?/);

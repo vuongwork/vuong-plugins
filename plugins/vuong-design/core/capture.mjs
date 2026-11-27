@@ -291,6 +291,53 @@ function measurePage({ rootSel, widenSel, extras, nameOf, vars: wantVars }) {
   const origIdx = new WeakMap();
   for (const r of roots) for (const el of [r, ...r.querySelectorAll('*')]) el.childNodes.forEach((ch, i) => origIdx.set(ch, i));
 
+  // R96: sizes and spacing the author wrote relative to the box (% or calc()): the measured px is a consequence of the
+  // box it sits in (a check mark of 27% x 47% of its box), not a design value of its own, so normalise keeps it
+  // (RELATIVE). A hidden element (or pseudo) reports its computed value as written ('27%'); only elements and pseudos
+  // a style rule or the inline style could give such a value are probed, all before any geometry is read.
+  // relOf: element -> { width?, height?, paddingT|R|B|L?, gap?, counterGap? } (values as written), pseudo spans too.
+  const REL_OF = {
+    width: ['width'], height: ['height'], 'padding-top': ['paddingT'], 'padding-right': ['paddingR'], 'padding-bottom': ['paddingB'],
+    'padding-left': ['paddingL'], 'row-gap': ['gap', 'counterGap'], 'column-gap': ['gap', 'counterGap'],
+  };
+  const REL_CSS = [...Object.keys(REL_OF), 'padding', 'gap'];
+  const isRel = (v) => /%|calc\(/.test(String(v || ''));
+  const relSel = { el: [], before: [], after: [] };
+  const scanRel = (rules) => {
+    for (const r of rules) {
+      if (r.cssRules && !r.selectorText) { if (!r.media || matchMedia(r.media.mediaText).matches) scanRel(r.cssRules); continue; }
+      if (!r.selectorText || !r.style || !REL_CSS.some((p) => isRel(r.style.getPropertyValue(p)))) continue;
+      for (const part of r.selectorText.split(',')) {
+        const m = /::?(before|after)\b/i.exec(part);
+        if (m) relSel[m[1].toLowerCase()].push(part.replace(/::?(before|after)\b/gi, '').trim() || '*');
+        else relSel.el.push(part.trim());
+      }
+    }
+  };
+  for (const ss of document.styleSheets) { try { scanRel(ss.cssRules); } catch { /* cross-origin sheet */ } }
+  const anyMatch = (el, sels) => sels.some((s) => { try { return el.matches(s); } catch { return false; } });
+  const relOf = new WeakMap(), relPz = new Map();
+  if (relSel.el.length + relSel.before.length + relSel.after.length || roots.some((r) => /%|calc\(/.test(r.innerHTML))) {
+    const HIDE = '__vdrel';
+    const hs = document.createElement('style');
+    hs.textContent = `.${HIDE}{display:none!important}.${HIDE}b::before,.${HIDE}a::after{display:none!important}`;
+    document.head.appendChild(hs);
+    const probe = (el, which) => {
+      const cls = which ? `${HIDE}${which[0]}` : HIDE;
+      el.classList.add(cls);
+      const cs = getComputedStyle(el, which ? `::${which}` : null), out = {};
+      for (const [css, props] of Object.entries(REL_OF)) { const v = cs.getPropertyValue(css); if (isRel(v)) for (const p of props) out[p] = v; }
+      el.classList.remove(cls);
+      return Object.keys(out).length ? out : null;
+    };
+    for (const r of roots) for (const el of [r, ...r.querySelectorAll('*')]) {
+      if (el.closest('svg')) continue;
+      if (isRel(el.getAttribute('style')) || anyMatch(el, relSel.el)) { const v = probe(el, null); if (v) relOf.set(el, v); }
+      for (const which of ['before', 'after']) if (relSel[which].length && anyMatch(el, relSel[which])) { const v = probe(el, which); if (v) relPz.set(el, { ...relPz.get(el), [which]: v }); }
+    }
+    hs.remove();
+  }
+
   // 2. materialise ::before/::after (with content, background or border) as spans carrying the pseudo's computed style
   const PROPS = [...getComputedStyle(document.documentElement)];
   const pend = [];
@@ -307,6 +354,7 @@ function measurePage({ rootSel, widenSel, extras, nameOf, vars: wantVars }) {
       for (const p of PROPS) if (p !== 'content') sp.style.setProperty(p, cs.getPropertyValue(p));
       sp.textContent = txt; sp.dataset.pseudo = which;
       if (!m) sp.dataset.approx = '1';
+      if (relPz.get(el) && relPz.get(el)[which]) relOf.set(sp, relPz.get(el)[which]);
       pend.push([el, which, sp]);
     }
   }
@@ -792,6 +840,7 @@ function measurePage({ rootSel, widenSel, extras, nameOf, vars: wantVars }) {
       const res = walkEl(el, id, clip, inHidden);
       if (res && !Array.isArray(res) && flexItem.has(el)) res.flex = flexItem.get(el);
       if (res && !Array.isArray(res)) { const pc = authoredPct(el); if (pc) res.pct = pc; }
+      if (res && !Array.isArray(res) && relOf.has(el)) res.rel = relOf.get(el);
       if (wantVars && res && !Array.isArray(res)) attachTok(res, el);
       return res;
     };
@@ -1273,6 +1322,7 @@ function mergeNode(a, mapB) {
   if (a.spacer) n.spacer = true;
   if (a.flex) n.flex = a.flex;
   if (a.pct) n.pct = a.pct;
+  if (a.rel) n.rel = a.rel;
   if (a.flexBox) n.flexBox = a.flexBox;
   // R84 authored insets, left out when they are all 0 with no child margin (the reader takes that as the default)
   if (a.ins && a.ins.some((x) => x.length > 1 || x[0] !== 0)) n.ins = a.ins;

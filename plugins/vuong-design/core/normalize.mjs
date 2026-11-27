@@ -28,14 +28,14 @@
 //  - group question, one per (code, cat, prop family, from, proposal), roles = the role keys it covers (sorted),
 //    affects = their distinct nodes. Prop families: space = padding T/R/B/L + gap + counterGap, radius = the four
 //    corners, size = width + height, icon = width + height; a colour is one family over every colour prop. Keys:
-//    GRID4 `grid4|<cat>|<from>|<proposal>` (e.g. grid4|space|13|12), ICON_FRAME `icon|<from>` (the proposal follows
+//    GRID4 `grid4|<cat>|<from>` (R96; e.g. grid4|space|13), ICON_FRAME `icon|<from>` (the proposal follows
 //    from the size), COLOR_NEAR `color|<from>|<to>`, SRC_SQUASH `squash|<cat>|<from>|<proposal>`. Entries stay per
 //    role; their `question` is the group key.
 //  - per-role keys (the earlier format) are still read, never listed: GRID4 `grid4|<role>|<from>`, SRC_SQUASH
 //    `squash|<node role>` (role without cat and prop). Same options as the group.
 //  - project questions (options accept-all / ask-each, default ask-each, so nothing changes without the user):
-//    project.grid4, project.iconFrame, project.colorNear, project.srcSquash; accept-all applies each decision's
-//    proposal. Listed when the code has at least one decision. (project.typeScale / project.lineHeightInt stay
+//    project.iconFrame, project.colorNear, project.srcSquash; accept-all applies each decision's proposal. R96:
+//    project.grid4 is a setting, not a question: 'keep' (default) or 'ask-each' (any other value throws). Listed when the code has at least one decision. (project.typeScale / project.lineHeightInt stay
 //    yes / no, as below.)
 //  - answer order for a decision: per-role key > group key > project key (accept-all) > none (ask). The template
 //    (rules-file.mjs rulesTemplate) therefore lists group and project keys only.
@@ -65,9 +65,14 @@
 //                  majority is at most 4 px (one grid step) from the value (both after R69 snapping); a larger jump
 //                  (an icon height 10 in a role of 24s) is not a typo of the majority: it falls through to GRID4
 //                  (space / size / radius) or ICON_FRAME (icons), a question with the nearest grid / frame proposal.
-//  GRID4           off-grid space / frame size / radius with no majority -> question `grid4|<cat>|<from>|<proposal>`
-//                  (R68), options the two neighbouring multiples of 4 and the value itself, proposal the nearest
-//                  (tie -> larger).
+//  RELATIVE        R96: a space / size use the author wrote as % or calc() of its box (inventory rel) -> kept: the px
+//                  follows from the box (a check mark of 27% x 47% of its box keeps its proportions).
+//  OFF_GRID        R96: an off-grid space / frame size / radius with no majority -> kept, unless project.grid4 is
+//                  'ask-each'; even then a radius or the size of a leaf frame (no children) is always kept.
+//  GRID4           with project.grid4 'ask-each': off-grid space or size of a frame with children -> question
+//                  `grid4|<cat>|<from>` (R96), options the value itself (the default and proposal) and the two
+//                  neighbouring multiples of 4 (R68 asked with the nearest as proposal; it moved badges and check
+//                  boxes out of shape).
 //                  Never for font sizes, border widths, icons, images, flexible values.
 //  COLOR_DE1       colour (unnamed: no use of that hex has a token or, R79, a tokenMismatch) within ΔE2000 < 1 of a more frequent unnamed
 //                  colour (more uses; tie -> lower hex) with the same alpha: its uses in a role the other colour also
@@ -174,10 +179,15 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     }
     pending.push(d);
   };
-  const BULK = { GRID4: 'project.grid4', ICON_FRAME: 'project.iconFrame', COLOR_NEAR: 'project.colorNear', SRC_SQUASH: 'project.srcSquash' };
-  const BULK_CAT = { GRID4: 'space', ICON_FRAME: 'icon', COLOR_NEAR: 'color', SRC_SQUASH: 'size' };
+  // R96: project.grid4 is a setting, not a question: 'keep' (default: no grid question at all) or 'ask-each'
+  const GRID_Q = 'project.grid4';
+  if (answers[GRID_Q] !== undefined && !['keep', 'ask-each'].includes(answers[GRID_Q])) {
+    throw new Error(`rules: answer ${JSON.stringify(answers[GRID_Q])} for "${GRID_Q}" is not "keep" or "ask-each"${answers[GRID_Q] === 'accept-all' ? ' (accept-all was removed in R96: the grid is never applied in bulk)' : ''}`);
+  }
+  const gridOn = answers[GRID_Q] === 'ask-each';
+  const BULK = { ICON_FRAME: 'project.iconFrame', COLOR_NEAR: 'project.colorNear', SRC_SQUASH: 'project.srcSquash' };
+  const BULK_CAT = { ICON_FRAME: 'icon', COLOR_NEAR: 'color', SRC_SQUASH: 'size' };
   const BULK_TEXT = {
-    GRID4: (n) => `Apply every proposed 4 px grid value (${n} off-grid spacing, size and radius question(s)) without asking each one?`,
     ICON_FRAME: (n) => `Move every icon to its proposed 16, 20 or 24 px frame (${n} icon size question(s)) without asking each one?`,
     COLOR_NEAR: (n) => `Merge every near colour (ΔE2000 < 3) into its proposed more frequent colour (${n} colour question(s)) without asking each one?`,
     SRC_SQUASH: (n) => `Keep the declared (larger) size at both widths for every squashed icon or image (${n} question(s)) without asking each one?`,
@@ -227,6 +237,7 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     if (typeof u.value !== 'number') { unparsed++; continue; }
     if (u.token) { keep('TOKEN'); continue; }
     if (u.derived) { keep('DERIVED'); continue; } // R84
+    if (u.rel !== undefined) { keep('RELATIVE'); continue; } // R96: written as % / calc() of its box
     if (u.cat === 'icon' && u.fixed === false) {
       const nat = squashedNatural(u); // R74
       if (nat === null) { keep('FLEX'); continue; }
@@ -247,11 +258,15 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
       if (maj !== null && Math.abs(maj - sv) > EPS && Math.abs(maj - sv) <= MAJORITY_PX + EPS && scaleValue(u, maj)) { decide({ ...base, code: 'ROLE_MAJORITY', target: maj, auto: true }); continue; }
     }
     if (GRID_CATS.has(u.cat) && !(u.cat === 'size' && u.img)) {
-      const nb = grid4Of(sv), p = nearest(sv, nb);
-      const key = ask(`grid4|${u.cat}|${sv}|${p}`, u.cat, 'GRID4',
-        (q) => `${u.cat} ${sv} px (${roleSummary(q)}) is off the 4 px grid with no majority value in its role: use ${p} px?`,
-        [...nb, sv], p);
-      decide({ ...base, code: 'GRID4', target: p, qkey: key, rkey: `grid4|${u.role}|${v}`, bulk: BULK.GRID4, keepOpt: sv, map: (a) => Number(a) });
+      // R96: the 4 px grid is opt-in (project.grid4 'ask-each') and only for layout: spacing and the size of a frame
+      // with children. A corner radius or the size of a leaf shape (a dot, a check box, a badge) is a detail of its
+      // component, never moved to the grid. Every question keeps the value by default: a move needs an answer.
+      if (!gridOn || u.cat === 'radius' || (u.cat === 'size' && u.leaf)) { keep('OFF_GRID'); continue; }
+      const nb = grid4Of(sv);
+      const key = ask(`grid4|${u.cat}|${sv}`, u.cat, 'GRID4',
+        (q) => `${u.cat} ${sv} px (${roleSummary(q)}) is off the 4 px grid: keep it (default) or move it to ${nb.join(' or ')} px?`,
+        [sv, ...nb], sv);
+      decide({ ...base, code: 'GRID4', target: sv, qkey: key, rkey: `grid4|${u.role}|${v}`, keepOpt: sv, map: (a) => Number(a) });
       continue;
     }
     if (u.cat === 'icon' && !illustration && !inFrames(sv)) {
@@ -389,7 +404,7 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
   for (const [key, q] of questions) if (key in answers) q.answered = pick(key, q.options);
   const roleAnswer = new Map();
   for (const [key, options] of roleKeys) if (key in answers) roleAnswer.set(key, pick(key, options));
-  const stale = Object.keys(answers).filter((k) => !questions.has(k) && !roleKeys.has(k)).sort(cmpStr);
+  const stale = Object.keys(answers).filter((k) => !questions.has(k) && !roleKeys.has(k) && k !== GRID_Q).sort(cmpStr);
   // per-role key > group key > project key (accept-all) > none
   const resolve = (d) => {
     if (d.rkey && roleAnswer.has(d.rkey)) return { a: roleAnswer.get(d.rkey) };

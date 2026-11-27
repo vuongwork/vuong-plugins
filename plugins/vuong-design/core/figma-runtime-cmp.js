@@ -90,8 +90,14 @@ for(const[,sc]of XC)if(!XF2.has(sc.cm.n))await XD(sc.cm.n);
 for(const[m,sc]of XC)m.name=sc.cm.v||sc.cm.n;
 // an old component replaced by this build hands its instances over and goes (kept while some stay); one this build
 // failed to replace stays as it is
-let sw=0,kept=0;for(const o of XO)if(o.type=='COMPONENT'){const w=XM.get(gd(o,'cmp'));if(!w||w==o)continue;for(const i of await o.getInstancesAsync()){i.swapComponent(w);sw++}
-if((await o.getInstancesAsync()).length)kept++;else o.remove()}
+// R92: the swap is this build's own change, not a hand edit: the outermost node with a sig above a swapped instance (a
+// screen root, or a variant of a component another batch built) that was unedited before every swap gets its sig again
+// after them; an edited one keeps its old sig (still edited)
+const XW=[],XS=new Map,XT=n=>{let r=null;for(let p=n.parent;p&&p.type!='PAGE';p=p.parent)if(gd(p,'sig'))r=p;return r};
+for(const o of XO)if(o.type=='COMPONENT'){const w=XM.get(gd(o,'cmp'));if(!w||w==o)continue;for(const i of await o.getInstancesAsync()){XW.push([i,w]);const r=XT(i);if(r&&!XS.has(r)){const g=gd(r,'sig');XS.set(r,g==sig(r)||g==sig(r,1))}}}
+let sw=0,kept=0;for(const[i,w]of XW){i.swapComponent(w);sw++}
+for(const o of XO)if(o.type=='COMPONENT'&&!o.removed){const w=XM.get(gd(o,'cmp'));if(!w||w==o)continue;if((await o.getInstancesAsync()).length)kept++;else o.remove()}
+for(const[r,ok]of XS)if(ok&&!r.removed)pd(r,'sig',sig(r));
 // layout: one row per component, the icons share one; a set holds its variants in one row (24 apart and in); rows 64
 // apart, below what is left on the page (other batches' components, old ones still used)
 {const R=new Map;for(const[m,sc]of XC){const o=m.parent&&m.parent.type=='COMPONENT_SET'?m.parent:m,g=sc.cm.n.startsWith('icon/')?'icon/':sc.cm.n,r=R.get(g)||[];if(r.indexOf(o)<0)r.push(o);R.set(g,r)}

@@ -431,7 +431,7 @@ Each cell is an `<iframe srcdoc>` that holds the proxy page (`proxy.mjs`) of one
 - A nested main binds its own variables: where the readback shows other variables than the encoding's, each field is bound again to the encoded one.
 - The readback is the plan 3 one: every spec node has an entry, by the same id. So `check` reads instances as it reads layers.
 
-**A second build** (the data changed, or `--redo`) builds new components. The instances of each old one move to the new one of the same name (`swapComponent`), and the old one is removed: no duplicates. An unchanged `cmp-NN` is kept, as a vars batch is. A screen's hash covers the component items it uses. A `cmp-NN` batch only replaces the components it builds itself; those of other batches stay. An old component that the batch failed to rebuild also stays.
+**A second build** (the data changed, or `--redo`) builds new components. The instances of each old one move to the new one of the same name (`swapComponent`), and the old one is removed: no duplicates. An unchanged `cmp-NN` is kept, as a vars batch is. A screen's hash covers the component items it uses. A `cmp-NN` batch only replaces the components it builds itself; those of other batches stay. An old component that the batch failed to rebuild also stays. The swap is the build's own change, not a hand edit (R92): a screen or a variant of another batch that holds a swapped instance and was unedited before the swap gets its signature again after it.
 
 **Edited by hand.** A component carries a signature (`vuongdesign/sig`), like a screen frame. The signature is refreshed once its set, properties and swaps are done.
 

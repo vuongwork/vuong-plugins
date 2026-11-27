@@ -217,6 +217,22 @@ test('a second build of the same components: no duplicates, the screens\' instan
   assert.ok(cmpOf(fig).includes(s1['n.1'].mainComponent), 'the instance points to a component on the page');
 });
 
+test('R92: the instance swap of a component rebuild is not a hand edit: the screens sent after it are rebuilt; a screen edited before it stays edited', async () => {
+  const s = setup();
+  const { fig } = await build(s);
+  const scr = (name) => page(fig, 'Screens').children.find((n) => n.name === name);
+  const root = scr('s1');
+  assert.ok(all(root).some((n) => n.type === 'INSTANCE'), 's1 holds instances');
+  root.fills = [{ type: 'SOLID', color: { r: 0.1, g: 0.2, b: 0.3 }, opacity: 1 }]; // the hand edit, outside the instances
+  const again = [];
+  for (const b of s.cmpBatches) again.push(await run(b.code, fig));
+  assert.ok(again.some((r) => r.cm.swapped > 0), 'instances swapped');
+  const sent = [];
+  for (const b of s.batches) sent.push(await run(b.code, fig));
+  const edited = sent.flatMap((r) => r.screens.filter((x) => x.edited).map((x) => x.screen));
+  assert.deepEqual(edited, ['s1'], 'only the screen edited by hand is kept');
+});
+
 // ---- plan 3b Task 7: edit guard, several component batches ----
 const cmpBatchesOf = (s, o = {}) => planBatches(s.cmp.items, { wrap: loaderCode, page: 'Components', extra: { cm: 1 }, unit: (x) => x.cm.n, ...o });
 test('components page layout: one row per component, the icons share one; variants in one row inside their set, nothing overlaps', async () => {
@@ -289,6 +305,11 @@ test('components in several batches: a later batch keeps the components an earli
   const names = cmpOf(fig).filter((n) => n.parent.type === 'PAGE').map((n) => n.name).sort();
   assert.deepEqual(names, ['card', 'icon/i-a', 'icon/i-b', 'row', 'tab']);
   for (const b of s.batches) { const r = await run(b.code, fig); for (const x of r.screens) assert.deepEqual(x.errors, [], x.screen); }
+  // R92: the same batches again: a later batch swaps instances inside the variants an earlier batch built (and inside
+  // the screens); none of that reads as a hand edit
+  const edited = [];
+  for (const b of [...small, ...s.batches]) { const r = await run(b.code, fig); edited.push(...r.screens.filter((x) => x.edited).map((x) => x.screen)); }
+  assert.deepEqual(edited, []);
 });
 
 test('documentAccess dynamic-page: everything builds without the sync mainComponent getter', async () => {

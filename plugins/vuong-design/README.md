@@ -94,7 +94,7 @@ node plugins/vuong-design/core/session-log.mjs --log <runs.jsonl> [--transcript 
 ```
 node plugins/vuong-design/core/layout.mjs --html <file> --out <dir> [--root <selector>] [--no-lint] \
   [--widen <selector>] [--name <selector>] [--widen-by <px>] [--viewport <px>] \
-  [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>] [--tol-text-round <px>] [--no-webfonts] \
+  [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>] [--tol-text-round <px>] [--no-webfonts] [--no-cache] \
   [--allowlist <json>] [--mutate [--mutate-sample <n>]]
 
 node plugins/vuong-design/core/layout.mjs --corpus plugins/vuong-design/test/corpus.json --out <dir> [same options]
@@ -107,6 +107,8 @@ node plugins/vuong-design/core/layout.mjs --corpus plugins/vuong-design/test/cor
 - Fonts: before measuring, the source page is re-rendered with the face Figma will use: a Google Fonts face when Figma has the family (reason `version`), otherwise a substitute such as Inter for system-ui or Times New Roman (reasons `not-in-figma`, `system`); `line-height: normal` is written as explicit px (Figma has no "normal"). Google Fonts are fetched even when the page does not reference them; only the family name is sent. `--no-webfonts` stops that extra fetching only: the page's own font links and `@font-face` rules still load during capture and are copied into the proxy. Families that do not render are reported (`font-face` data finding when a used face is missing in the proxy).
 - `--mutate`: also plants known errors to check the checker (≈30 s per screen); `--mutate-sample <n>` limits it to n screens per file. A missed mutation makes the run exit 1 (R53); a kind with no candidate node is `skipped`, not missed.
 - `--corpus`: runs every file of a corpus JSON (`files: [{ file, root, widen? }]`, names relative to `--corpus-dir` or `$VD_CORPUS_DIR`) and uses its `allowlist` unless `--allowlist` is given.
+
+Speed (R95): screens run in parallel, each worker on its own Chromium process (`VD_JOBS=<n>`, default half the CPU cores, 2 to 6; a run gives the same bytes as `VD_JOBS=1`). Each screen's proxies and verify result are kept in `<out>/.cache` (ds, layout) and `<figma dir>/.cache` (figma check: the local proxies) and reused when the key is unchanged: the captured tree, the content of the local image files it names, the font map, the options, the target spec with its records and the entries they name, the plugin code (every file of `core/`) and the Chromium version. Screenshots are not in the key (GPU raster gives a few different pixels from run to run on the same page); a screen with a canvas, video or iframe is never cached. `--no-cache` renders everything again.
 
 Environment: `VD_PLAYWRIGHT_FROM` (see Setup), `VD_CORPUS_DIR` (corpus mode and the acceptance test), `VD_ACCEPT_MUTATE=1` (mutation part of the acceptance test), `VD_ACCEPT_RULES=<rules file>` (the acceptance test normalises each file with that rules file and also requires no unexplained norm root and no norm-spec finding).
 

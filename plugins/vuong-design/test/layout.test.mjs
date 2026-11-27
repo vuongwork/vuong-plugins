@@ -32,7 +32,7 @@ test('parseCli: plan flags, extras and defaults', () => {
   assert.deepEqual(o, {
     html: 'a.html', root: '.sc', widen: '.ph', nameOf: 'h2', widenBy: 80, viewport: 1200,
     verify: { tolFrame: 0.75, tolText: 1.5, tolModel: 3 }, webFonts: false, out: 'o', allowlist: undefined,
-    noLint: false, mutate: true, mutateSample: 2, corpus: undefined, corpusDir: undefined,
+    noLint: false, noCache: false, mutate: true, mutateSample: 2, corpus: undefined, corpusDir: undefined,
   });
   const d = parseCli(['--html', 'a.html', '--root', '.sc', '--out', 'o']);
   assert.deepEqual(d.verify, {});

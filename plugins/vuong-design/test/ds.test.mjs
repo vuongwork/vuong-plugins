@@ -152,6 +152,6 @@ test('deterministic: reversing the screens gives byte-identical tokens and norma
   assert.equal(tmJson(a), readFileSync(join(dir, 'token-map.json'), 'utf8'));
   assert.deepEqual(Object.keys(readJson(dir, 'token-map.json')).length > 0, true);
   assert.ok(q.lines.some((l) => /^ds-mini\.html: \d+ auto, \d+ answered, \d+ asked; 0 unexplained norm root/.test(l)), q.lines.join('\n'));
-  assert.ok(readdirSync(out).every((f) => ['ds-mini', 'capture-basic', 'report.json', 'report.html'].includes(f)), readdirSync(out).join());
+  assert.ok(readdirSync(out).every((f) => ['ds-mini', 'capture-basic', 'report.json', 'report.html', '.cache'].includes(f)), readdirSync(out).join());
   rmSync(cwd, { recursive: true, force: true });
 });

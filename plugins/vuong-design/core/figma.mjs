@@ -683,7 +683,7 @@ async function serve(argv, log, deps = {}) {
 // ---------------- check ----------------
 const CHECK_OPTS = {
   out: { type: 'string' }, mutate: { type: 'boolean' }, allowlist: { type: 'string' }, html: { type: 'string' }, root: { type: 'string' },
-  widen: { type: 'string' }, name: { type: 'string' }, 'widen-by': { type: 'string' }, viewport: { type: 'string' }, 'no-webfonts': { type: 'boolean' },
+  widen: { type: 'string' }, name: { type: 'string' }, 'widen-by': { type: 'string' }, viewport: { type: 'string' }, 'no-webfonts': { type: 'boolean' }, 'no-cache': { type: 'boolean' },
   'tol-frame': { type: 'string' }, 'tol-text': { type: 'string' }, 'tol-model': { type: 'string' }, 'tol-text-round': { type: 'string' },
 };
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -787,16 +787,35 @@ async function check(argv, log, deps) {
     const noRead = new Map(variants.filter((v) => v.status !== 'done' && v.status !== 'skippedEdited').map((v) => [v.key, `instance of component ${v.key}, which has no readback (${v.status})`]));
     const cmpMut = cmpOn && o.mutate ? cmpMutation(variants, st, (f) => readJson(join(F, f))) : null;
     const { screenView, renderReportHtml } = await import('./report-html.mjs');
-    for (const x of inp.screens) {
+    // R95: screens run `jobs` at a time, each worker on its own browser process (as runFile); results, views and the
+    // progress lines keep the screen order
+    // R95: the local proxies of a screen (localScreen: 8 renders) are kept in <figma dir>/.cache, keyed by the captured
+    // screen, the entries that reach it, the font map and webFonts (cache.mjs adds the code and Chromium version)
+    const { screenCache, slotOf, screenKey } = await import('./cache.mjs');
+    const cache = o['no-cache'] ? null : screenCache(join(F, '.cache'), { browserVersion: browser.version() });
+    const fm = Object.fromEntries(Object.entries(fontMap).map(([k, v]) => [k, typeof v === 'function' ? String(v) : v]));
+    let cachedN = 0;
+    const localCached = async (b, sc, id) => {
+      const opts = { id, fontMap, webFonts, entries: inp.entries };
+      const assets = cache ? screenKey(sc) : null;
+      if (!assets) return localScreen(b, sc, opts);
+      const slot = slotOf(`local:${inp.ir.file}`, id);
+      const key = cache.key(['localScreen', sc, assets, fm, webFonts, id, inp.entries.filter((e) => (e.nodes || []).some((n) => String(n.screen) === String(id)))]);
+      const got = cache.get(slot, key);
+      if (got) { cachedN++; return got; }
+      const r = await localScreen(b, sc, opts);
+      cache.put(slot, key, r);
+      return r;
+    };
+    const oneScreen = async (x, browser) => {
       const sc = capById.get(x.id);
       // a screen with no readback (never sent, failed): fails without the local model, proxy and report view (about 6 s
       // each on Planora)
       if (!x.sres || !x.sres.nodes) {
-        screensOut.push({ summary: { file: inp.ir.file, screen: x.id, pass: false, notBuilt: x.state.status }, notBuilt: true, figma: { status: x.state.status, batch: x.state.batch || null } });
-        log(`  ${x.id}: fail (no readback: ${x.state.status}; not checked)`);
-        continue;
+        return { out: { summary: { file: inp.ir.file, screen: x.id, pass: false, notBuilt: x.state.status }, notBuilt: true, figma: { status: x.state.status, batch: x.state.batch || null } },
+          line: `  ${x.id}: fail (no readback: ${x.state.status}; not checked)` };
       }
-      const { inferred, modelled, target, normOn, layout, modP, normP, normLayout, normLayoutError } = await localScreen(browser, sc, { id: x.id, fontMap, webFonts, entries: inp.entries });
+      const { inferred, modelled, target, normOn, layout, modP, normP, normLayout, normLayoutError } = await localCached(browser, sc, x.id);
       if (specJson(target.spec) !== x.specText) throw new UsageError(`screen ${x.id}: the target spec rebuilt from the page differs from spec-norm-${safe(x.id)}.json: the source changed since ds.mjs ran; run ds.mjs and figma.mjs plan again`);
       // the Figma readback and screenshot
       const bl = blockInstances(x.sres && x.sres.nodes ? x.sres : null, x.D, noRead);
@@ -866,11 +885,29 @@ async function check(argv, log, deps) {
       const summary = summarize(inp.ir.file, entry, g);
       const allowlistDraft = [...g.open.roots.map((r) => allowlistEntry('root', r, where)), ...g.open.approvals.map((r) => allowlistEntry('approval', r, where)),
         ...g.open.crops.map((r) => allowlistEntry('crop', r, where))];
-      screensOut.push({ summary, gate: g, report, flags: report.flags, allowlistDraft, figma, ...(mutations ? { mutations } : {}) });
+      const out = { summary, gate: g, report, flags: report.flags, allowlistDraft, figma, ...(mutations ? { mutations } : {}) };
       const v = await screenView(browser, inp.ir.file, entry, g, summary, { crop: 'figma', approval: 'figma', label: 'Figma' });
-      views.push({ ...v, figma });
-      log(`  ${x.id}: ${summary.pass ? 'pass' : 'fail'}${sres ? '' : ` (no readback: ${ss.status})`}${shot ? '' : x.staleShot ? ' (screenshot of an earlier build: take new shots)' : ' (no screenshot)'} (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
-    }
+      const view = { ...v, figma };
+      return { out, view, line: `  ${x.id}: ${summary.pass ? 'pass' : 'fail'}${sres ? '' : ` (no readback: ${ss.status})`}${shot ? '' : x.staleShot ? ' (screenshot of an earlier build: take new shots)' : ' (no screenshot)'}` };
+    };
+    const { jobsOf, pool } = await import('./pipeline.mjs');
+    const jobs = Math.min(jobsOf(), inp.screens.length);
+    const { launchBrowser } = await import('./browser.mjs');
+    const extra = jobs > 1 ? await Promise.all(Array.from({ length: jobs - 1 }, () => launchBrowser())) : [];
+    const done = [];
+    let next = 0;
+    try {
+      await pool(inp.screens.length, jobs, (i, b) => oneScreen(inp.screens[i], b), (i, r) => {
+        done[i] = r;
+        while (next < inp.screens.length && done[next]) {
+          const d = done[next++];
+          screensOut.push(d.out);
+          if (d.view) views.push(d.view);
+          log(`${d.line} (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
+        }
+      }, [browser, ...extra]);
+    } finally { await Promise.all(extra.map((b) => b.close().catch(() => {}))); }
+    if (cachedN) log(`  ${cachedN}/${inp.screens.length} screens: local proxies reused from the cache (--no-cache to render them again)`);
     const verdict = runVerdict(screensOut);
     const cmpPass = variants.every((v) => v.pass);
     const missed = [...verdict.missed, ...(cmpMut && cmpMut.caught === false ? [`components:${cmpMut.kind}`] : [])];

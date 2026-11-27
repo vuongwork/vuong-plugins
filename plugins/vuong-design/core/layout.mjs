@@ -2,7 +2,7 @@
 // Layout CLI (Task 8): HTML -> inferred auto-layout spec, verified node by node (spec §14), with a report to approve.
 //
 //   node core/layout.mjs --html <file> [--root <selector>] --out <dir> [--widen <selector>] [--name <selector>]
-//        [--no-lint] [--widen-by <px>] [--viewport <px>] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>] [--tol-text-round <px>] [--no-webfonts]
+//        [--no-lint] [--widen-by <px>] [--viewport <px>] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>] [--tol-text-round <px>] [--no-webfonts] [--no-cache]
 //        [--allowlist <json>] [--mutate [--mutate-sample <n>]]
 //   node core/layout.mjs --corpus <corpus.json> [--corpus-dir <dir>] --out <dir> [same options]
 //   node core/layout.mjs --project <vd-project.json> [any option above, overriding the project file]
@@ -38,14 +38,14 @@ export class UsageError extends Error {}
 export const USAGE = `usage: node core/layout.mjs --html <file> [--root <selector>] --out <dir> [options]
        node core/layout.mjs --corpus <corpus.json> [--corpus-dir <dir>] --out <dir> [options]
        node core/layout.mjs --project <vd-project.json> [options]
-options: --no-lint --widen <sel> --name <sel> --widen-by <px> --viewport <px> --tol-frame <px> --tol-text <px> --tol-model <px> --tol-text-round <px>
+options: --no-cache --no-lint --widen <sel> --name <sel> --widen-by <px> --viewport <px> --tol-frame <px> --tol-text <px> --tol-model <px> --tol-text-round <px>
          --no-webfonts --allowlist <json> --mutate --mutate-sample <n>`;
 
 const OPTIONS = {
   html: { type: 'string' }, root: { type: 'string' }, widen: { type: 'string' }, name: { type: 'string' },
   'widen-by': { type: 'string' }, viewport: { type: 'string' },
   'tol-frame': { type: 'string' }, 'tol-text': { type: 'string' }, 'tol-model': { type: 'string' }, 'tol-text-round': { type: 'string' },
-  'no-webfonts': { type: 'boolean' }, 'no-lint': { type: 'boolean' }, out: { type: 'string' }, allowlist: { type: 'string' },
+  'no-webfonts': { type: 'boolean' }, 'no-lint': { type: 'boolean' }, 'no-cache': { type: 'boolean' }, out: { type: 'string' }, allowlist: { type: 'string' },
   mutate: { type: 'boolean' }, 'mutate-sample': { type: 'string' },
   corpus: { type: 'string' }, 'corpus-dir': { type: 'string' }, help: { type: 'boolean', short: 'h' }, project: { type: 'string' },
 };
@@ -91,7 +91,7 @@ export function parseCli(argv, env = process.env, extra = null) {
     html: values.html, root: values.root, widen: values.widen, nameOf: values.name,
     widenBy: number('widen-by', values['widen-by'], { positive: true }),
     viewport: number('viewport', values.viewport, { positive: true }),
-    verify, webFonts: !values['no-webfonts'], noLint: !!values['no-lint'], out: values.out, allowlist: values.allowlist,
+    verify, webFonts: !values['no-webfonts'], noLint: !!values['no-lint'], noCache: !!values['no-cache'], out: values.out, allowlist: values.allowlist,
     mutate: !!values.mutate, mutateSample: number('mutate-sample', values['mutate-sample'], { positive: true, int: true }),
     corpus: values.corpus, corpusDir,
     ...(extra ? Object.fromEntries(Object.keys(extra.options || {}).map((k) => [k, values[k]])) : {}),
@@ -177,10 +177,13 @@ export async function main(argv, deps = {}, ext = null) {
       const res = await runFile(browser, j.path, {
         root: j.root, widen: j.widen, nameOf: j.nameOf, widenBy: o.widenBy, viewport: j.viewport, webFonts: o.webFonts,
         fontMap: deps.fontMap, verify: o.verify, mutate: o.mutate, mutateSample: o.mutateSample,
+        // R95: each screen's proxies and verify are reused from <out>/.cache when nothing they depend on changed
+        ...(o.out && !o.noCache ? { cacheDir: join(o.out, '.cache') } : {}),
         // R90: the progress line gives the gate after the allowlist, as the summary does (report.pass is before it)
         onScreen: (e) => log(`  ${e.report.id}: ${gate(e.report, allowlist, { file: j.file, screen: e.report.id, tree: e.screen.tree }).pass ? 'pass' : 'fail'} (${((Date.now() - t0) / 1000).toFixed(1)} s)`),
         ...(ext ? { normalize: (items) => ext.normalize(j, items, state) } : {}),
       });
+      if (res.cached) log(`  ${res.cached}/${res.screens.length} screens unchanged, reused from the cache (--no-cache to render them again)`);
       results.push({ job: j, res });
     }
   } catch (e) {

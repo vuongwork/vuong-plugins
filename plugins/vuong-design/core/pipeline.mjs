@@ -48,6 +48,7 @@
 // summarize(file, entry, g) -> one summary row (report.json, report.html, acceptance table).
 // loadCorpus(corpusPath, dir) -> { files: [{ file, path, root, widen?, nameOf?, viewport? }], allowlist }
 import { readFileSync } from 'node:fs';
+import { cpus } from 'node:os';
 import { basename, join, resolve, posix } from 'node:path';
 import { captureScreens } from './capture.mjs';
 import { inferScreen } from './infer.mjs';
@@ -56,6 +57,8 @@ import { buildProxyHtml, renderProxy } from './proxy.mjs';
 import { verifyScreenWithImages, figmaSkip } from './verify.mjs';
 import { defaultFontMap } from './font-map.mjs';
 import { applyNorm } from './apply-norm.mjs';
+import { launchBrowser } from './browser.mjs';
+import { screenCache, slotOf, screenKey } from './cache.mjs';
 
 export const PAYLOAD_LIMIT = 50000;
 
@@ -157,11 +160,32 @@ export async function runFile(browser, htmlPath, opts = {}) {
   const targets = opts.normalize
     ? await opts.normalize(screens.map((screen, i) => ({ screen, inferred: inferredAll[i], modelled: applyFigmaModel(inferredAll[i].spec, fontMap, { rendered: screen.fontsRendered }) })))
     : [];
-  for (const [i, screen] of screens.entries()) {
-    const inferred = inferredAll[i];
+  const normOf = (i) => { const t = targets[i] || null; return t && Array.isArray(t.applied) && t.applied.length ? t : null; };
+  // R95: opts.cacheDir keeps each screen's runScreen result; the key holds everything it is a function of: the
+  // captured screen (its tree; its screenshots through the tree and the local files it names, cache.mjs screenKey), font map, proxy and verify options, and with a norm the target spec, its records
+  // and the entries they name (verify reads no other entry); cache.mjs adds the plugin code and the Chromium version
+  const cache = opts.cacheDir ? screenCache(opts.cacheDir, { browserVersion: browser.version() }) : null;
+  const slots = screens.map((s) => slotOf(htmlPath, s.id ?? s.name));
+  const keys = screens.map((screen, i) => {
+    const assets = cache ? screenKey(screen) : null;
+    if (!assets) return null; // no cache, or a screen with content the tree does not describe
+    const n = normOf(i);
+    const named = n ? new Set(n.applied.map((a) => String(a.entry))) : null;
+    const nk = n ? { spec: n.spec, applied: n.applied, entries: Array.isArray(n.entries) ? n.entries.filter((x) => named.has(String(x.id))) : null } : null;
+    // a font map holds functions: its data and the functions' source (code hash covers the default one)
+    const fm = Object.fromEntries(Object.entries(fontMap).map(([k, v]) => [k, typeof v === 'function' ? String(v) : v]));
+    return cache.key([screen, assets, fm, proxyOpts, opts.verify || {}, nk]);
+  });
+  const hit = keys.map((k, i) => (k ? cache.get(slots[i], k) : null));
+  const one = async (i, browser) => {
+    const screen = screens[i], inferred = inferredAll[i];
     const target = targets[i] || null;
-    const norm = target && Array.isArray(target.applied) && target.applied.length ? target : null;
-    const r = await runScreen(browser, screen, inferred, fontMap, { proxy: proxyOpts, verify: opts.verify, ...(norm ? { norm } : {}) });
+    const norm = normOf(i);
+    let r = hit[i];
+    if (!r) {
+      r = await runScreen(browser, screen, inferred, fontMap, { proxy: proxyOpts, verify: opts.verify, ...(norm ? { norm } : {}) });
+      if (keys[i]) cache.put(slots[i], keys[i], r);
+    }
     // R93: the target's HUG frame sizes, measured on the norm proxy (apply-norm leaves them stale on purpose)
     const settled = target && r.norm ? { ...target, ...settleHug(target.spec, r.norm.A.boxes) } : target;
     const entry = { screen, inferred, ...r, ...(settled ? { target: settled } : {}) };
@@ -169,10 +193,39 @@ export async function runFile(browser, htmlPath, opts = {}) {
       const { runMutations } = await import('./mutate.mjs');
       entry.mutations = await runMutations(browser, screen, inferred, fontMap, { proxy: proxyOpts, verify: opts.verify, screenIndex: i, ...(norm ? { norm } : {}) });
     }
-    out.push(entry);
-    if (opts.onScreen) opts.onScreen(entry);
-  }
-  return { file: htmlPath, screens: out };
+    return entry;
+  };
+  // R95: screens run `jobs` at a time, each worker on its own browser process (pages rendering at once in one process
+  // antialias a few pixels differently; separate processes give the serial run's bytes); results and onScreen keep
+  // the screen order
+  const work = screens.filter((_, i) => !hit[i] || mutateAt.has(i)).length;
+  const jobs = Math.max(1, Math.min(jobsOf(opts), work));
+  const extra = jobs > 1 ? await Promise.all(Array.from({ length: jobs - 1 }, () => launchBrowser())) : [];
+  const browsers = [browser, ...extra];
+  let next = 0;
+  try {
+    await pool(screens.length, jobs, one, (i, entry) => {
+      out[i] = entry;
+      while (next < screens.length && out[next]) { if (opts.onScreen) opts.onScreen(out[next]); next++; }
+    }, browsers);
+  } finally { await Promise.all(extra.map((b) => b.close().catch(() => {}))); }
+  if (cache) cache.prune(slots);
+  return { file: htmlPath, screens: out, cached: hit.filter(Boolean).length };
+}
+
+// R95: how many screens run at once: opts.jobs, else $VD_JOBS, else half the CPU cores (2..6)
+export function jobsOf(opts = {}) {
+  const v = Number(opts.jobs ?? process.env.VD_JOBS);
+  if (Number.isInteger(v) && v > 0) return v;
+  return Math.max(2, Math.min(6, Math.floor(cpus().length / 2)));
+}
+
+// run task(i, res[w]) for i < n with at most `jobs` running (worker w holds res[w]); done(i, result) as each
+// finishes; the first error rejects
+export async function pool(n, jobs, task, done = () => {}, res = []) {
+  let k = 0;
+  const worker = async (w) => { while (k < n) { const i = k++; done(i, await task(i, res[w])); } };
+  await Promise.all(Array.from({ length: Math.min(jobs, n) }, (_, w) => worker(w)));
 }
 
 const SLACK_PX = 0.25, SLACK_RATIO = 0.02, EPS = 1e-6;

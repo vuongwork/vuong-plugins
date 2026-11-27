@@ -67,6 +67,14 @@ test('answer / approve: --project gives the output folder and the rules / allowl
   const r = await answerMain(['--project', path, '--no-open'], { log: (s) => logs.push(s) });
   try { assert.equal(r.code, 0, logs.join('\n')); assert.match(logs.join('\n'), /answers go into .*vd-rules\.json/); } finally { await r.close(); }
   assert.equal((await approveMain(['--project', path, '--figma', '--no-open'], { log: (s) => logs.push(s) })).code, 2, 'no figma out in the project');
+  // --figma serves the check figma.mjs wrote into <figma.out>/figma/
+  const fd = join(d, 'fig', 'figma');
+  mkdirSync(fd, { recursive: true });
+  put(fd, 'report.html', '<p>figma check</p>');
+  put(fd, 'report.json', { screens: [] });
+  const fpath = put(d, 'pf.json', { version: 1, html: 'a.html', out: 'o', allowlist: 'vd-allowlist.json', figma: { out: 'fig' } });
+  const f = await approveMain(['--project', fpath, '--figma', '--no-open'], { log: (s) => logs.push(s) });
+  try { assert.equal(f.code, 0, logs.join('\n')); } finally { await f.close(); } // exit 0: report.html was found in fig/figma
 });
 
 // a project folder at a given stage
@@ -116,9 +124,9 @@ test('next: html, ds, a changed input, open questions, findings to approve and a
 test('next: the Figma steps follow once every screen passes: plan, send, shots, check, approve, done', () => {
   const s = stage();
   ds(s.out, [screen(true)]);
-  const F = join(s.d, 'fig');
+  const F = join(s.d, 'fig', 'figma'); // figma.mjs writes into <figma.out>/figma/
   assert.equal(nextSteps(s.project()).next.id, 'figma-plan');
-  mkdirSync(F);
+  mkdirSync(F, { recursive: true });
   const state = (batch, t) => age(put(F, 'state.json', { batches: { 'batch-01': { status: batch } }, screens: { s0: { status: batch === 'done' ? 'done' : 'pending' } } }), t);
   state('pending', 3000);
   let n = nextSteps(s.project()).next;

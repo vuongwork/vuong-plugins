@@ -149,7 +149,7 @@ export async function main(argv, { log = (s) => process.stdout.write(`${s}\n`), 
       const p = readProject(resolve(cwd, o.project));
       if (o.figma && !o.out) {
         if (!p.figma || !p.figma.out) throw new Error(`${p.path}: --figma needs "figma": { "out": ... }`);
-        o.out = p.figma.out;
+        o.out = join(p.figma.out, 'figma'); // figma.mjs writes its check into <out>/figma/
       }
       Object.assign(o, projectDefaults(p, o, ['out', 'allowlist'], { create: ['allowlist'] }));
     }

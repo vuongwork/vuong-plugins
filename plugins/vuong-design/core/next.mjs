@@ -95,12 +95,13 @@ export function nextSteps(p) {
 
   if (!p.figma || !p.figma.out) return { steps, next };
   const F = p.figma.out;
+  const FD = join(F, 'figma'); // figma.mjs writes everything into <out>/figma/
   const fig = (args) => tool('figma.mjs', args);
-  const st = readJson(join(F, 'state.json'));
+  const st = readJson(join(FD, 'state.json'));
   const planCmd = fig(`plan --ds ${q(p.out)} --out ${q(F)}${p.figma.page ? ` --page ${q(p.figma.page)}` : ''}`);
   if (!st) { step('figma-plan', false, 'not planned yet', planCmd, 'split the design system into Figma batches'); return { steps, next }; }
   // state.json is rewritten by plan and by every ingest: older than the ds report = planned before the last ds run
-  if (mtime(repPath) > mtime(join(F, 'state.json'))) { step('figma-plan', false, 'the design system changed since the plan', planCmd, 'plan again (only changed screens are sent again)'); return { steps, next }; }
+  if (mtime(repPath) > mtime(join(FD, 'state.json'))) { step('figma-plan', false, 'the design system changed since the plan', planCmd, 'plan again (only changed screens are sent again)'); return { steps, next }; }
   step('figma-plan', true, 'planned');
   const batches = Object.values(st.batches || {});
   const pending = batches.filter((b) => b.status !== 'done').length;
@@ -109,19 +110,19 @@ export function nextSteps(p) {
   const bridge = 'open the Figma file in Figma Desktop and run Plugins > Development > vuong-design bridge (import figma-plugin/manifest.json once)';
   if (!step('figma-send', !pending, pending ? `${plural(pending, 'batch', 'batches')} not sent` : 'every batch built', sendCmd, `${bridge}; then send the batches`)) return { steps, next };
   const done = Object.entries(st.screens || {}).filter(([, s]) => s.status === 'done').map(([id]) => id);
-  const missing = done.filter((id) => !existsSync(join(F, `shot-${id}.png`)));
+  const missing = done.filter((id) => !existsSync(join(FD, `shot-${id}.png`)));
   if (!step('figma-shots', !missing.length, missing.length ? `${plural(missing.length, 'screenshot', 'screenshots')} missing` : 'taken',
     fig(`serve --out ${q(F)} --shots`), `${bridge}; then take the screenshots`)) return { steps, next };
-  const shots = done.map((id) => mtime(join(F, `shot-${id}.png`)));
-  const chk = join(F, 'report.json');
+  const shots = done.map((id) => mtime(join(FD, `shot-${id}.png`)));
+  const chk = join(FD, 'report.json');
   const checkCmd = fig(`check --out ${q(F)}${p.allowlist ? ` --allowlist ${q(p.allowlist)}` : ''}`);
-  const fresh = existsSync(chk) && mtime(chk) >= Math.max(mtime(join(F, 'state.json')), ...shots, p.allowlist ? mtime(p.allowlist) : 0);
+  const fresh = existsSync(chk) && mtime(chk) >= Math.max(mtime(join(FD, 'state.json')), ...shots, p.allowlist ? mtime(p.allowlist) : 0);
   if (!step('figma-check', fresh, fresh ? 'checked' : existsSync(chk) ? 'out of date' : 'not checked yet', checkCmd, 'check the real Figma screens node by node')) return { steps, next };
   const fr = readJson(chk);
   const fg = gateState(fr);
   if (fg.failing) {
     step('figma-approve', false, `${plural(fg.failing, 'screen fails', 'screens fail')} on Figma`, fg.approvable ? tool('approve.mjs', `${proj} --figma`) : null,
-      fg.approvable ? `review ${plural(fg.approvable, 'finding', 'findings')} of the Figma check, Submit, then check again` : `nothing to approve; see ${join(F, 'report.html')}`);
+      fg.approvable ? `review ${plural(fg.approvable, 'finding', 'findings')} of the Figma check, Submit, then check again` : `nothing to approve; see ${join(FD, 'report.html')}`);
     return { steps, next };
   }
   step('figma-approve', true, `${fg.total}/${plural(fg.total, 'screen', 'screens')} pass on Figma`);

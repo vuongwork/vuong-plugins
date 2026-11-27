@@ -35,6 +35,7 @@ const GROUPS = [
     [`node ${P}/core/account.mjs ~/.<project>-test-account.sh --vars A,B`, "Tạo sẵn file tài khoản test (mode 600, ngoài repo) để user chỉ điền giá trị; chạy lại để kiểm tra (không in giá trị)"],
     [`node ${P}/core/manual-runbook.mjs W/cases.md --out W/manual/ [--lang vi] [--all]`, "Case layer manual → file Excel cho người test tay: Hướng dẫn, dropdown Trạng thái tô màu, Tổng hợp tự đếm; không ghi đè file đã có"],
     [`node ${P}/core/split.mjs W/cases.md`, "Chia case cho các writer song song (bước 6): ít agent nhất, nhóm đều tải, E2E chia trước — in sẵn bảng để duyệt"],
+    [`node ${P}/core/run.mjs <scope> --page-map [.,x?id=1]`, "Bản đồ trang cho E2E (bước 6): mỗi control một selector duy nhất, trạng thái hidden/disabled, container 0×0 → W/page-map.md (tự bật/tắt server; core/page-map.mjs --base <url> nếu server đã chạy)"],
     [`node ${P}/core/lint-tests.mjs <dir>...`, "Quét test: chờ cố định (sleep/waitForTimeout), mật khẩu/token viết cứng"],
     [`node ${P}/core/review-tests.mjs <dir>... [--cases W/cases.md] [--out W/existing-tests.md]`, "Soát test có sẵn (JS/TS, Java): không assert, assert yếu, chỉ check mock, tautology, mock chính thứ đang test, catch nuốt lỗi, skip/only; case nào chưa có test gắn tag"],
   ]],

@@ -10,8 +10,11 @@ You do ONE step of the vuong-test flow for the main session, then return. The ma
 you never do.
 
 **Every file you create or change goes through the Write / Edit tools.** Never a shell heredoc, `cat >`,
-`echo >`, `sed -i`, `node -e` / `python` writing a file: auto mode blocks them or one quote breaks them, and the
-whole file has to be generated again.
+`echo >`, `sed -i`, `perl -i`, `node -e` / `python` writing a file (`writeFileSync`, `open(…, "w")`): auto mode
+blocks them or one quote breaks them, and the whole file has to be generated again. The same fix in many rows =
+one Edit per row (or `replace_all`), or a new Write of the file — never a shell substitution.
+**Every command runs in the foreground** (Bash timeout 600000): never `run_in_background`, `sleep`, `Monitor` or
+`timeout <n>` around run.mjs — it returns when the run is done.
 
 The prompt gives: `PLUGIN` (plugin folder), `W` (working folder), the step (2–3, 4 or 6), the scope, and the inputs
 (spec files, flows.md, approved cases / case IDs of your group, test file + out dir you own). The user's answers
@@ -20,13 +23,17 @@ are in `W/answers.md` (Ref · Answer · By · Date) and the approval in the `cas
 Questions › Answer, `D` → diff.md Decision, `X` → Conflicts › Resolved by) with name, date and `answers.md › <Ref>`;
 never copy them by hand. Then turn the assumptions those answers settle into sourced rows citing
 `answers.md › <Ref>`. Step 4: name the diff in the case row (`(diff D5)`), and run `sync-tables.mjs W` again after
-writing cases.md — it fills the diff.md Cases column. Work only from those paths.
+writing cases.md — it fills the diff.md Cases column. Step 4 does not read the app's code: Expected and data come
+from spec-sources.md / flows.md / the spec, and what the code does differently is already in diff.md. Work only
+from those paths.
 
 1. Read `$PLUGIN/skills/vuong-test/SKILL.md` — the top part (before "## 0.") and your step's section only: `grep -n
    "^## " SKILL.md`, then Read with offset / limit, never the whole file — and the files that section names. Do exactly that step; do not start another one. Its "hand this step to the writer" line is for the
    main session — you are the writer.
 2. Step 6: use `$PLUGIN/kit/README.md` as the complete kit API — never read the kit source. A parallel group reads
-   its rows from `W/_split/<group>.md` (cases.md header + only its rows), not the whole cases.md. Write each file
+   its rows from `W/_split/<group>.md` (cases.md header + only its rows), not the whole cases.md. E2E: run
+`node $PLUGIN/core/run.mjs <scope> --page-map <paths> --files W/e2e-<g>.mjs` once (SKILL.md step 6) and take
+selectors from `W/page-map-e2e-<g>.md`, not from the page's HTML / JS. Write each file
    with the Write tool in as few large Writes as you can. Make `test.config.json` `stacks[]` run your files (`node $PLUGIN/core/run.mjs <scope> --dry`), dry-run
    with `node $PLUGIN/core/run.mjs <scope> --only <your stacks>` (it starts / stops the server; an E2E group: `--only e2e
    --files W/e2e-<g>.mjs`, out `W/e2e-<g>/`, and leave test.config.json to the main session), fix, rerun only the failing cases with

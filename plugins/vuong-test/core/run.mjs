@@ -3,6 +3,7 @@
 //
 //   node run.mjs <scope | W> [--env <name>] [--only ut,api] [--skip e2e] [--manual <filled runbook.xlsx>]...
 //                [--merge] [--keep] [--no-report] [--dry] [--config test.config.json]
+//   node run.mjs <scope | W> --page-map [.,edit?id=1]   → W/page-map.md (core/page-map.mjs with the server up)
 //
 // For each `stacks[]` entry (in order): delete its stale `results` files, run `run` in `dir` (`<scope>` /
 // `{scope}` replaced), then build the collect.mjs arguments from `results` / `coverage` (result files inside W are
@@ -26,6 +27,7 @@ import { loadConfig, ConfigError } from "./config.mjs";
 
 const PLUGIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const HELP = `run.mjs <scope | W> [--env <name>] [--only ids] [--skip ids] [--files f,…] [--merge] [--manual <runbook.xlsx>]... [--keep] [--no-report] [--dry] [--config f]
+       run.mjs <scope | W> --page-map [.,x?id=1]   (step 6, paths relative to baseUrl, comma-separated: selectors of each page → W/page-map.md, server started / stopped here)
   Runs every stacks[] entry of test.config.json (in order), with a fresh server from environments.<env>.server for
   the stacks that need it, then collect → W/results.json (cases[].status) and W/report/index.html.
   Each stack gets env BASE_URL (environments.<env>.baseUrl), API_BASE (apiBase, else baseUrl), VT_ENV, VT_SCOPE.
@@ -33,7 +35,7 @@ const HELP = `run.mjs <scope | W> [--env <name>] [--only ids] [--skip ids] [--fi
   A stack with "each": "<glob>" runs once per matching file ({file} in run); --files a,b runs only those (a parallel group's dry run).
   One server run at a time per repo (lock <workDir>/_out/run.lock; others wait), unless server.portEnv: a run finding the port busy gets its own server on a free port. Exit 0 = report written (failing tests are results).`;
 const argv = process.argv.slice(2);
-const opt = { merge: false, files: null, only: null, skip: [], manual: [], keep: false, report: true, dry: false, env: null, config: "test.config.json", target: null };
+const opt = { merge: false, files: null, only: null, skip: [], manual: [], keep: false, report: true, dry: false, env: null, config: "test.config.json", target: null, pageMap: null };
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   const next = () => {
@@ -51,6 +53,8 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === "--merge") opt.merge = true;
   else if (a === "--no-report") opt.report = false;
   else if (a === "--dry") opt.dry = true;
+  // paths relative to baseUrl, no leading "/" (Git Bash rewrites /x into a Windows path): "", "edit?id=1"
+  else if (a === "--page-map") opt.pageMap = opt.target && argv[i + 1] != null && !argv[i + 1].startsWith("--") ? argv[++i] : ".";
   else if (a === "--help" || a === "-h") {
     console.log(HELP);
     process.exit(0);
@@ -198,6 +202,7 @@ const outDirOf = (f) => path.join(path.dirname(f), path.basename(f).replace(/\.[
 
 // ── run ─────────────────────────────────────────────────────────────────────
 const needs = (s) => !!server && s.server !== false;
+const wantServer = opt.pageMap ? !!server : stacks.some(needs);
 if (opt.dry) {
   const short = (x) => (path.isAbsolute(x) ? path.relative(ROOT, x) || "." : x);
   log(`scope ${scope} · W ${path.relative(ROOT, W) || "."} · env ${envName}${server ? ` · server "${server.start}" (${fresh})` : ""}`);
@@ -250,7 +255,7 @@ process.on("exit", () => ownLock() && rmSync(LOCK, { force: true }));
 // starts its own server on a free port instead of waiting — that env var set, the port in baseUrl / apiBase /
 // ready rewritten. A run with nobody else keeps the configured port. Only for a server whose data is its own
 // (in memory, per-instance test DB); one sharing a DB leaves portEnv out and queues on the lock.
-if (stacks.some(needs) && !(await takeLock(!!server.portEnv))) {
+if (wantServer && !(await takeLock(!!server.portEnv))) {
   const net = await import("node:net");
   const port = await new Promise((ok, ko) => {
     const s = net.createServer().once("error", ko).listen(0, "127.0.0.1", () => {
@@ -263,6 +268,21 @@ if (stacks.some(needs) && !(await takeLock(!!server.portEnv))) {
   if (E.baseUrl) stackEnv.BASE_URL = at(E.baseUrl);
   if (E.apiBase || E.baseUrl) stackEnv.API_BASE = at(E.apiBase || E.baseUrl);
   log(`port in use by another run — own server on port ${port}`);
+}
+
+// --page-map: the server up (own port when busy, as above), core/page-map.mjs → W/page-map.md, nothing else run
+if (opt.pageMap) {
+  if (!stackEnv.BASE_URL) die("--page-map: no baseUrl in environments." + envName, 2);
+  let r = { status: 1 };
+  try {
+    if (server) await startServer();
+    r = spawnSync(process.execPath, [path.join(PLUGIN, "core", "page-map.mjs"), "--base", stackEnv.BASE_URL, "--paths", opt.pageMap, "--out", path.join(W, opt.files?.length === 1 ? `page-map-${path.basename(opt.files[0]).replace(/\.[^.]+$/, "")}.md` : "page-map.md")], { cwd: ROOT, stdio: "inherit", env: stackEnv });
+  } catch (e) {
+    console.error(`[run] ${e.message}`);
+  } finally {
+    await stopServer();
+  }
+  process.exit(r.status ?? 1);
 }
 
 let broken = 0;

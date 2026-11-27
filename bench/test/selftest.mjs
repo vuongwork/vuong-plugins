@@ -116,6 +116,23 @@ const eq = (a, b, name) => ok(JSON.stringify(a) === JSON.stringify(b), name, `\n
   ok(/1× 2KB \(failed\)/.test(by['no file written through a shell heredoc'].detail), 'process: failed heredoc flagged', by['no file written through a shell heredoc'].detail);
   ok(!by['collect arguments not built by hand (core/run.mjs)'].pass, 'process: own run script flagged');
   ok(Object.values(by).every((k) => k.info), 'process: all info (not in the score)');
+  ok(by['no file changed through the shell (sed -i, node -e / python writes)'].pass, 'process: heredoc not counted again as a shell change');
+}
+
+{ // vuong-test process checks: shell file changes, background waits, step-4 writer reading app code
+  const tu = (id, name, input) => ({ type: 'tool_use', id, name, input });
+  const ev = [
+    { type: 'system', subtype: 'init', plugins: [{ name: 'vuong-test' }] },
+    { type: 'assistant', message: { id: 'm1', model: 'o', content: [tu('a', 'Agent', { subagent_type: 'vuong-test:writer', description: 'L01 step 4 cases', prompt: 'p' }), tu('g', 'Agent', { subagent_type: 'vuong-test:writer', description: 'L01 step 6 e2e-a', prompt: 'p', run_in_background: true })], usage: {} } },
+    { type: 'assistant', parent_tool_use_id: 'a', message: { id: 's1', model: 's', content: [tu('b', 'Bash', { command: 'cat lib/leave.js; sed -n 1,40p W/flows.md' }), tu('c', 'Bash', { command: "sed -i 's/a/b/' W/cases.md" })], usage: {} } },
+    { type: 'assistant', parent_tool_use_id: 'g', message: { id: 's2', model: 's', content: [tu('d', 'Bash', { command: 'cat public/index.html' }), tu('e', 'Bash', { command: "node -e \"require('fs').writeFileSync('W/e2e-a.mjs', s)\"" }), tu('f', 'Bash', { command: 'sleep 60; cat out.txt' }), tu('h', 'Bash', { command: 'node run.mjs L01 > W/log.txt 2>&1' })], usage: {} } },
+    { type: 'result', total_cost_usd: 1, modelUsage: {} },
+  ];
+  const by = Object.fromEntries(processChecks(ev).map((k) => [k.name.replace('process: ', ''), k]));
+  ok(by['no file changed through the shell (sed -i, node -e / python writes)'].detail === '2× writer sed -i, writer writeFileSync', 'process: sed -i and node -e writeFileSync flagged', by['no file changed through the shell (sed -i, node -e / python writes)'].detail);
+  ok(by['no background run / sleep / Monitor'].detail === '1× writer sleep', 'process: sleep flagged, background writer Agent not', by['no background run / sleep / Monitor'].detail);
+  ok(by['step-4 writer does not read app code'].detail === '1× lib/leave.js', 'process: step-4 app read flagged, step-6 one not', by['step-4 writer does not read app code'].detail);
+  ok(by['E2E writer reads page-map, not the page source']?.detail === '1× 1 source reads', 'process: e2e writer reading public/ flagged', by['E2E writer reads page-map, not the page source']?.detail);
 }
 
 console.log(`${passed} passed, ${failed} failed`);

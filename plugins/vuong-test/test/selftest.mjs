@@ -607,6 +607,37 @@ srv.close();
     check("kit: cache returns the stored value", /cache hit: true/.test(ro.r.stdout), ro.all);
     const wr = runKit(true);
     check("kit: writable env → writes:true case PASS with writes logged", wr.by("K-003").status === "passed" && (wr.by("K-003").writes || []).length >= 1, wr.all + JSON.stringify(wr.by("K-003")));
+
+    // core/page-map.mjs: a page served by a child process (page-map runs as its own process meanwhile)
+    const pmHtml = `<!doctype html><title>PM</title><body><button id="save">Save</button><button data-part="am">AM</button>
+<button>Dup</button><button>Dup</button><label for="q">Query</label><input id="q" name="q"><select name="kind"><option value="a">A</option></select>
+<div id="dlg" hidden><div style="position:fixed;top:0;left:0;width:200px;height:100px"><button id="yes">Yes</button></div></div>
+<script>fetch('/api/x',{method:'POST'}).then(()=>document.title='WROTE').catch(()=>{})</script></body>`;
+    const pmServer = w("kit/pm-server.mjs", `import http from "node:http";
+const writes = [];
+const srv = http.createServer((q, s) => { if (q.method !== "GET") writes.push(q.url); s.setHeader("content-type", "text/html"); s.end(${JSON.stringify(pmHtml)}); });
+srv.listen(0, "127.0.0.1", () => console.log("PORT " + srv.address().port));
+process.stdin.on("data", () => { console.log("WRITES " + writes.length); process.exit(0); });`);
+    const { spawn: spawnAsync } = await import("node:child_process");
+    const ps = spawnAsync(process.execPath, [pmServer], { stdio: ["pipe", "pipe", "inherit"] });
+    let psOut = "";
+    ps.stdout.on("data", (d) => (psOut += d));
+    for (let i = 0; i < 100 && !/PORT \d+/.test(psOut); i++) await new Promise((r) => setTimeout(r, 50));
+    const pmPort = psOut.match(/PORT (\d+)/)?.[1];
+    const pmOut = path.join(T, "kit", "page-map.md");
+    const pm = await new Promise((res) => {
+      const c = spawnAsync(process.execPath, [path.join(PLUGIN, "core/page-map.mjs"), "--base", `http://127.0.0.1:${pmPort}`, "--out", pmOut, "--from", path.resolve(from)], { stdio: "pipe" });
+      let o = "";
+      c.stdout.on("data", (d) => (o += d));
+      c.stderr.on("data", (d) => (o += d));
+      c.on("close", (code) => res({ code, o }));
+    });
+    ps.stdin.write("x\n");
+    await new Promise((r) => ps.on("close", r));
+    const pmMd = existsSync(pmOut) ? readFileSync(pmOut, "utf8") : "";
+    check("page-map: id / data-* / name selectors, label, select options", pm.code === 0 && /\| #save \| button \| Save \|/.test(pmMd) && /button\[data-part="am"\]/.test(pmMd) && /#q \| input\[text\] \| Query/.test(pmMd) && /select\[name="kind"\].*options: a/.test(pmMd), pm.o + pmMd);
+    check("page-map: duplicate text marked (×n), hidden container with 0×0 box flagged", /button:has-text\("Dup"\) \(×2\)/.test(pmMd) && /#dlg \|.*hidden, 0×0 box when shown/.test(pmMd) && /#yes \| button \| Yes \| hidden \|/.test(pmMd), pmMd);
+    check("page-map: read-only (POST aborted)", /WRITES 0/.test(psOut) && /## \. — PM/.test(pmMd), psOut + pmMd);
   }
 }
 

@@ -162,6 +162,11 @@ the data now; cases whose data is still missing at run time are BLOCKED, not imp
 Follow `$PLUGIN/references/stacks/<stack>.md` and `$PLUGIN/references/review-tests.md`. Kit options and helpers:
 `$PLUGIN/kit/README.md` is the complete API — do not read the kit source.
 - Test names start with the case tag: `[<ID>] ...` (any language) — this links results to cases.
+- E2E selectors: run `node $PLUGIN/core/run.mjs <scope> --page-map [paths]` first (paths relative to baseUrl,
+  comma-separated, no leading `/`: `.,edit?id=1` — the pages / modes your cases open) and take selectors and
+  states from `W/page-map.md` (a parallel group adds `--files W/e2e-<g>.mjs` → `W/page-map-e2e-<g>.md`), not
+  from the page source. A row flagged `0×0 box` is never "visible" to
+  Playwright: wait on its child.
 - You may change HOW a result is reached (selector, data, helper) without re-approval; log each change
   in `W/run-notes.md`. You may NOT change an expected result or add/remove cases — go back to step 5.
 - `manual` cases: no test code. Run `node $PLUGIN/core/manual-runbook.mjs W/cases.md --out W/manual/ [--lang vi]` and

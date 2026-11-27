@@ -94,6 +94,12 @@ section("lint-cases");
   const unapproved = w("lc/unapproved.md", casesMd([["A-001", "e2e", "E1", "s", "3 rows", "SRS 1", "record R1", "N"]], { approved: false }));
   r = run("core/lint-cases.mjs", [unapproved, "--require-approval"]);
   check("--require-approval fails when not approved", r.code === 1 && /not approved/.test(r.out), r.all);
+  // "pending" header looks filled but is no approval (next.mjs would move on to step 6); fragments before the title
+  const okMd = casesMd([["A-001", "e2e", "E1", "s", "3 rows", "SRS 1", "record R1", "N"]], { approved: false });
+  r = run("core/lint-cases.mjs", [w("lc/pending.md", okMd.replace(/- Approved by:.*/, "- Approved by: pending (Vuong)   ·   Date: pending")), "--no-next"]);
+  check("lint: 'Approved by: pending' is an error (not an approval)", r.code === 1 && /is not an approval/.test(r.out), r.all);
+  r = run("core/lint-cases.mjs", [w("lc/glued.md", `| x | N |${okMd}`), "--no-next"]);
+  check("lint: text before the # title is an error (broken write)", r.code === 1 && /line 1 must be the "# Cases/.test(r.out), r.all);
   r = run("core/lint-cases.mjs", []);
   check("no args → exit 2", r.code === 2);
 }
@@ -567,6 +573,11 @@ await run.tc("K-002", "read-only case", async ({ page, settle, expect }) => {
 await run.tc("K-003", "writes:true", async ({ page, settle }) => {
   await page.evaluate(() => save()); await settle(); return await page.textContent("#out");
 }, { writes: true });
+await run.tc("K-004", "isolate with a request in flight", async ({ settle }) => {
+  await run.page.goto(base); // /api/list still running (400 ms) when the context closes
+  await run.isolate();
+  await settle({ timeout: 2000 });
+});
 const v1 = await run.cache("probe", async () => ({ n: Math.random() }));
 const v2 = await run.cache("probe", async () => ({ n: -1 }));
 console.log("cache hit:", v1.n === v2.n);
@@ -592,6 +603,7 @@ srv.close();
     check("kit: write guard aborts POST, readOnlyPosts pass", ro.by("K-002").status === "passed" && (ro.by("K-002").aborted || []).some((a) => /\/api\/save/.test(a.url)), JSON.stringify(ro.by("K-002")));
     check("kit: env guard BLOCKED when not writable", ro.by("K-003").status === "blocked", JSON.stringify(ro.by("K-003")));
     check("kit: FE→BE trace — API calls recorded per case", (ro.by("K-001").exchanges || []).some((x) => /\/api\/list$/.test(x.url) && x.status === 200 && x.ms >= 300), JSON.stringify(ro.by("K-001").exchanges));
+    check("kit: isolate() drops requests of the closed context (settle does not wait on them)", ro.by("K-004").status === "passed", JSON.stringify(ro.by("K-004")));
     check("kit: cache returns the stored value", /cache hit: true/.test(ro.r.stdout), ro.all);
     const wr = runKit(true);
     check("kit: writable env → writes:true case PASS with writes logged", wr.by("K-003").status === "passed" && (wr.by("K-003").writes || []).length >= 1, wr.all + JSON.stringify(wr.by("K-003")));
@@ -976,13 +988,34 @@ section("check-refs");
   check("check-refs: no files → exit 2", run("core/check-refs.mjs", [], { cwd: R }).code === 2);
 }
 
+section("sync-tables");
+{
+  w("st/W/spec-sources.md", "# Sources\n\n## Conflicts\n\n| X | Topic | A | B | Resolved by |\n|---|---|---|---|---|\n| X1 | t | a | b | open |\n\n## Questions for BA\n\n| Q | Question | Cases blocked | Asked to | Date | Answer |\n|---|---|---|---|---|---|\n| Q1 | q1? | | BA | 2026-11-25 | |\n| Q2 | q2? | | BA | 2026-11-25 | |\n| Q3 | q3? | | BA | 2026-11-25 | already: no |\n");
+  w("st/W/diff.md", "# Diff\n\n| Diff | Area | Spec says | Source | Code does | file:line | Cases | Decision |\n|---|---|---|---|---|---|---|---|\n| D1 | a | s | x.xlsx › Item!D8 | c | a.js:1 | (step 4) | open — Vuong |\n| D2 | a | s | x | c | a.js:2 | (step 4) | open |\n");
+  w("st/W/cases.md", casesMd([["C-1", "ut", "B1 (diff D1)", "s", "e", "x.xlsx › Item!D2", "none: x", "N"], ["C-2", "e2e", "B2 (diff D1, D2)", "s", "e", "x", "none: x", "N"]]));
+  w("st/W/answers.md", "| Ref | Answer | By | Date |\n|---|---|---|---|\n| <Q3> | <x> | <y> | <z> |\n| Q1–Q3 | yes \\| as assumed | BA An | 2026-11-25 |\n| D1-D2 | follow spec | Vuong | 2026-11-25 |\n| X1 | API wins | Vuong | 2026-11-25 |\n");
+  let r = run("core/sync-tables.mjs", [path.join(T, "st/W")]);
+  const S = readFileSync(path.join(T, "st/W/spec-sources.md"), "utf8");
+  const D = readFileSync(path.join(T, "st/W/diff.md"), "utf8");
+  check("sync-tables: range Q1–Q3 → Answer cells (escaped |), X → Resolved by, D → Decision", /\| Q1 \|.*\| yes \\\| as assumed — BA An, 2026-11-25 \(answers\.md › Q1–Q3\) \|/.test(S) && /\| X1 \|.*API wins — Vuong, 2026-11-25 \(answers\.md › X1\) \|/.test(S) && /\| D2 \|.*follow spec — Vuong/.test(D), S + D);
+  check("sync-tables: diff Cases from '(diff Dn)' in cases.md, not from a spec cell (Item!D2)", /\| D1 \|.*\| C-1, C-2 \| follow/.test(D) && /\| D2 \|.*\| C-2 \| follow/.test(D), D);
+  check("sync-tables: a different answer already written is a conflict, left as is", r.code === 1 && /CONFLICT Q3/.test(r.out) && /already: no/.test(S), r.all);
+  r = run("core/sync-tables.mjs", [path.join(T, "st/W")]);
+  check("sync-tables: second run changes nothing", /0 cells changed/.test(r.out), r.out);
+}
+
 section("split");
 {
   const row = (id, layer, writes = "N") => [id, layer, "F1", "s", "e", "spec.xlsx › A1", "-", writes];
   const num = (p, n) => Array.from({ length: n }, (_, i) => `${p}${String(i + 1).padStart(2, "0")}`);
   const big = [...num("S-U", 18).map((x) => row(x, "ut")), ...num("S-A", 27).map((x) => row(x, "api")), ...num("S-E", 45).map((x) => row(x, "e2e", "Y")), row("S-M01", "manual")];
   let r = run("core/split.mjs", [w("sp/W/cases.md", casesMd(big))]);
-  check("split: 90 cases → 3 agents (core 45, e2e 23 + 22), manual left out", r.code === 0 && /→ 3 writer agents · 1 manual/.test(r.out) && /\| `core` \| 45 \(ut 18, api 27\): S-U01\.\.S-U18, S-A01\.\.S-A27/.test(r.out) && /\| `e2e-a` \| 23 .*S-E01\.\.S-E23 \|.*e2e-a\.mjs/.test(r.out) && /\| `e2e-b` \| 22 .*S-E24\.\.S-E45/.test(r.out), r.out);
+  check("split: 90 cases → 3 agents (core 45, e2e 22 + 23, rows in W/_split/), manual left out", r.code === 0 && /→ 3 writer agents · 1 manual/.test(r.out) && /\| `core` \| 45 \(ut 18, api 27\): S-U01\.\.S-U18, S-A01\.\.S-A27/.test(r.out) && /\| `e2e-a` \| 22 .*S-E01\.\.S-E22 \|.*e2e-a\.mjs/.test(r.out) && /\| `e2e-b` \| 23 .*S-E23\.\.S-E45/.test(r.out) && (readFileSync(path.join(T, "sp/W/_split/e2e-b.md"), "utf8").match(/^\| S-E/gm) || []).length === 23 && /^# /.test(readFileSync(path.join(T, "sp/W/_split/core.md"), "utf8")), r.out);
+  // long steps / Writes = Y weigh more when placing the boundary (not when counting agents)
+  const heavy = [...num("H-U", 18).map((x) => row(x, "ut")), ...num("H-A", 27).map((x) => row(x, "api")), ...num("H-E", 45).map((x, i) => (i < 30 ? row(x, "e2e") : [x, "e2e", "F1", "s ".repeat(120), "e", "spec.xlsx › A1", "-", "Y"]))];
+  r = run("core/split.mjs", [w("sp2/W/cases.md", casesMd(heavy))]);
+  const ea = +(r.out.match(/\| `e2e-a` \| (\d+)/) || [])[1];
+  check("split: complex E2E cases (long steps, writes) → boundary moves, still 3 agents", r.code === 0 && /→ 3 writer agents/.test(r.out) && ea > 23, r.out);
   r = run("core/split.mjs", [w("sp/W2/cases.md", casesMd([...num("T-U", 5).map((x) => row(x, "ut")), ...num("T-E", 6).map((x) => row(x, "e2e"))]))]);
   check("split: small scope → one agent for every layer", r.code === 0 && /→ 1 writer agent/.test(r.out) && /\| `all` \| 11 /.test(r.out), r.out);
   check("split: no file → exit 2", run("core/split.mjs", []).code === 2);
@@ -1221,8 +1254,13 @@ section("run");
   w("runrepo/test-work/_out/run.lock", `${process.pid} S1 live`);
   const own = run("core/run.mjs", ["S1", "--only", "api", "--config", "test.config.port.json"], { cwd: R });
   const ownPort = (own.out.match(/BASE http:\/\/127\.0\.0\.1:(\d+)\//) || [])[1];
-  check("run portEnv: own server on a free port, no wait on a held lock", own.code === 0 && ownPort && +ownPort !== port && !/waiting/.test(own.out) && existsSync(LOCK), own.all);
+  check("run portEnv: port busy (lock held) → own server on a free port, no wait", own.code === 0 && ownPort && +ownPort !== port && !/waiting/.test(own.out) && existsSync(LOCK), own.all);
   rmSync(LOCK);
+  // nobody else running → the configured port (the user asked for that port), lock taken and released
+  cfgP.environments.local.server.env = { PORT: String(port) };
+  j("runrepo/test.config.port2.json", cfgP);
+  const alone = run("core/run.mjs", ["S1", "--only", "api", "--config", "test.config.port2.json"], { cwd: R });
+  check("run portEnv: alone → configured port", alone.code === 0 && alone.out.includes(`BASE ${url}`) && !existsSync(LOCK), alone.all);
   // "each": one run per group file, results in W/<file name>/; --files runs one group and keeps the others' results
   const grp = (id, status) => `const fs=require("fs"),p=require("path");const d=p.join(__dirname,p.basename(__filename).replace(/\\.[^.]+$/,""));fs.mkdirSync(d,{recursive:true});fs.writeFileSync(p.join(d,"e2e-results.json"),${JSON.stringify(JSON.stringify({ tests: [{ name: `[${id}] t`, status }] }))});\n`;
   w("runrepo/test-work/S1/e2e-a.cjs", grp("S1-U01", "passed"));

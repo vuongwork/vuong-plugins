@@ -5,7 +5,8 @@
 // No errors → also prints what to read now (next.mjs) for that work folder.
 // Exit 1 on errors. Warnings do not fail.
 import path from "node:path";
-import { parseCases, printNext } from "./parsers.mjs";
+import { readFileSync } from "node:fs";
+import { parseCases, printNext, isApproved } from "./parsers.mjs";
 
 const file = process.argv[2];
 const requireApproval = process.argv.includes("--require-approval");
@@ -23,6 +24,9 @@ const PRIORITIES = ["high", "medium", "low", "cao", "tb", "thấp"];
 // expected results that cannot fail
 const VAGUE = /^(ok|works?|success(ful)?|correct(ly)?|as expected|đúng|thành công|hoạt động( bình thường)?|bình thường|hiển thị đúng|no error|không lỗi)\.?$/i;
 
+// line 1 must be the title: text before it means a broken write (fragments of rows glued in front)
+const first = readFileSync(file, "utf8").split(/\r?\n/).find((l) => l.trim()) || "";
+if (!/^# /.test(first)) errors.push(`line 1 must be the "# Cases — <scope>" title, found: ${first.slice(0, 80)} — a write went wrong; check the rows it came from`);
 if (!spec.cases.length) errors.push("no case table found (header row must start with `| ID |`)");
 // data that does not say what the case needs; "none: <reason>" is allowed
 const VAGUE_DATA = /^(-+|—|–|n\/?a|any|anything|tbd|todo|\?|some data|existing( data)?|test data|bất kỳ|có sẵn|none|no)\.?$/i;
@@ -66,7 +70,10 @@ const manual = spec.cases.filter((c) => c.layer.toLowerCase() === "manual");
 if (manual.length && manual.some((c) => /^y$/i.test(c.writes)) && !spec.runOrder)
   warns.push("manual cases write data: add a `- Run order:` header line (which group runs last, what must be backed up first)");
 
-const approved = spec.approvedBy && !/^</.test(spec.approvedBy);
+const approved = isApproved(spec);
+// a header that looks filled but is not an approval ("pending", no date) would let next.mjs move on to step 6
+if (spec.approvedBy && !/^</.test(spec.approvedBy) && !approved)
+  errors.push(`header "Approved by: ${spec.approvedBy} · Date: ${spec.approvedDate || ""}" is not an approval — keep the template line "- Approved by: <name>   ·   Date: <YYYY-MM-DD>" until the person approves (step 5)`);
 if (requireApproval && !approved) errors.push("not approved: fill `Approved by` and `Date` in the header (step 5)");
 if (requireApproval && spec.cases.some((c) => /assumption/i.test(c.source)))
   warns.push("running with assumption cases: they will be reported BLOCKED if they have no tests");

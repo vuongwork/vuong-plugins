@@ -11,7 +11,7 @@ import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseCases, parseDiff, parseTriage, parseDataCreated, tablesStartingWith, casesWithStatus } from "./parsers.mjs";
+import { parseCases, parseDiff, parseTriage, parseDataCreated, tablesStartingWith, casesWithStatus, isApproved } from "./parsers.mjs";
 
 const argv = process.argv.slice(2);
 const ci = argv.indexOf("--config");
@@ -61,7 +61,7 @@ const diffs = has("diff.md") ? parseDiff(f("diff.md")).filter((r) => r.id && !/^
 const openDiffs = diffs.filter((r) => (!r.decision.trim() || /\bopen\b|^</i.test(r.decision)) && !answered.has(r.id.trim()));
 const needs = (tablesStartingWith(read("data-plan.md"), "Need")[0]?.rows || []).filter((r) => r.need && !/^</.test(r["concrete data (key / state / file)"] || ""));
 const notReady = needs.filter((r) => !/^(ready|ok|done|✓)/i.test((r.status || "").trim()));
-const approved = C && C.approvedBy && !/^</.test(C.approvedBy);
+const approved = isApproved(C);
 const out = [];
 const step = (n, file, ...what) => out.push(`  ${n}. ${file}${what.filter(Boolean).map((w) => `\n     → ${w}`).join("")}`);
 const scope = C?.scope || path.basename(path.resolve(W));

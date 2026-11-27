@@ -245,6 +245,10 @@ export function casesWithStatus(R) {
   });
 }
 
+/** cases.md header records an approval: a name (not the template's `<name>`, not "pending" / "chưa" / "-") and a YYYY-MM-DD date. */
+export const isApproved = (spec) =>
+  !!spec?.approvedBy && !/^\s*(<|-|—|–|n\/?a\b|none\b|pending\b|tbd\b|todo\b|chưa\b|not yet\b|waiting\b|chờ\b)/i.test(spec.approvedBy) && /\d{4}-\d{2}-\d{2}/.test(spec.approvedDate || "");
+
 /** test.config.json caseTemplates entry for a tester's file: by --template name, else by `match` glob on the file name, else the only one. */
 export function pickTemplate(cfg, fileName, wanted) {
   const list = cfg.caseTemplates || [];

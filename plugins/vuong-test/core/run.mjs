@@ -17,7 +17,7 @@
 // collect failed; 2 = usage / config error. --merge: rerun of a subset (E2E_MERGE=1 / API_MERGE=1, results kept).
 // --dry prints the plan (commands + collect arguments) and runs nothing. Runs that need the server take a lock
 // (<workDir>/_out/run.lock): a second run waits for the first (server.lockWaitSec, default 1800) — unless
-// server.portEnv is set: each run then gets its own server on a free port and none waits.
+// server.portEnv is set: a run finding the port busy then gets its own server on a free port and does not wait.
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, mkdirSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
@@ -31,7 +31,7 @@ const HELP = `run.mjs <scope | W> [--env <name>] [--only ids] [--skip ids] [--fi
   Each stack gets env BASE_URL (environments.<env>.baseUrl), API_BASE (apiBase, else baseUrl), VT_ENV, VT_SCOPE.
   --only/--skip: stack ids · --merge: rerun a subset, keep other results (E2E_MERGE=1 / API_MERGE=1) · --dry: print the plan.
   A stack with "each": "<glob>" runs once per matching file ({file} in run); --files a,b runs only those (a parallel group's dry run).
-  One server run at a time per repo (lock <workDir>/_out/run.lock; others wait), unless server.portEnv: own server on a free port per run. Exit 0 = report written (failing tests are results).`;
+  One server run at a time per repo (lock <workDir>/_out/run.lock; others wait), unless server.portEnv: a run finding the port busy gets its own server on a free port. Exit 0 = report written (failing tests are results).`;
 const argv = process.argv.slice(2);
 const opt = { merge: false, files: null, only: null, skip: [], manual: [], keep: false, report: true, dry: false, env: null, config: "test.config.json", target: null };
 for (let i = 0; i < argv.length; i++) {
@@ -90,22 +90,6 @@ if (opt.env && !envs[opt.env]) die(`--env ${opt.env}: not in test.config.json en
 let server = envs[envName]?.server || null;
 // what a test file needs to know, so it never reads the config or this script: env vars set for every stack
 let E = envs[envName] || {};
-// server.portEnv ("PORT"): every run starts its own server on a free port (that env var set, the port in
-// baseUrl / apiBase / ready rewritten), so parallel runs never wait for each other — no lock. Only for a server
-// whose data is its own (in memory, per-instance test DB); one sharing a DB keeps the lock (leave portEnv out).
-const own = !!server?.portEnv && !opt.dry;
-if (own) {
-  const net = await import("node:net");
-  const port = await new Promise((ok, ko) => {
-    const s = net.createServer().once("error", ko).listen(0, "127.0.0.1", () => {
-      const p = s.address().port;
-      s.close(() => ok(p));
-    });
-  });
-  const at = (u) => u && String(u).replace(/^(\w+:\/\/[^/:?#]+)(:\d+)?/, `$1:${port}`);
-  server = { ...server, ready: at(server.ready), env: { ...(server.env || {}), [server.portEnv]: String(port) } };
-  E = { ...E, baseUrl: at(E.baseUrl), apiBase: at(E.apiBase) };
-}
 const stackEnv = {
   ...process.env,
   VT_ENV: envName,
@@ -219,6 +203,8 @@ if (opt.dry) {
   log(`scope ${scope} · W ${path.relative(ROOT, W) || "."} · env ${envName}${server ? ` · server "${server.start}" (${fresh})` : ""}`);
   for (const s of stacks)
     for (const f of filesOf(s)) log(`${s.id}: (${sub(s.dir || ".")}) ${f ? sub(s.run).replace(/\{file\}/g, path.relative(path.resolve(ROOT, sub(s.dir || ".")), f).replace(/\\/g, "/")) : sub(s.run)}${needs(s) ? " [server]" : ""}`);
+  if (!opt.merge && stacks.some((s) => s.run && Object.keys(s.results || {}).length))
+    log(`each stack deletes its old result files before it runs (--merge keeps them) — no cleanup needed`);
   log(`collect ${collectArgs().map(short).map((x) => (/\s/.test(x) ? `"${x}"` : x)).join(" ")}`);
   if (opt.report) log(`render-html ${short(path.join(W, "results.json"))} --out ${short(path.join(W, "report"))}${opt.keep ? " --keep" : ""}`);
   process.exit(0);
@@ -228,14 +214,15 @@ if (opt.dry) {
 // instead of starting their own server. Lock = <workDir>/_out/run.lock with the owner's pid; a dead owner's lock is taken over.
 const LOCK = path.join(ROOT, cfg.workDir || "test-work", "_out", "run.lock");
 const ownLock = () => existsSync(LOCK) && readFileSync(LOCK, "utf8").split(" ")[0] === String(process.pid);
-async function takeLock() {
+// once = true: one try, false when another live run holds it (dead owner: taken over)
+async function takeLock(once = false) {
   mkdirSync(path.dirname(LOCK), { recursive: true });
   const end = Date.now() + (server.lockWaitSec ?? 1800) * 1000;
   let said = false;
   for (;;) {
     try {
       writeFileSync(LOCK, `${process.pid} ${scope} ${new Date().toISOString()}`, { flag: "wx" });
-      return;
+      return true;
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
     }
@@ -251,6 +238,7 @@ async function takeLock() {
       rmSync(LOCK, { force: true });
       continue;
     }
+    if (once) return false;
     if (!said) log(`another run (pid ${pid}) is using the server — waiting for it to finish`);
     said = true;
     if (Date.now() > end) die(`waited ${(server.lockWaitSec ?? 1800) / 60} min for run pid ${pid} — ${LOCK}`);
@@ -258,7 +246,24 @@ async function takeLock() {
   }
 }
 process.on("exit", () => ownLock() && rmSync(LOCK, { force: true }));
-if (stacks.some(needs) && !own) await takeLock();
+// server.portEnv ("PORT"): a run that finds the configured port taken by another run (a parallel writer's dry run)
+// starts its own server on a free port instead of waiting — that env var set, the port in baseUrl / apiBase /
+// ready rewritten. A run with nobody else keeps the configured port. Only for a server whose data is its own
+// (in memory, per-instance test DB); one sharing a DB leaves portEnv out and queues on the lock.
+if (stacks.some(needs) && !(await takeLock(!!server.portEnv))) {
+  const net = await import("node:net");
+  const port = await new Promise((ok, ko) => {
+    const s = net.createServer().once("error", ko).listen(0, "127.0.0.1", () => {
+      const p = s.address().port;
+      s.close(() => ok(p));
+    });
+  });
+  const at = (u) => u && String(u).replace(/^(\w+:\/\/[^/:?#]+)(:\d+)?/, `$1:${port}`);
+  server = { ...server, ready: at(server.ready), env: { ...(server.env || {}), [server.portEnv]: String(port) } };
+  if (E.baseUrl) stackEnv.BASE_URL = at(E.baseUrl);
+  if (E.apiBase || E.baseUrl) stackEnv.API_BASE = at(E.apiBase || E.baseUrl);
+  log(`port in use by another run — own server on port ${port}`);
+}
 
 let broken = 0;
 const status = [];

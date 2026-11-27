@@ -18,15 +18,16 @@ a dev can ask the same at any time with `/vuong-test:next [scope]`.
 Files others read (`cases.md`, `diff.md`, `data-plan.md`) must read row by row without another file open: spec by
 file name + cell, flow refs with their name, rules in words; codes (`R12`, `S2`, `B3`) only in brackets.
 
-Create and change files with the Write / Edit tools only — never a shell heredoc, `sed -i` or `node -e` writing a
-file (auto mode blocks them, and one stray quote loses the whole file).
+Create and change files with the Write / Edit tools only — never a shell heredoc, `cat >` / `echo >` / `printf >`,
+`sed -i` or `node -e` writing a file (auto mode blocks them, and one stray quote loses the whole file).
 
 **Delegate the writing steps.** Steps 2–3 (spec-sources.md, flows.md, diff.md), step 4 (cases.md + data-plan.md)
 and step 6 (write + dry-run tests) go to the `vuong-test:writer` agent (runs on Sonnet: same score measured, about
 a third cheaper per step) — one agent per scope, or one per group when step 6 is split. Before delegating, do not
 read the inputs the agent will read: check they exist (one `ls`). What the user answered (BA answers, diff
 decisions, conflicts) goes, in their words, as rows of `W/answers.md` (`$PLUGIN/templates/answers.md`; one Write, or
-one Edit appending the rows) — never edit spec-sources.md / diff.md yourself, the agent copies the rows there. Only
+one Edit appending the rows; a range `Q1–Q13` is one row) — never edit spec-sources.md / diff.md yourself: the agent
+runs `core/sync-tables.mjs`, which copies the rows there. Only
 the approval goes in the `cases.md` header. The agent reads answers from files only. Its prompt is only: `PLUGIN`, `W`, the step, the scope, the input paths (step 6: case
 IDs, test file, out dir); no answers, no rulings on what counts as a source, no file contents. Do not read its
 output files again except to show the user what this flow says to show, and do not spot-check its citations
@@ -77,7 +78,8 @@ search for it again and every case needing it is an assumption. Verify with
 
 Ask/confirm: what (screen / feature / endpoint / ticket), which layers, which stack(s), which environment,
 and whether any case may **write data** to a shared environment. Start `W/cases.md` from `$PLUGIN/templates/cases.md`
-with the header filled (Scope, Environment, Writes data; the table comes in step 4) — there is no separate scope file.
+with the header filled (Scope, Environment, Writes data; the table comes in step 4; leave the `Approved by` line as
+the template has it until step 5) — there is no separate scope file.
 **Always ask: "Is there a test case file from the tester for this scope?"** (path; `find-spec.mjs` hits of kind
 `acceptance` are candidates — confirm, do not assume). Record the answer in the cases.md header `Tester file:` (path + sha256, or "none").
 
@@ -177,7 +179,7 @@ Follow `$PLUGIN/references/stacks/<stack>.md` and `$PLUGIN/references/review-tes
 - Parallel work: run `node $PLUGIN/core/split.mjs W/cases.md` — it prints the split (fewest `vuong-test:writer`
   agents whose groups stay ≤ 25 E2E-case weight, E2E groups split first, equal weight) as the fixed table
   `| Agent | Cases | Test file (own) | Out dir (own) | Notes (own) | Data |`. **Suggest** it to the user and start
-  only after they agree (no one to ask: use it as printed); never split by hand. Each agent gets its table row.
+  only after they agree (no one to ask: use it as printed); never split by hand. Each agent gets its table row; its cases are in `W/_split/<agent>.md` (written by split.mjs).
   Its last lines say what test.config.json still needs (the e2e stack's `each`, the server's `portEnv` so dry
   runs need not queue): do only that, before starting — no need to read run.mjs or the config further.
   A group dry-runs only its file: `run.mjs <scope> --only e2e --files W/e2e-<g>.mjs`. Shared helpers are written and dry-run
@@ -251,7 +253,7 @@ Record the new commit sha in flows.md and diff.md headings. Changed Expected →
 
 Commit per the project's commit rules: `spec-sources.md`, `flows.md`, `diff.md`, `cases.md`, `triage.md`, `data-plan.md`,
 (the exported Excel goes to the tester / uploader, not into git),
-`data-created.md`, `run-notes*.md`, test code. Not: `report/`, `manual/` (runbooks, filled or not), `cases-summary.md`, screenshots, `e2e*/`, `results.json`,
+`data-created.md`, `run-notes*.md`, test code. Not: `report/`, `_split/`, `manual/` (runbooks, filled or not), `cases-summary.md`, screenshots, `e2e*/`, `results.json`,
 caches (gitignored by `init`). Run `cleanup-list.mjs` once more and tell the user what is still left.
 Never commit credentials.
 

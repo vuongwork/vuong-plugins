@@ -3,13 +3,15 @@
 //
 //   node split.mjs W/cases.md [--per <max weight per agent, default 75>] [--max <agents, default 5>]
 //
-// Weight per case: e2e 3 · api / mount 2 · ut 1 (manual: no test code, not split). Groups weigh
+// Also writes W/_split/<group>.md (cases.md header + the group's rows) so each writer reads only its part.
+// Weight per case: e2e 3 · api / mount 2 · ut 1 (manual: no test code, not split); where a boundary falls also counts
+// Writes = Y and long Steps (+1 each, see extra()). Groups weigh
 // up to --per each (1 E2E case ≈ 2 API ≈ 3 UT; 75 ≈ 25 E2E cases): the fewest agents that fit, at most --max. E2E cases get their own groups, split first;
 // the other layers share the rest. Groups are contiguous runs of the table (a case stays with the case it needs
 // first, column Pre). Prints the fixed template of SKILL.md › 6 (Agent | Cases | Test file | Out dir | Notes | Data)
 // for the main session to show; file names follow core/run.mjs "each" (W/e2e-a.mjs → results in W/e2e-a/).
 import path from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { parseCases } from "./parsers.mjs";
 
 const argv = process.argv.slice(2);
@@ -35,6 +37,11 @@ const auto = cases.filter((c) => layer(c) !== "manual");
 const manual = cases.filter((c) => layer(c) === "manual");
 const w = (c) => WEIGHT[layer(c)] ?? 2;
 const sum = (xs) => xs.reduce((n, c) => n + w(c), 0);
+// where the group boundaries fall (not how many agents): e2e / api cases that write data or have long steps take
+// longer to write and debug (measured: the group holding the submit / cancel flows finished last, at 2× the
+// others), so +1 for Writes = Y and +1 per 100 characters of Steps (max +2)
+const extra = (c) => (["e2e", "api"].includes(layer(c)) ? (/^y/i.test(String(c.writes).trim()) ? 1 : 0) + Math.min(2, Math.floor(String(c.steps || "").length / 100)) : 0);
+const cw = (xs) => xs.reduce((n, c) => n + w(c) + extra(c), 0);
 const e2e = auto.filter((c) => layer(c) === "e2e");
 const core = auto.filter((c) => layer(c) !== "e2e");
 const total = sum(auto);
@@ -63,16 +70,16 @@ function chunks(list, k) {
   if (k <= 1) return list.length ? [list] : [];
   const out = [];
   let cur = [];
-  let left = sum(list);
+  let left = cw(list);
   let groupsLeft = k;
   for (let i = 0; i < list.length; i++) {
     cur.push(list[i]);
     const target = left / groupsLeft;
     const next = list[i + 1];
     const tied = next && next.pre.some((p) => cur.some((c) => c.id === p));
-    if (groupsLeft > 1 && sum(cur) >= target && next && !tied) {
+    if (groupsLeft > 1 && cw(cur) >= target - cw([list[i]]) / 2 && next && !tied) {
       out.push(cur);
-      left -= sum(cur);
+      left -= cw(cur);
       groupsLeft--;
       cur = [];
     }
@@ -126,9 +133,30 @@ const byLayer = (g) =>
     .join(", ");
 const writes = groups.filter((g) => g.cases.some((c) => /^y/i.test(c.writes.trim())));
 
+// W/_split/<group>.md = cases.md with only the group's rows (header and conventions kept), so a writer reads its
+// part, not the whole table. Rewritten on every split; cases.md stays the source.
+const SPLIT = path.join(path.dirname(opt.file), "_split");
+rmSync(SPLIT, { recursive: true, force: true });
+if (!single) {
+  mkdirSync(SPLIT, { recursive: true });
+  const lines = readFileSync(opt.file, "utf8").split(/\r?\n/);
+  const rowId = (l) => (l.startsWith("|") ? l.split("|")[1].trim() : null);
+  const start = lines.findIndex((l, i) => l.startsWith("|") && /^\|[\s:|-]+\|$/.test(lines[i + 1] || ""));
+  let end = start;
+  while (end < lines.length && lines[end].startsWith("|")) end++;
+  for (const g of groups) {
+    const own = new Set(g.cases.map((c) => c.id));
+    const outside = [...new Set(g.cases.flatMap((c) => c.pre).filter((p) => !own.has(p)))];
+    const note = `> Group \`${g.name}\` of \`cases.md\` (core/split.mjs): only this group's rows; cases.md is the source.` +
+      (outside.length ? ` Pre in another group (collect applies it, write no gate): ${outside.join(", ")}.` : "");
+    const rows = lines.slice(start + 2, end).filter((l) => own.has(rowId(l)));
+    writeFileSync(path.join(SPLIT, `${g.name}.md`), [...lines.slice(0, start), note, "", lines[start], lines[start + 1], ...rows, ""].join("\n"));
+  }
+}
+
 console.log(`[vuong-test] split: ${auto.length} automated cases (weight ${total}) → ${groups.length} writer agent${groups.length > 1 ? "s" : ""}${manual.length ? ` · ${manual.length} manual (runbook, no agent)` : ""}`);
 console.log("");
-console.log("| Agent | Cases | Test file (own) | Out dir (own) | Notes (own) | Data |");
+console.log(`| Agent | Cases (its rows: \`${W}/_split/<agent>.md\`) | Test file (own) | Out dir (own) | Notes (own) | Data |`);
 console.log("|---|---|---|---|---|---|");
 for (const g of groups) {
   const [tf, od] = files(g);
@@ -153,5 +181,5 @@ if (groups.some((g) => g.name.startsWith("e2e")))
     : `E2E stack: set "each": "${W}/e2e*.mjs", "run": "node {file}" in test.config.json before starting — a group dry-runs its own file with core/run.mjs <scope> --only e2e --files <its file>.`);
 if (groups.length > 1 && srv)
   console.log(srv.portEnv
-    ? `Server: portEnv ${srv.portEnv} set ✓ — every dry run gets its own server, none waits.`
+    ? `Server: portEnv ${srv.portEnv} set ✓ — a dry run finding the port busy gets its own server, none waits.`
     : `Server: no portEnv — dry runs queue for the one server. If "${srv.start}" reads its port from an env var and keeps its data per instance, add "portEnv": "<that var>".`);

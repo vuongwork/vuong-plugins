@@ -8,7 +8,7 @@
 // has the same name. --keep also keeps a timestamped copy in <out>/history/ (a run you want to compare later).
 import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
 import path from "node:path";
-import { casesWithStatus, printNext } from "./parsers.mjs";
+import { casesWithStatus, printNext, isApproved } from "./parsers.mjs";
 
 const argv = process.argv.slice(2);
 const input = argv.find((a) => !a.startsWith("--") && argv[argv.indexOf(a) - 1] !== "--out" && argv[argv.indexOf(a) - 1] !== "--name");
@@ -64,7 +64,7 @@ const metaRows = [
   .join("");
 
 const warnings = [
-  !m.approvedBy || /^</.test(m.approvedBy) ? "cases.md has no approver — step 5 (approval) was not recorded." : "",
+  !isApproved(m) ? "cases.md has no approver — step 5 (approval) was not recorded." : "",
   untagged.length ? `${untagged.length} test(s) have no [ID] tag: their expected results are not traced to a case.` : "",
   unknownTag.length ? `${unknownTag.length} test(s) carry tags that are not in cases.md.` : "",
 ]

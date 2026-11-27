@@ -155,6 +155,9 @@ export async function createRun(opts = {}) {
     /** Fresh browser context (clean cookies/storage) for the next cases. */
     async isolate() {
       await ctx.close();
+      // a request still running in the closed context never fires requestfinished/failed: without this
+      // every later settle() waited its whole timeout on it
+      inflight.clear();
       ctx = await newContext();
       await wire(ctx);
       page = await ctx.newPage();

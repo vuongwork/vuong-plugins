@@ -214,6 +214,7 @@ const KEPT_SENTENCE = {
   SRC_SQUASH: 'squashed sizes you chose to keep',
   DERIVED: 'paddings and gaps the layout produced, not written in the CSS (centring, auto margins, absolute children)',
   BORDER_INSET: 'paddings that hold a border (CSS padding on the 4 px grid + border width)',
+  HAIRLINE: 'hairline sizes (a width or height of 2 px or less: rules, dividers)',
 };
 
 function fmtOption(q, o) {

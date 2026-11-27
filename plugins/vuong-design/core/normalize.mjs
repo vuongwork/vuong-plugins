@@ -54,6 +54,9 @@
 //                  scale) when it is the same at widths A and B. Icon width / height: 16, 20 or 24 px and the same at
 //                  A and B. Font size: a size of the type scale (below). Line height: an integer px (±0.01).
 //                  Colour: no more frequent colour within ΔE2000 3 of the same alpha.
+//  HAIRLINE        R87: a frame width / height of 2 px or less (a rule, a divider, a stepper line) is kept, like a
+//                  radius of 2 px or less: moving it to 4 px would thicken the line. Spacing of 1-2 px still asks GRID4
+//                  (a tight gap may be a typo).
 //  BORDER_INSET    R86: a padding on a side with a border whose CSS padding part (value - border width) is on the
 //                  4 px grid (12 px padding + 1 px border = 13) -> kept: Figma strokes sit inside, so the frame's padding
 //                  must hold the border; moving it to 12 would shift the content.
@@ -233,6 +236,7 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     if (u.cat === 'radius' && u.pill) { keep('PILL'); continue; } // R70
     const illustration = u.cat === 'icon' && snap(u.box ? Math.max(...u.box) : u.value) > ICON_MAX; // R71
     if (illustration && stable(u)) { keep('ILLUSTRATION'); continue; }
+    if (u.cat === 'size' && !u.img && snap(u.value) <= 2) { keep('HAIRLINE'); continue; } // R87
     if (!illustration && inScale(u)) { keep('IN_SCALE'); continue; }
     if (u.cat === 'space' && u.border > 0 && u.value - u.border > -EPS && onGrid(snap(u.value - u.border))) { keep('BORDER_INSET'); continue; } // R86
     const v = u.value, sv = snap(v);

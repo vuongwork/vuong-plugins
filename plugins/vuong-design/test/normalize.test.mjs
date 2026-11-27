@@ -413,3 +413,10 @@ test('R86: a derived gap is kept (DERIVED), never a GRID4 question', () => {
   assert.equal(r.counts.DERIVED, 1);
   assert.deepEqual(r.questions.filter((q) => q.code === 'GRID4' && q.key.startsWith('grid4|')).map((q) => q.key), ['grid4|space|13|12']);
 });
+
+test('R87: a frame size of 2 px or less is a hairline (kept); a 1-2 px spacing still asks GRID4', () => {
+  const r = N([use('size', 'height', 1, 'span.l|div.c'), use('size', 'height', 2, 'span.s|div.c'), use('size', 'width', 2.03, 'span.s|div.c'),
+    use('size', 'height', 3, 'span.t|div.c'), use('space', 'gap', 2, 'div.r|div.c')]);
+  assert.equal(r.counts.HAIRLINE, 3);
+  assert.deepEqual(r.questions.filter((q) => q.key.startsWith('grid4|')).map((q) => q.key).sort(), ['grid4|size|3|4', 'grid4|space|2|4']);
+});

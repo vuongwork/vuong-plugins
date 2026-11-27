@@ -251,6 +251,41 @@ function measurePage({ rootSel, widenSel, extras, nameOf, vars: wantVars }) {
     }
     return out.map((x) => [...x].sort((a, b) => a - b));
   };
+  // R86: the gaps the author wrote between in-flow children (either axis): 0, the CSS row / column gap (flex, grid),
+  // and that plus the facing margins of two adjacent children (flex and grid add them; block flow also collapses
+  // them to the larger one). A margin written auto takes its used value from the free space (`margin-top: auto`
+  // pushing a button to the bottom), so a pair with one adds nothing. infer's gap comes from geometry; one that is
+  // none of these was derived (absolute children, centring, auto margins) and normalize keeps it, DERIVED. The auto
+  // test reads the page's style rules (an overriding later rule is not resolved: the gap then just counts as derived).
+  const autoRules = [];
+  const scanAutoRules = (rules) => {
+    for (const r of rules) {
+      if (r.cssRules && !r.selectorText) { if (!r.media || matchMedia(r.media.mediaText).matches) scanAutoRules(r.cssRules); continue; }
+      const sides = r.style ? SIDES.filter((s) => r.style['margin' + s] === 'auto') : [];
+      if (r.selectorText && sides.length) autoRules.push({ sel: r.selectorText, sides });
+    }
+  };
+  for (const ss of document.styleSheets) { try { scanAutoRules(ss.cssRules); } catch { /* cross-origin sheet */ } }
+  const autoMargins = (el) => {
+    const set = new Set(SIDES.filter((s) => el.style['margin' + s] === 'auto'));
+    for (const r of autoRules) { try { if (el.matches(r.sel)) r.sides.forEach((s) => set.add(s)); } catch { /* bad selector */ } }
+    return set;
+  };
+  const authoredGaps = (el, cs) => {
+    const fg = /flex|grid/.test(cs.display);
+    const gs = fg ? [...new Set([parseFloat(cs.rowGap) || 0, parseFloat(cs.columnGap) || 0])] : [0];
+    const out = new Set([0, ...gs.map(rnd)]);
+    const kids = [...el.children].map((c) => [c, getComputedStyle(c)]).filter(([, s]) => s.display !== 'none' && !/^(absolute|fixed)$/.test(s.position));
+    for (let i = 1; i < kids.length; i++) {
+      const [ea, a] = kids[i - 1], [eb, b] = kids[i], am = autoMargins(ea), bm = autoMargins(eb);
+      for (const [E, S] of [['Bottom', 'Top'], ['Right', 'Left']]) {
+        if (am.has(E) || bm.has(S)) continue;
+        const m1 = parseFloat(a['margin' + E]) || 0, m2 = parseFloat(b['margin' + S]) || 0;
+        for (const g of gs) { out.add(rnd(g + m1 + m2)); if (!fg) out.add(rnd(g + Math.max(m1, m2))); }
+      }
+    }
+    return [...out].sort((x, y) => x - y);
+  };
 
   // Original-DOM child index of every node, recorded before any DOM edit so ids do not depend on inserted spans.
   const origIdx = new WeakMap();
@@ -829,6 +864,7 @@ function measurePage({ rootSel, widenSel, extras, nameOf, vars: wantVars }) {
       }
       const n = base(id, kind, tag, cls, r, p);
       n.ins = authoredInsets(el, cs);
+      n.gp = authoredGaps(el, cs);
       if (/flex/.test(cs.display)) n.flexBox = flexContainer(el, cs);
       n.kids = [];
       kidsInto(n.kids, el, cs, id, clipFor(el, cs, b, clip));
@@ -1238,6 +1274,8 @@ function mergeNode(a, mapB) {
   if (a.flexBox) n.flexBox = a.flexBox;
   // R84 authored insets, left out when they are all 0 with no child margin (the reader takes that as the default)
   if (a.ins && a.ins.some((x) => x.length > 1 || x[0] !== 0)) n.ins = a.ins;
+  // R86 authored gaps, left out when 0 is the only one (the reader takes that as the default)
+  if (a.gp && (a.gp.length > 1 || a.gp[0] !== 0)) n.gp = a.gp;
   if (a.tok) n.tok = a.tok;
   if (a.kids) n.kids = a.kids.map((k) => mergeNode(k, mapB));
   return n;
@@ -1334,7 +1372,7 @@ export async function captureScreens(htmlPath, opts = {}) {
       const vars = Object.fromEntries([...new Set([...Object.keys(declared), ...Object.keys(uses)])].sort()
         .map((k) => [k, { value: declared[k] ?? '', uses: uses[k] || 0 }]));
       return {
-        id, name: sA.name || id, W: [r2(sA.W), r2(sB.W)], H: [r2(sA.H), r2(sB.H)], widen: widens[i], ins: 1, // R84: frames carry ins
+        id, name: sA.name || id, W: [r2(sA.W), r2(sB.W)], H: [r2(sA.H), r2(sB.H)], widen: widens[i], ins: 1, gp: 1, // R84 / R86: frames carry ins and gp
         tree, vars, varsComplex: sA.varsComplex || 0, varsUnreadable: A.varsUnreadable || 0, excluded, fonts: [...new Set([...sA.fonts, ...sB.fonts])], fontsRendered: { ...sA.fontsRendered, ...sB.fontsRendered },
         svgDefs: { ...sA.svgDefs, ...sB.svgDefs }, fontCss: A.fontCss,
         ...(png ? { png: [A.png[i], pngB(i)], origin: [A.origin[i], (bound[i] ? Bbound : Bfree).origin[i]] } : {}),

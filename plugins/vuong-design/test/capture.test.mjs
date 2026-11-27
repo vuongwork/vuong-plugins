@@ -413,3 +413,13 @@ test('text decoration drawn through from an ancestor is the text\'s own td; not 
   assert.deepEqual(td('own').split(' ').sort(), ['line-through', 'underline']);
   assert.equal(td('plain'), 'none');
 });
+
+test('R86: authored gaps are 0, the CSS row / column gap and that plus adjacent margins; an auto margin adds none', { skip }, async () => {
+  const s = (await captureScreens(join(FIX, 'capture-gaps.html'), { root: '.scr', fontOverride: false })).screens[0];
+  const gp = (cls) => walk(s.tree).find((x) => x.cls === cls).gp;
+  assert.equal(s.gp, 1);
+  assert.deepEqual(s.tree.gp, [0, 8, 12]);
+  assert.deepEqual(gp('blk'), [0, 10, 16]);
+  assert.equal(gp('rel'), undefined, 'only absolute children: 0, left out');
+  assert.deepEqual(gp('row'), [0, 6, 10]);
+});

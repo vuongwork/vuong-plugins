@@ -212,6 +212,8 @@ const KEPT_SENTENCE = {
   ILLUSTRATION: 'illustrations (svg over 32 px), not icons', GRID4: 'off-grid values you chose to keep', COLOR_NEAR: 'near colours you chose to keep',
   TYPE_SCALE: 'font sizes you chose to keep', LINE_HEIGHT_INT: 'line heights you chose to keep', ICON_FRAME: 'icon sizes you chose to keep',
   SRC_SQUASH: 'squashed sizes you chose to keep',
+  DERIVED: 'paddings and gaps the layout produced, not written in the CSS (centring, auto margins, absolute children)',
+  BORDER_INSET: 'paddings that hold a border (CSS padding on the 4 px grid + border width)',
 };
 
 function fmtOption(q, o) {

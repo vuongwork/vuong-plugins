@@ -299,10 +299,17 @@ function screenUses(screen, spec) {
       // has no authored insets at all.
       const ins = screen.ins ? (ir ? ir.ins || [[0], [0], [0], [0]] : null) : undefined;
       const derived = (v, i) => ins !== undefined && (ins === null || !ins[i].some((a) => Math.abs(a - v) <= 0.05)) ? true : undefined;
-      (l.p || []).forEach((v, i) => addLen('space', 'padding' + SIDE[i], v, tok['padding' + SIDE[i]], { derived: derived(v, i) }));
+      // R86: the node's border width on that side (Figma strokes sit inside, so the padding holds CSS padding + border)
+      const bwOf = (i) => (Array.isArray(p.border) && p.border[i] && p.border[i].w > 0 ? p.border[i].w : undefined);
+      (l.p || []).forEach((v, i) => addLen('space', 'padding' + SIDE[i], v, tok['padding' + SIDE[i]], { derived: derived(v, i), border: bwOf(i) }));
+      // R86: a gap that is none of the gaps the author wrote (screen.gp: the capture records them) was derived from
+      // geometry (absolute children, an auto margin, centring). A synthetic group takes its source element's gaps.
+      const gsrc = screen.gp ? (ir || (sn.syn ? sourceOf(sn.id) : null)) : undefined;
+      const gp = gsrc === undefined ? undefined : gsrc ? gsrc.gp || [0] : null;
+      const gDerived = (v) => gp !== undefined && (gp === null || !gp.some((a) => Math.abs(a - v) <= 0.05)) ? true : undefined;
       if (l.sb) add('space', 'gap', {}, { flex: 'sb', token: tok.gap });
-      else addLen('space', 'gap', l.g, tok.gap);
-      if (l.cg != null) addLen('space', 'counterGap', l.cg, tok.gap);
+      else addLen('space', 'gap', l.g, tok.gap, { derived: gDerived(l.g) });
+      if (l.cg != null) addLen('space', 'counterGap', l.cg, tok.gap, { derived: gDerived(l.cg) });
     }
 
     // ---- size: FIXED axes of frames and images ----

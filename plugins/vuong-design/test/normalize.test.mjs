@@ -401,3 +401,15 @@ test('R84: a derived padding is kept (DERIVED), never a GRID4 question or a role
   assert.equal(r.entries.length, 0);
   assert.equal(r.questions.length, 0);
 });
+
+test('R86: a padding holding a border whose CSS part is on the grid is kept (BORDER_INSET); an off-grid CSS part still asks', () => {
+  const r = N([pad(13, { border: 1 }), pad(14, { border: 2 }), pad(1, { border: 1 }), pad(13, { border: 2 }), pad(13)]);
+  assert.equal(r.counts.BORDER_INSET, 3);
+  assert.deepEqual(r.questions.filter((q) => q.code === 'GRID4' && q.key.startsWith('grid4|')).map((q) => [q.key, q.affects]), [['grid4|space|13|12', 2]]);
+});
+
+test('R86: a derived gap is kept (DERIVED), never a GRID4 question', () => {
+  const r = N([use('space', 'gap', 198, 'div.c|div.s', { derived: true }), use('space', 'gap', 13, 'div.c|div.s')]);
+  assert.equal(r.counts.DERIVED, 1);
+  assert.deepEqual(r.questions.filter((q) => q.code === 'GRID4' && q.key.startsWith('grid4|')).map((q) => q.key), ['grid4|space|13|12']);
+});

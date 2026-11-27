@@ -310,6 +310,26 @@ test('R80: no size use on an axis that stretches (abs LR / TB / SCALE); the othe
   assert.deepEqual(mk({ x: 0, y: 0, c: 'R' }), ['height', 'width']);
 });
 
+test('R86: with authored gaps (screen.gp) a gap none of them is derived; a synthetic group takes the gaps of its source element', () => {
+  const f = fixture();
+  f.screen.gp = 1;
+  f.screen.tree.gp = [0, 12];
+  f.screen.tree.kids[3].gp = [0, 6];
+  const gap = (x, node) => of(inventory([x]), node, 'space', 'gap')[0].derived;
+  assert.equal(gap(f, '0'), undefined);
+  assert.equal(gap(f, '0.3.g0'), true, 'group gap 8, source gaps 0 and 6');
+  f.screen.tree.kids[3].gp = [0, 8];
+  assert.equal(gap(f, '0.3.g0'), undefined);
+  delete f.screen.tree.gp; // the default: 0 only
+  assert.equal(gap(f, '0'), true);
+  assert.equal(gap(fixture(), '0'), undefined, 'without screen.gp (older IR) nothing is derived');
+});
+
+test('R86: a padding on a side with a border carries the border width', () => {
+  assert.equal(of(inventory([fixture()]), '0.0', 'space', 'paddingT')[0].border, 1);
+  assert.equal(of(inventory([fixture()]), '0', 'space', 'paddingT')[0].border, undefined);
+});
+
 test('R84: with authored insets (screen.ins) a padding none of them is derived; an authored one, or a child margin added, is not', () => {
   const f = fixture();
   f.screen.ins = 1;

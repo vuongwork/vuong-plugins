@@ -44,6 +44,9 @@
 //  TOKEN           the use carries a CSS variable whose value is its value (inventory R64) -> kept.
 //  DERIVED         R84: a padding that is none of the source's authored insets (padding + border, plus an in-flow
 //                  child's margin): infer derived it from geometry (centring in a fixed height, overlap) -> kept.
+//                  R86: a gap that is none of the source's authored gaps (0, CSS gap, gap + adjacent children's
+//                  margins; an auto margin adds none) is DERIVED too (a button pushed down by `margin-top: auto`,
+//                  absolute children laid out by infer).
 //  FLEX            space-between gap (Figma auto spacing), or an icon axis that is not FIXED -> kept, no number.
 //  IN_SCALE        already in scale -> kept. space, frame size, radius: a multiple of 4 px (±0.01; 0 never reaches
 //                  here). Radius and border width ≤ 2 px (hairlines) are never touched; border widths have no scale
@@ -51,6 +54,9 @@
 //                  scale) when it is the same at widths A and B. Icon width / height: 16, 20 or 24 px and the same at
 //                  A and B. Font size: a size of the type scale (below). Line height: an integer px (±0.01).
 //                  Colour: no more frequent colour within ΔE2000 3 of the same alpha.
+//  BORDER_INSET    R86: a padding on a side with a border whose CSS padding part (value - border width) is on the
+//                  4 px grid (12 px padding + 1 px border = 13) -> kept: Figma strokes sit inside, so the frame's padding
+//                  must hold the border; moving it to 12 would shift the content.
 //  ROLE_MAJORITY   off-scale space / frame size / radius / icon value whose role (all screens) has one value used by
 //                  strictly more than half its uses, that value in scale -> that value, auto. R73: only when the
 //                  majority is at most 4 px (one grid step) from the value (both after R69 snapping); a larger jump
@@ -228,6 +234,7 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     const illustration = u.cat === 'icon' && snap(u.box ? Math.max(...u.box) : u.value) > ICON_MAX; // R71
     if (illustration && stable(u)) { keep('ILLUSTRATION'); continue; }
     if (!illustration && inScale(u)) { keep('IN_SCALE'); continue; }
+    if (u.cat === 'space' && u.border > 0 && u.value - u.border > -EPS && onGrid(snap(u.value - u.border))) { keep('BORDER_INSET'); continue; } // R86
     const v = u.value, sv = snap(v);
     const base = { u, cat: u.cat, role: u.role, prop: u.prop, from: v, node: nodeOf(u, false) };
     const majorityCat = GRID_CATS.has(u.cat) ? !(u.cat === 'size' && u.img) : u.cat === 'icon' && !illustration;

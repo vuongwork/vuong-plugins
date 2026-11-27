@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+body{margin:0;font:14px/20px sans-serif}
+.scr{width:300px;height:500px;display:flex;flex-direction:column;gap:8px;padding:8px}
+.a{height:20px}
+.m{height:20px;margin-top:4px}
+.push{height:30px;margin-top:auto}
+.blk p{margin:10px 0 6px;height:20px}
+.rel{position:relative;height:60px}
+.dot{position:absolute;left:0;width:4px;height:4px}
+.row{display:flex;column-gap:6px;row-gap:10px;flex-wrap:wrap}
+</style></head><body>
+<div class="scr">
+  <!-- flex column gap 8: plain pair 8, pair with a 4 px margin 12; the auto margin adds nothing -->
+  <div class="a"></div><div class="m"></div>
+  <!-- block flow: margins 6 (bottom) and 10 (top) collapse to 10, or add to 16 -->
+  <div class="blk"><p>one</p><p>two</p></div>
+  <!-- only absolute children: no authored gap but 0 -->
+  <div class="rel"><span class="dot" style="top:0"></span><span class="dot" style="bottom:0"></span></div>
+  <!-- row and column gaps of a wrapping flex -->
+  <div class="row"><span>x</span><span>y</span></div>
+  <div class="push"></div>
+</div>
+</body></html>

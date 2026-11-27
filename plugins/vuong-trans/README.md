@@ -19,7 +19,9 @@ Cập nhật: `/plugin marketplace update vuong-plugins`.
 ## Cách dùng
 Nói với Claude: "dịch file này sang tiếng Việt", "translate this deck to English", "convert file này sang tiếng Nhật", "dịch file pdf"… Skill `vuong-trans` tự kích hoạt.
 
-Quy trình: trích chuỗi (khử trùng) → dựng glossary + bảng tên riêng → subagent dịch song song → ghi ngược vào file → báo các khung bị tràn chữ để bạn chọn thu nhỏ chữ hay nới khung → render và kiểm tra. Output nằm ở thư mục `VN/`, `EN/` hoặc `JP/` cạnh file gốc.
+Quy trình: trích chuỗi (khử trùng, lấy lại bản dịch cũ của cùng dự án từ bộ nhớ dịch) → dựng glossary + bảng tên riêng → subagent dịch song song → ghi ngược vào file → báo các khung bị tràn chữ để bạn chọn thu nhỏ chữ hay nới khung → render và kiểm tra. Output nằm ở thư mục `VN/`, `EN/` hoặc `JP/` cạnh file gốc.
+
+Cuối mỗi lần dịch, Claude báo cáo bằng `scripts/runlog.py report`: thời gian từng bước và tổng, token của từng subagent (chi phí), số ký tự gửi model so với số lấy lại từ bộ nhớ dịch, số ảnh (tổng / trùng / giao agent), và số mục LEFT / REVIEW / OVER còn lại. Chi phí quy ra USD chỉ khi bạn cung cấp đơn giá (`--usd-per-mtok`).
 
 ## Yêu cầu
 Viết để chạy trên Linux, macOS và Windows. **Mới kiểm thử trên Windows** (pptx, xlsx, pdf, overlay ảnh); Linux/macOS và bước OCR chưa kiểm thử, nếu gặp lỗi xin báo ở [Issues](https://github.com/vuongwork/vuong-plugins/issues).
@@ -28,6 +30,12 @@ Viết để chạy trên Linux, macOS và Windows. **Mới kiểm thử trên W
 - LibreOffice để render kiểm tra và cắt ảnh WMF/EMF; poppler (`pdftoppm`) nếu có, không có thì dùng PyMuPDF.
 - Font: Noto Sans + DejaVu Sans; Noto Sans CJK JP khi dịch sang tiếng Nhật. Thiếu thì dùng font hệ điều hành (Segoe UI / Arial, Yu Gothic / Meiryo, Hiragino), hoặc đặt `VTRANS_FONT_DIR` trỏ tới thư mục chứa font.
 - OCR ảnh: `scripts/setup_env.py ocr` tạo venv riêng, tải easyocr và model tiếng Nhật, tiếng Việt, tiếng Anh (khoảng 100 MB mỗi bộ) từ pypi.org, download.pytorch.org, github.com.
+
+## Bộ nhớ dịch
+Mỗi dự án có bộ nhớ dịch riêng ở `~/.vuong-trans/projects/<dự án>/` (đổi bằng `VTRANS_DATA`). Bản sau của cùng tài liệu chỉ phải dịch phần mới (đo thực tế: giảm 84–98% ký tự gửi model; 89% với deck mẫu (version sau) sau khi bỏ chữ template trên master). Chỉ dùng lại nguyên câu, trong cùng dự án; nhãn ngắn (≤ 4 ký tự) và chuỗi đã có hơn một nghĩa vẫn được dịch lại theo ngữ cảnh, kèm bản dịch cũ làm gợi ý.
+
+## Kiểm thử
+`python3 -m unittest discover -s tests` (dữ liệu tự sinh, không dùng tài liệu thật).
 
 ## Giới hạn
 Chữ trong ảnh sau khi dịch không còn chỉnh sửa được. Trang PDF chỉ được vẽ đè, không dựng lại layout.

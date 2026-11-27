@@ -55,3 +55,33 @@ def foreign_words(text, target, keep=()):
 def needs_translation(text, target, keep=()):
     return bool(re.search(r'[A-Za-zÀ-ỹ぀-ヿ㐀-鿿ｦ-ﾟ]', text)) and bool(foreign_words(text, target, keep))
 
+
+
+def lang_of(text):
+    """'ja' | 'vi' | 'en' | None — the script a string is written in (Japanese wins, then Vietnamese diacritics)."""
+    if JP.search(text):
+        return 'ja'
+    if VI.search(text):
+        return 'vi'
+    return 'en' if WORD.search(strip_kept(text)) else None
+
+
+def main_lang(texts):
+    """Most common language among `texts` (None when no text has letters)."""
+    from collections import Counter
+    c = Counter(l for l in map(lang_of, texts) if l)
+    return c.most_common(1)[0][0] if c else None
+
+
+def source_chars(text, lang):
+    """Number of letters of `lang` in `text` (kana/kanji for ja, letters otherwise) — used to drop OCR noise."""
+    if lang == 'ja':
+        return len(JP.findall(text))
+    return sum(len(w) for w in WORD.findall(text))
+
+
+def worth_translating(boxes, min_src=2, lang='ja'):
+    """OCR boxes of one image -> give it to an overlay agent? >= min_src boxes needing translation, or one box that is a
+    real label (>= 2 source letters at conf >= 0.5). On a sample deck all 9 one-box images were OCR noise and stay out."""
+    src = [b for b in boxes if b['src']]
+    return len(src) >= min_src or any(b['conf'] >= 0.5 and source_chars(b['text'], lang) >= 2 for b in src)

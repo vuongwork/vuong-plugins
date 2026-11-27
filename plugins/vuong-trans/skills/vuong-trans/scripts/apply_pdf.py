@@ -17,6 +17,7 @@ same short label needs different words on different pages). Output: DIR/<name><s
 """
 import argparse, glob, json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from runlog import track
 from langcheck import foreign_words, load_keep, JP as JPc, VI as VIc
 from common import fonts
 import pymupdf
@@ -24,6 +25,7 @@ ap = argparse.ArgumentParser(); ap.add_argument('work'); ap.add_argument('--maps
 ap.add_argument('--outdir', required=True); ap.add_argument('--suffix', help='default: _VN / _EN / _JP from --target')
 ap.add_argument('--target', choices=['vi', 'en', 'ja']); ap.add_argument('--keep'); ap.add_argument('--report')
 ap.add_argument('--fit', choices=['report', 'shrink', 'widen'], default='report'); a = ap.parse_args()
+track(a.work, 'apply_pdf')
 a.suffix = a.suffix or '_' + {'vi': 'VN', 'en': 'EN', 'ja': 'JP'}.get(a.target, 'VN')
 KEEP = load_keep(a.keep) if a.keep else []; LEFT, REVIEW, OVER = [], [], []
 rd = lambda path: json.load(open(path, encoding='utf-8'))

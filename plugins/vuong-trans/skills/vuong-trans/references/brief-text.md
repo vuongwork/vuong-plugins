@@ -6,6 +6,10 @@ Document context (who → whom, what): <2–3 lines from SKILL §0, e.g. "Propos
 Input: <WORKDIR>/chunk_<k>.json — JSON array of source strings (some mixed with English/numbers/codes).
 Glossary (follow it for consistency; the `## Proper nouns` table is BINDING — use those names verbatim): <WORKDIR>/glossary.md
 <optional> Reference translation in another language, for meaning only: <WORKDIR>/en_chunk_<k>.json
+<optional> Earlier translations from this project's translation memory: <WORKDIR>/tm_hints.json = {source: [{t, file, ctx}]}.
+  For a string listed there, re-use an earlier translation when it fits THIS document's context (keeps the project
+  consistent); if the meaning here differs (a short label like 対象 / 区分 / 表示 often does), translate fresh — do not force it.
+  Several variants = the term has several meanings in this project: pick by context.
 
 Output: <WORKDIR>/<lang>_chunk_<k>.json — a JSON object mapping EVERY source string (exact, unchanged key) to its translation.
 

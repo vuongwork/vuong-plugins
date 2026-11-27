@@ -2,7 +2,7 @@
 
 Static HTML → design system → Figma with variables, components and IDs, verified node by node.
 
-Work in progress: this is the layout-engine skeleton.
+Status: the steps from HTML to a checked Figma file all work (design system, questions, approvals, components, Figma send and check). Not built yet: the ID system and the `design-data.json` export for documentation.
 
 ## Quick start
 

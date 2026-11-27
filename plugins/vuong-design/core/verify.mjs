@@ -161,7 +161,14 @@
 //      position: from the parent's measured box (near / far / middle edge) by the node's alignment there (start, end,
 //      centre, stretch; abs constraints L/R/C/LR), plus the parent's padding records, its gap record x the number of
 //      flow items before (or after) the node and the measured size changes of those items; space-between distributes
-//      the measured free-space change. Wrap, baseline, SCALE and a container without a direction give no prediction.
+//      the measured free-space change. Baseline and a container without a direction give no prediction.
+//      R87: a wrapping row (start-packed, no FILL item) is laid out again in greedy lines from the measured item sizes,
+//      with the records' gap / counterGap / padding, once that layout reproduces the modelled proxy (else no
+//      prediction): it predicts its items' positions and its own height. A SCALE child (abs, percentage) scales its
+//      size and offset with its parent's measured size. A centre-constrained child that resizes itself keeps its near
+//      edge (proxy and Figma anchor it to the parent's middle; only the parent's resize moves it). A FILL item with a
+//      spec `max` measured at that width, or whose width did not change, no longer counts as FILL (space-between then
+//      pushes the last item to the far edge).
 //    No prediction or a disagreement -> the root stays unexplained, with normMismatch [{ axis, measured, predicted }]:
 //    a record whose `to` is wrong predicts another delta (padding 13 -> 12 shifts the children by -1 px and shrinks a
 //    HUG parent by 1 px; a record claiming 13 -> 8 predicts -5 px). An unexplained norm root fails the screen and can
@@ -1000,6 +1007,67 @@ export function verifyScreen(input, opts = {}) {
   const dnP = dnOf(proxy, NP);
   const normPass = (BASE, TGT, NDM, on) => {
   const dn = dnOf(BASE, TGT), out = [];
+  // R87: a wrapping row (lay.d 'H', wrap, packed at the start: no space-between, pa 'S', no FILL item) laid out again
+  // from the measured item sizes: greedy lines over the inner width (box width minus padding), items gap apart, lines
+  // counterGap apart, each item at its line's top / middle / bottom by lay.ca. Run on BASE with the spec values
+  // (`from`) and on TGT with the records added; it must reproduce BASE (every item within tol, else null: the model
+  // does not fit this row) before its TGT layout predicts anything. Returns { at: Map id -> [x, y] in page px, h:
+  // content height } per side, or null.
+  const wrapMemo = new Map();
+  const wrapRow = (M, c) => {
+    const key = `${M}|${c.id}`;
+    if (wrapMemo.has(key)) return wrapMemo.get(key);
+    let res = null;
+    const lay = c.lay;
+    const fk = flowOf(c);
+    if (lay && lay.wrap && lay.d === 'H' && !lay.sb && (lay.pa ?? 'S') === 'S' && fk.length && !fk.some((k) => isFillIn(k, 0))) {
+      const p = Array.isArray(lay.p) ? lay.p.map(Number) : [0, 0, 0, 0]; // T R B L
+      const sim = (P, withRecs) => {
+        const pb = P[M] && P[M].boxes ? P[M].boxes[c.id] : null;
+        const ks = fk.map((k) => (P[M].boxes ? P[M].boxes[k.id] : null));
+        if (!pb || ks.some((b) => !b)) return null;
+        const r = (prop) => (withRecs ? sumRec(c.id, prop) : 0);
+        const T = p[0] + r('paddingT'), R = p[1] + r('paddingR'), L = p[3] + r('paddingL');
+        const g = Number(lay.g || 0) + (withRecs ? gapOf(c.id) : 0), cg = Number(lay.cg ?? lay.g ?? 0) + r('counterGap');
+        const inner = pb[2] - L - R;
+        const lines = [];
+        let cur = null;
+        ks.forEach((b, i) => {
+          if (!cur || cur.w + g + b[2] > inner + 0.5) { cur = { items: [], w: -g, h: 0 }; lines.push(cur); }
+          cur.items.push(i); cur.w += g + b[2]; cur.h = Math.max(cur.h, b[3]);
+        });
+        const at = new Map();
+        let y = pb[1] + T;
+        for (const ln of lines) {
+          let x = pb[0] + L;
+          for (const i of ln.items) {
+            const b = ks[i], ca = lay.ca ?? 'S';
+            const dy = ca === 'C' ? (ln.h - b[3]) / 2 : ca === 'E' ? ln.h - b[3] : 0;
+            at.set(fk[i].id, [x, y + dy]);
+            x += b[2] + g;
+          }
+          y += ln.h + cg;
+        }
+        return { at, h: lines.reduce((a, ln) => a + ln.h, 0) + (lines.length - 1) * cg, pad: [T, p[2] + r('paddingB')] };
+      };
+      const base = sim(BASE, false), tgt = sim(TGT, true);
+      const fits = base && tgt && fk.every((k) => {
+        const b = BASE[M].boxes[k.id], q = base.at.get(k.id), t = byId.has(k.id) ? tolOf(byId.get(k.id).n) : tolFrame;
+        return Math.abs(b[0] - q[0]) <= t + EPS && Math.abs(b[1] - q[1]) <= t + EPS;
+      });
+      if (fits) res = { base, tgt };
+    }
+    wrapMemo.set(key, res);
+    return res;
+  };
+  // R87: an absolute child with a SCALE constraint (a percentage size / offset, the fill of a progress bar) scales
+  // with its parent's measured size on that axis
+  const scaleOf = (M, s, ax) => {
+    if (!s.abs || (ax ? s.abs.cy : s.abs.c) !== 'SCALE') return null;
+    const c = specParent.get(s.id), dc = c && dn(M, c.id), pb = c && BASE[M].boxes[c.id], mb = BASE[M].boxes[s.id];
+    if (!dc || !pb || !mb || !(pb[ax + 2] > 0)) return null;
+    return { k: (pb[ax + 2] + dc[ax + 2]) / pb[ax + 2], off: mb[ax] - pb[ax], size: mb[ax + 2], dc };
+  };
   // predicted change of s's own size on ax at width M ({ v, tol } or null: no prediction)
   const predSize = (M, s, ax, t) => {
     const own = recsOf(s.id), dim = ax ? 'height' : 'width';
@@ -1011,6 +1079,8 @@ export function verifyScreen(input, opts = {}) {
       return mb ? { v: Number(back.to) - mb[ax + 2], tol: t } : null;
     }
     if (dimR.length) return { v: dimR.reduce((x, a) => x + recDv(a), 0), tol: t };
+    const sc = scaleOf(M, s, ax);
+    if (sc) return { v: sc.size * (sc.k - 1), tol: t };
     const c = specParent.get(s.id);
     if (szA === 'FILL' && c && c.lay && c.lay.d) {
       if (c.lay.wrap) return null;
@@ -1062,7 +1132,10 @@ export function verifyScreen(input, opts = {}) {
       return { v, tol: Math.max(t, 0.25 * Math.abs(v)) };
     }
     if (szA === 'HUG' && s.lay && s.lay.d) {
-      if (s.lay.wrap) return null;
+      if (s.lay.wrap) { // R87: the height of a wrapping row from its simulated lines
+        const w = ax === 1 ? wrapRow(M, s) : null;
+        return w ? { v: w.tgt.h + w.tgt.pad[0] + w.tgt.pad[1] - (w.base.h + w.base.pad[0] + w.base.pad[1]), tol: t } : null;
+      }
       const [N, F] = padsOf(s.id, ax), fk = flowOf(s);
       if (!fk.length) return { v: N + F, tol: t };
       const dks = fk.map((k) => dn(M, k.id));
@@ -1082,10 +1155,18 @@ export function verifyScreen(input, opts = {}) {
     const n0 = dc[ax], f0 = dc[ax] + dc[ax + 2], dz = de[ax + 2];
     const at = (al, N, F) => (al === 'S' || al === 'X' ? n0 + N : al === 'E' ? f0 - F - dz : al === 'C' ? (n0 + f0) / 2 + (N - F) / 2 - dz / 2 : null);
     if (s.abs) {
+      const sc = scaleOf(M, s, ax);
+      if (sc) return { v: sc.dc[ax] + sc.off * (sc.k - 1), tol: t };
       const al = { L: 'S', T: 'S', R: 'E', B: 'E', C: 'C', LR: 'X', TB: 'X' }[ax ? s.abs.cy || 'T' : s.abs.c || 'L'];
-      return al ? { v: at(al, 0, 0), tol: t } : null;
+      // R87: a centre constraint anchors the near edge to the parent's middle (proxy: calc(50% + offset), Figma
+      // likewise): the node's own resize grows it from that edge, only the parent's resize moves it
+      return al ? { v: at(al, 0, 0) + (al === 'C' ? dz / 2 : 0), tol: t } : null;
     }
-    if (!c.lay || !c.lay.d || c.lay.wrap) return null;
+    if (c.lay && c.lay.wrap) { // R87: a wrapping row's item from the simulated lines
+      const w = wrapRow(M, c), q = w && w.tgt.at.get(s.id), b = BASE[M].boxes[s.id];
+      return q && b ? { v: q[ax] - b[ax], tol: t } : null;
+    }
+    if (!c.lay || !c.lay.d) return null;
     const [N, F] = padsOf(c.id, ax);
     if (ax !== mainAx(c)) {
       const v = at(isFillIn(s, ax) ? 'X' : c.lay.ca ?? 'S', N, F);
@@ -1097,7 +1178,15 @@ export function verifyScreen(input, opts = {}) {
     if (dz2.some((v) => v === null)) return null;
     const sum = (xs) => xs.reduce((a, b) => a + b, 0);
     const before = sum(dz2.slice(0, i)), after = sum(dz2.slice(i + 1)), all = sum(dz2), n = fk.length, g = gapOf(c.id);
-    const fill = fk.some((k) => isFillIn(k, ax));
+    // R87: a FILL item with a max width (spec `max`) that does not fill: measured at the max in TGT, or (the plain
+    // layout of a capped text column, Planora s7 / s17 at B: 196.13 px under max 198 both before and after) its width
+    // unchanged; the row lays out as without it (space-between pushes the last item to the far edge)
+    const capped = (k) => {
+      if (ax !== 0 || !(Number(k.max) > 0)) return false;
+      const b = TGT[M].boxes[k.id], d = dn(M, k.id);
+      return !!b && (b[2] >= Number(k.max) - 0.5 || (!!d && Math.abs(d[2]) <= 0.05));
+    };
+    const fill = fk.some((k) => isFillIn(k, ax) && !capped(k));
     if (c.lay.sb && !fill) return { v: n0 + N + before + (n > 1 ? (i * (dc[ax + 2] - N - F - all)) / (n - 1) : 0), tol: t };
     const pa = fill ? 'S' : c.lay.pa ?? 'S';
     if (pa === 'S') return { v: n0 + N + before + i * g, tol: t };
@@ -1175,7 +1264,7 @@ export function verifyScreen(input, opts = {}) {
       for (const r of rs.filter(isBoxRec)) {
         if ((r.cat === 'size' || r.cat === 'icon') && (r.prop === 'width' || r.prop === 'height')) want(id, r.prop === 'width' ? 'w' : 'h');
         else if (r.cat === 'type' && sp.t === 'T') { if (r.prop === 'lineHeight' && hug(1)) want(id, 'h'); if (r.prop === 'fontSize' && hug(0)) want(id, 'w'); }
-        else if (r.cat === 'space' && sp.lay && sp.lay.d && !sp.lay.wrap) {
+        else if (r.cat === 'space' && sp.lay && sp.lay.d) { // R87: a wrapping row is checked through its simulated lines
           const ax = /^padding[LR]$/.test(r.prop) ? 0 : /^padding[TB]$/.test(r.prop) ? 1 : r.prop === 'gap' ? mainAx(sp) : null;
           if (ax === null) continue;
           if (hug(ax)) want(id, ax ? 'h' : 'w');

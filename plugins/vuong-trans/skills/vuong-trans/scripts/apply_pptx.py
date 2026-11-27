@@ -8,9 +8,11 @@ Usage: apply_pptx.py SRC.pptx --maps "GLOB" --out OUT.pptx --target {vi,en,ja} [
 """
 import argparse, glob, json, os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from runlog import track
 import common  # noqa: F401  (UTF-8 stdout on Windows)
 from pptx import Presentation
 from pptx.util import Pt
+from pptx_text import para_text, set_para_text, master_layout_frames
 
 JP = re.compile(r'[぀-ヿ㐀-鿿ｦ-ﾟ]')
 A = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
@@ -85,6 +87,7 @@ def main():
     ap.add_argument('--annotate-vi', action='store_true',
                     help='append Vietnamese meaning in brackets to English WMS terms, first occurrence per slide (annotate_vi.py)')
     a = ap.parse_args()
+    track(os.path.dirname(os.path.abspath(a.maps)), 'apply_pptx')
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from langcheck import foreign_words, load_keep, JP as JPc, VI as VIc
     keep = load_keep(a.keep) if a.keep else []
@@ -105,7 +108,7 @@ def main():
             runs = para.runs
             if not runs:
                 continue
-            text = ''.join(r.text for r in runs)
+            text = para_text(para)
             size = run_size(para, runs[0])
             ja.append((text, size))
             new = tmap.get(text)
@@ -126,9 +129,7 @@ def main():
             if a.annotate_vi:
                 new = annotate(new, seen.setdefault(slide_no, set()))
             tr.append((new, size))
-            runs[0].text = new
-            for r in runs[1:]:
-                r._r.getparent().remove(r._r)
+            set_para_text(para, new)
         if not tr:
             continue
         budget = max(height, height_needed(ja, width, 1.0))
@@ -193,22 +194,18 @@ def main():
             changed.append(f'slide {o["slide"]} {s.name}: +{delta / 12700:.0f}pt' + (f'  (touches: {", ".join(hits[:3])})' if hits else ''))
             if new_w < o['_need_w'] * 12700:
                 changed[-1] += '  (slide edge reached: still overflows)'
-    # master / layout texts (footers etc.)
-    for layout in [prs.slide_master, *prs.slide_layouts]:
-        for s in layout.shapes:
-            if s.has_text_frame:
-                for para in s.text_frame.paragraphs:
-                    for r in para.runs:
-                        if r.text in tmap:
-                            r.text = tmap[r.text]
-                        elif r.text.strip() in tmap:
-                            r.text = tmap[r.text.strip()]
+    # master / layout text boxes (document numbers, footers drawn as plain text) — same paragraph keys as extract.py
+    for tf in master_layout_frames(prs):
+        for para in tf.paragraphs:
+            new = tmap.get(para_text(para))
+            if new is not None and para.runs:
+                set_para_text(para, new)
 
     swapped = 0
     if a.images:
         meta = json.load(open(os.path.join(a.images, 'meta.json'), encoding='utf-8'))
         for m in meta:
-            out = os.path.join(a.images, 'out', m['name'] + '.png')
+            out = os.path.join(a.images, 'out', m.get('dup_of', m['name']) + '.png')   # duplicates reuse the original's overlay
             if not os.path.exists(out):
                 continue
             sl = prs.slides[m['slide'] - 1]

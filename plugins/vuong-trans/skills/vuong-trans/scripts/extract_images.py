@@ -1,13 +1,15 @@
-"""Extract slide pictures (wider than --min-width of the slide) to PNG for OCR/overlay.
+"""Extract slide pictures to PNG for OCR/overlay (every picture by default; duplicates by content hash are listed once).
 
-PNG/JPEG blobs are saved as PNG. Vector pictures (WMF/EMF, e.g. pasted Excel tables) are cropped from a
+PNG/JPEG blobs are saved as PNG; icons below --min-px are skipped. Vector pictures (WMF/EMF, e.g. pasted Excel tables) are cropped from a
 high-DPI render of the slide (LibreOffice → PDF → pdftoppm) so they stay sharp.
 
-Usage: extract_images.py SRC.pptx --out IMGDIR [--min-width 0.15] [--dpi 220]
-Writes IMGDIR/<name>.png and IMGDIR/meta.json [{name, slide, shape_id}].
+Usage: extract_images.py SRC.pptx --out IMGDIR [--min-width 0] [--min-px 64] [--dpi 220]
+Writes IMGDIR/<name>.png and IMGDIR/meta.json [{name, slide, shape_id, sha1, px, dup_of?, vector?, missing?}].
+Which images need overlay is decided by ocr.py (todo.json), not by size.
 """
-import argparse, glob, io, json, os, shutil, subprocess, sys, tempfile
+import argparse, glob, hashlib, io, json, os, shutil, subprocess, sys, tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from runlog import track
 import common  # noqa: F401  (UTF-8 stdout on Windows)
 from pptx import Presentation
 from PIL import Image
@@ -69,41 +71,86 @@ def render_pdf(src, tmp):
     return pdf
 
 
+def save_meta(out, meta):
+    json.dump(meta, open(f'{out}/meta.json', 'w', encoding='utf-8'), indent=0)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('src')
     ap.add_argument('--out', required=True)
-    ap.add_argument('--min-width', type=float, default=0.15)
+    ap.add_argument('--min-width', type=float, default=0.0,
+                    help='skip pictures narrower than this share of the slide (default 0 = keep all: a chart placed '
+                         'small on the slide can still be a 1200 px image with data)')
+    ap.add_argument('--min-px', type=int, default=64, help='skip raster pictures whose longer native side is below this (icons)')
     ap.add_argument('--dpi', type=int, default=220)
     a = ap.parse_args()
+    track(a.out, 'extract_images')
     os.makedirs(a.out, exist_ok=True)
     prs = Presentation(a.src)
     W, H = prs.slide_width, prs.slide_height
-    meta, vector = [], []
+    meta, vector, first, skipped, unread = [], [], {}, 0, []
     for i, sl in enumerate(prs.slides, 1):
         for k, s in enumerate([p for p in walk(sl.shapes) if p.width > W * a.min_width], 1):
             name = f's{i:03d}_{k}'
-            meta.append({'name': name, 'slide': i, 'shape_id': s.shape_id})
-            if s.image.ext.lower() in ('wmf', 'emf'):
-                vector.append((name, i, s))
+            try:
+                blob, ext = s.image.blob, s.image.ext.lower()
+            except Exception:                   # linked (not embedded) picture
+                unread.append(name)
+                continue
+            h = hashlib.sha1(blob).hexdigest()
+            m = {'name': name, 'slide': i, 'shape_id': s.shape_id, 'sha1': h}
+            if h in first:                      # same picture already listed: OCR / overlay it once, reuse the output
+                m['dup_of'] = first[h]
+                meta.append(m)
+                continue
+            if ext in ('wmf', 'emf'):
+                m['vector'] = True
+                vector.append((m, s))
             else:
-                Image.open(io.BytesIO(s.image.blob)).convert('RGB').save(f'{a.out}/{name}.png')
+                try:
+                    im = Image.open(io.BytesIO(blob))
+                    im.load()
+                except Exception:               # format Pillow cannot read (e.g. SVG): list it for the user
+                    unread.append(name)
+                    continue
+                if max(im.size) < a.min_px:
+                    skipped += 1
+                    continue
+                im.convert('RGB').save(f'{a.out}/{name}.png')
+                m['px'] = list(im.size)
+            first[h] = name
+            meta.append(m)
+    save_meta(a.out, meta)                      # raster pictures are usable even if the vector render below fails
     if vector:
         tmp = tempfile.mkdtemp(prefix='vtrans_render_')
-        pdf = render_pdf(os.path.abspath(a.src), tmp)
-        for name, i, s in vector:
-            page = os.path.join(tmp, 'page.png')
-            render_page_png(pdf, i, a.dpi, page)
-            with Image.open(page) as im:
+        try:
+            pdf = render_pdf(os.path.abspath(a.src), tmp)
+        except SystemExit as e:
+            for m, _ in vector:
+                m['missing'] = True
+            save_meta(a.out, meta)
+            print(f'{e}\n  meta.json written; {len(vector)} vector picture(s) marked "missing" (re-run after fixing LibreOffice).')
+            sys.exit(2)
+        pages = {}
+        for m, s in vector:
+            i = m['slide']
+            if i not in pages:                  # one render per slide, not per picture
+                pages[i] = os.path.join(tmp, f'page{i}.png')
+                render_page_png(pdf, i, a.dpi, pages[i])
+            with Image.open(pages[i]) as im:
                 iw, ih = im.size
                 box = (int(s.left / W * iw), int(s.top / H * ih), int((s.left + s.width) / W * iw), int((s.top + s.height) / H * ih))
-                im.crop(box).save(f'{a.out}/{name}.png')
-            os.remove(page)
+                crop = im.crop(box)
+                crop.save(f"{a.out}/{m['name']}.png")
+                m['px'] = list(crop.size)
         shutil.rmtree(tmp, ignore_errors=True)
-    json.dump(meta, open(f'{a.out}/meta.json', 'w', encoding='utf-8'), indent=0)
-    print(f'{len(meta)} images ({len(vector)} vector, cropped from render) -> {a.out}')
-    for m in meta:
-        print(' ', m['name'], Image.open(f"{a.out}/{m['name']}.png").size)
+        save_meta(a.out, meta)
+    dups = sum('dup_of' in m for m in meta)
+    print(f'{len(meta) - dups} unique images ({len(vector)} vector, cropped from render), {dups} duplicate(s) reuse them, '
+          f'{skipped} icon(s) < {a.min_px} px skipped -> {a.out}')
+    if unread:
+        print(f'  not extracted (linked or unreadable format) — view these slides yourself: {unread}')
 
 
 if __name__ == '__main__':

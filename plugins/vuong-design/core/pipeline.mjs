@@ -236,7 +236,7 @@ export function summarize(file, entry, g) {
   return {
     file, screen: r.id, checked: r.checked, total: r.total, unchecked: r.unchecked.length,
     unexplainedRoots: g.open.roots.length, explainedRoots: r.roots.filter((x) => x.explainedBy).length,
-    needsApproval: g.open.approvals.length, approvalMax: Math.max(0, ...r.needsApproval.map((x) => x.magnitude)),
+    needsApproval: g.open.approvals.length, approvalMax: Math.max(0, ...r.needsApproval.map((x) => x.magnitude)), textRounding: (r.modelAccepted || []).length,
     crop: g.open.crops.length, cropLinked: g.open.cropsLinked.length, cropA: g.open.crops.filter((c) => c.width === 'A').length, cropB: g.open.crops.filter((c) => c.width === 'B').length,
     data: countBy(r.data, 'kind'), flags: countBy(r.flags, 'kind'), skipped: r.skipped,
     allowed: g.allowed.roots.length + g.allowed.approvals.length + g.allowed.crops.length + g.allowed.cropsLinked.length,

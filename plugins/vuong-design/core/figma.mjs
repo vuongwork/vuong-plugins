@@ -7,7 +7,7 @@
 //   node core/figma.mjs shots --out <dir>; ingest-shots --out <dir> --result <file>; shots-clean --out <dir>
 //   node core/figma.mjs serve  --out <dir> [--file <Figma file name> [--renamed]] [--send <keys>|run|pending]... [--shots] [--port 8787] [--wait <s>]
 //   node core/figma.mjs check  --out <dir> [--mutate] [--allowlist <json>] [--html <file>] [--root <sel>] [--widen <sel>]
-//        [--name <sel>] [--widen-by <px>] [--viewport <px>] [--no-webfonts] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>]
+//        [--name <sel>] [--widen-by <px>] [--viewport <px>] [--no-webfonts] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>] [--tol-text-round <px>]
 //
 // Everything is written to <out>/figma/ (README "Figma CLI" has the file table):
 //   vars-NN.js (figma-vars.mjs varsPayload, in order), batch-NN.js (planBatches code: runtime + data) and batch-NN.data.json
@@ -119,7 +119,7 @@ export const USAGE = `usage: node core/figma.mjs plan --ds <ds output dir> --out
        node core/figma.mjs shots --out <dir> | ingest-shots --out <dir> --result <file> | shots-clean --out <dir>
        node core/figma.mjs serve --out <dir> [--file <Figma file name> [--renamed]] [--send <keys>|run|pending]... [--shots] [--port 8787] [--wait <s>]
        node core/figma.mjs check --out <dir> [--mutate] [--allowlist <json>] [--html <file>] [--root <sel>] [--widen <sel>]
-            [--name <sel>] [--widen-by <px>] [--viewport <px>] [--no-webfonts] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>]`;
+            [--name <sel>] [--widen-by <px>] [--viewport <px>] [--no-webfonts] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>] [--tol-text-round <px>]`;
 
 const safe = (s) => String(s).replace(/[^A-Za-z0-9._-]/g, '_');
 const pad = (n) => String(n).padStart(2, '0');
@@ -684,7 +684,7 @@ async function serve(argv, log, deps = {}) {
 const CHECK_OPTS = {
   out: { type: 'string' }, mutate: { type: 'boolean' }, allowlist: { type: 'string' }, html: { type: 'string' }, root: { type: 'string' },
   widen: { type: 'string' }, name: { type: 'string' }, 'widen-by': { type: 'string' }, viewport: { type: 'string' }, 'no-webfonts': { type: 'boolean' },
-  'tol-frame': { type: 'string' }, 'tol-text': { type: 'string' }, 'tol-model': { type: 'string' },
+  'tol-frame': { type: 'string' }, 'tol-text': { type: 'string' }, 'tol-model': { type: 'string' }, 'tol-text-round': { type: 'string' },
 };
 const clone = (x) => JSON.parse(JSON.stringify(x));
 
@@ -744,7 +744,7 @@ async function check(argv, log, deps) {
   if (!o.out) throw new UsageError('--out <dir> is required');
   const st = loadState(o.out), F = figDir(o.out);
   const verifyOpts = {};
-  for (const [k, n] of [['tol-frame', 'tolFrame'], ['tol-text', 'tolText'], ['tol-model', 'tolModel']]) { const v = num(k, o[k]); if (v != null) verifyOpts[n] = v; }
+  for (const [k, n] of [['tol-frame', 'tolFrame'], ['tol-text', 'tolText'], ['tol-model', 'tolModel'], ['tol-text-round', 'tolTextRound']]) { const v = num(k, o[k]); if (v != null) verifyOpts[n] = v; }
   const src = { ...(st.source || {}) };
   if (o.html) src.html = resolve(o.html);
   if (o.root) src.root = o.root;

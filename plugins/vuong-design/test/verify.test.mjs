@@ -128,7 +128,8 @@ test('verifyScreen (R15): a model delta above tolModel (2px) needs approval and 
   const inp = fixture();
   modelOnly(inp, 'n.1', [0, 2.5, 0, 0]); // the model moves a frame 2.5px (e.g. a row wraps differently)
   modelOnly(inp, 'n.0', [0, 0, 0, 1.5], ['A']); // 1.5px: within tolModel
-  let r = verifyScreen(inp);
+  let r = verifyScreen(inp, { tolTextRound: 0 }); // R85 off: the fixture holds a text
+
   assert.deepEqual(r.roots, []);
   assert.deepEqual(r.needsApproval.map((m) => [m.id, m.width, m.magnitude]).sort(), [['n.1', 'A', 2.5], ['n.1', 'B', 2.5]]);
   assert.deepEqual(r.modelDeltas.map((m) => [m.id, m.width, m.magnitude]), [['n.0', 'A', 1.5]]);
@@ -136,6 +137,35 @@ test('verifyScreen (R15): a model delta above tolModel (2px) needs approval and 
   r = verifyScreen(inp, { tolModel: 3 });
   assert.deepEqual(r.needsApproval, []);
   assert.equal(r.pass, true);
+});
+
+test('R85: a model approval within tolTextRound (2.5px) whose scope holds a text and no other model flag is text rounding, accepted', () => {
+  const inp = fixture();
+  modelOnly(inp, 'n.1', [0, 2.5, 0, 0]);
+  let r = verifyScreen(inp);
+  assert.deepEqual(r.needsApproval, []);
+  assert.deepEqual(r.modelAccepted.map((m) => [m.id, m.width, m.magnitude, m.explainedBy]).sort(), [['n.1', 'A', 2.5, 'textRounding'], ['n.1', 'B', 2.5, 'textRounding']]);
+  assert.equal(r.pass, true);
+  // above the threshold it still needs approval
+  r = verifyScreen(inp, { tolTextRound: 2.4 });
+  assert.deepEqual(r.needsApproval.map((m) => m.id), ['n.1', 'n.1']);
+  assert.deepEqual(r.modelAccepted, []);
+  assert.equal(r.pass, false);
+  // another model flag in scope (a substituted font): not rounding
+  r = verifyScreen({ ...inp, flags: [{ id: 'n.0.0', kind: 'fontSubstitution', detail: 'X → Inter' }] });
+  assert.equal(r.needsApproval.length, 2);
+  assert.equal(r.pass, false);
+});
+
+test('R85: a model approval whose scope holds no text is never text rounding', () => {
+  const kids = [{ id: 'n.0', kind: 'frame', rA: [0, 0, 100, 20], rB: [0, 0, 100, 20] }, { id: 'n.1', kind: 'frame', rA: [0, 20, 100, 20], rB: [0, 20, 100, 20] }];
+  const tree = flat(kids);
+  tree.rA = [0, 0, 400, 200]; tree.rB = [0, 0, 400, 200];
+  const spec = Fd('n', ['FIXED', 'FIXED'], 'V', kids.map((k) => F(k.id, ['FIXED', 'FIXED'])));
+  const r = probe(tree, (P) => { for (const M of ['A', 'B']) P[M].boxes['n.1'][1] += 2.2; }, [], spec);
+  assert.ok(r.needsApproval.some((m) => m.id === 'n.1'), JSON.stringify(r.needsApproval));
+  assert.deepEqual(r.modelAccepted, []);
+  assert.equal(r.pass, false);
 });
 
 test('verifyScreen: a frame growing 3px with children that did not grow is a root', () => {

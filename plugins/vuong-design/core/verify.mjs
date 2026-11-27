@@ -10,7 +10,9 @@
 //    counted in `modelFollowers` {A, B}. A model root larger than opts.tolModel (default 2px, R15) goes to
 //    `needsApproval` instead and fails the screen until approved (Task 8: allowlist). `modelDrift` = the largest
 //    accumulated model delta on any node (followers included); above tolModel it is a needsApproval entry
-//    ({..., drift: true}) unless a listed model root already has that magnitude.
+//    ({..., drift: true}) unless a listed model root already has that magnitude. R85: an approval of at most
+//    opts.tolTextRound (default 2.5 px) whose scope holds a text and no other model flag is Figma rounding text widths
+//    and goes to `modelAccepted` (explainedBy 'textRounding') instead; it does not fail the screen.
 //    Colours, text, icons and fonts are read from this proxy's DOM. Crops are taken from the layout proxy: the content
 //    is the same (the model only resizes text boxes; fonts are already substituted in capture) and the model's
 //    glyph shifts inside a box, reported in modelDeltas, would otherwise exceed the 1px crop search.
@@ -241,6 +243,8 @@ const TOL_FRAME = 0.5;
 const TOL_TEXT = 1;
 const CROP_RATIO = 0.05;
 const TOL_MODEL = 2;
+const TOL_TEXT_ROUND = 2.5;
+const MODEL_NOT_ROUNDING = new Set(['fontSubstitution', 'figmaLineHeight', 'mixedRunHeight', 'strokeOverlay']);
 const CROP_PEAK = 40;
 // Crops on a real Figma screenshot (mark 'figma-real'; measured 2026-11-24 on 18 Planora screens, Chromium source vs
 // Figma raster): identical text differs by up to ratio 0.77 / peak 220 (p90 0.19 / 124), so a text crop cannot gate
@@ -959,6 +963,31 @@ export function verifyScreen(input, opts = {}) {
     ({ deltas: modelDeltas, approvals: needsApproval, fol: modelFollowers, drift: modelDrift } = nw);
     needsApproval = [...gone.filter((a) => !byRecord(a)).map((a) => ({ ...a, normWhy: 'no box or type record on the node or in its record scope' })), ...needsApproval];
   }
+  // R85: a Figma-model approval of at most tolTextRound (default 2.5 px) whose scope (the root's source parent and its
+  // subtree; the whole screen for the drift entry) holds a text and no model flag other than the text box rounding
+  // (no fontSubstitution / figmaLineHeight / mixedRunHeight / strokeOverlay) is Figma rounding text widths: it is
+  // accepted (modelAccepted, explainedBy 'textRounding') instead of waiting for an allowlist entry. Larger ones, or
+  // any with another model flag in scope, still need approval.
+  const tolTextRound = opts.tolTextRound ?? TOL_TEXT_ROUND;
+  const modelAccepted = [];
+  {
+    const scopeIds = (a) => {
+      if (a.drift) return list.map((e) => e.n);
+      const e = byId.get(a.id), top = e ? e.parent || e : null, out = [];
+      const v = (x) => { out.push(x.n); (x.n.kids || []).forEach((k) => byId.has(k.id) && v(byId.get(k.id))); };
+      if (top) v(top);
+      return out;
+    };
+    const rounding = (a) => {
+      if (!(a.magnitude <= tolTextRound + EPS)) return false;
+      const ns = scopeIds(a);
+      return ns.some(isTextSrc) && !ns.some((n) => (flagsById.get(n.id) || []).some((k) => MODEL_NOT_ROUNDING.has(k)));
+    };
+    const keep = [];
+    for (const a of needsApproval) (rounding(a) ? modelAccepted : keep).push(a);
+    needsApproval = keep;
+    for (const a of modelAccepted) a.explainedBy = 'textRounding';
+  }
 
   // ---- R66: norm deltas (norm proxy minus modelled proxy), attributed like the model deltas ----
   // R78: the same pass (attribution, agreement, record check) runs on the norm layout proxy against the layout proxy
@@ -1548,9 +1577,9 @@ export function verifyScreen(input, opts = {}) {
   const pass = unchecked.length === 0 && roots.every((r) => r.explainedBy) && skipped.every(figmaSkip) &&
     crop.length === 0 && cropLinked.length === 0 && data.length === 0 && needsApproval.length === 0;
   return {
-    id: screen.id, checked, total: list.length, unchecked, uncheckedReasons, nodes, roots, modelDeltas, modelFollowers, modelDrift, needsApproval,
+    id: screen.id, checked, total: list.length, unchecked, uncheckedReasons, nodes, roots, modelDeltas, modelFollowers, modelDrift, needsApproval, modelAccepted,
     crop, cropExplained, cropLinked, ...(figReal ? { cropReference, figmaReal: true } : {}), cropChecked: Array.isArray(crops) ? crops.length : 0, cropWidths: Array.isArray(crops) ? [...new Set(crops.map((c) => c.width))] : [],
-    data, pixel, strict, skipped, pass, flags, tol: { frame: tolFrame, text: tolText, model: tolModel },
+    data, pixel, strict, skipped, pass, flags, tol: { frame: tolFrame, text: tolText, model: tolModel, textRound: tolTextRound },
     ...(normOut ? { norm: normOut } : {}),
   };
 }

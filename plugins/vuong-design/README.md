@@ -46,7 +46,7 @@ node plugins/vuong-design/core/session-log.mjs --log <runs.jsonl> [--transcript 
 ```
 node plugins/vuong-design/core/layout.mjs --html <file> --out <dir> [--root <selector>] [--no-lint] \
   [--widen <selector>] [--name <selector>] [--widen-by <px>] [--viewport <px>] \
-  [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>] [--no-webfonts] \
+  [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>] [--tol-text-round <px>] [--no-webfonts] \
   [--allowlist <json>] [--mutate [--mutate-sample <n>]]
 
 node plugins/vuong-design/core/layout.mjs --corpus plugins/vuong-design/test/corpus.json --out <dir> [same options]
@@ -151,7 +151,7 @@ Current numbers (2026-11-22, after round 10, R60 and R72 (s11 crops): R56-R60 an
 | calendar-layout-v3.html | s0 | 165/165 | 0 | 4 | 0 | 0/0 | 0 | 36024 | pass |
 | **Total** | 25 | | **1** | 44 | **8** (max 4.25) | **3** (+1 linked) | 0 | max 36024 | **20/25** |
 
-"Crop fails" are standalone crop fails; "+ linked" are crop fails on an unexplained size root (R44), which pass only together with that root's allowlist entry. "Needs approval" lists model roots above tolModel plus at most one cumulative model-drift entry per screen (R43), with the largest accumulated model delta as its magnitude.
+"Crop fails" are standalone crop fails; "+ linked" are crop fails on an unexplained size root (R44), which pass only together with that root's allowlist entry. "Needs approval" lists model roots above tolModel plus at most one cumulative model-drift entry per screen (R43), with the largest accumulated model delta as its magnitude. R85: an approval of at most `--tol-text-round` (default 2.5 px) whose scope (the node's parent and its subtree; the whole screen for the drift entry) holds a text and no other model flag (font substitution, line height, mixed run height, stroke overlay) is Figma rounding text widths: it is listed in `modelAccepted` and does not fail the screen. Set `--tol-text-round 0` to approve each one by hand.
 
 Plan-1 list (layout.mjs, still the state of run (a) below): 1 root, 8 approvals, 3 crops + 1 linked (planora s3 `.say` avatar at B; avatar crops of s3 and s4 under R61; text round-up drift on entry s0, s1 and calendar-v2 s1; planora s4 chip row width round-up).
 
@@ -180,7 +180,7 @@ Mutations on (b) (`--mutate --mutate-sample 2`: planora s0 and s9, every screen 
 
 What is left after (b) (1 root, 1 approval):
 - planora s3 `n.0.13.0` at B: the `.say` row centres its content at B (`justify-content: center`, both items at their natural width), but the spec keeps the bubble FILL, so in Figma the bubble fills the row and the avatar starts at the left edge, 23.25 px left of the source. Restoring the avatar's 34 px (SRC_SQUASH) fixes its size and its crop, not the centring: that needs the bubble to hug its text at B and shrink at A, which one Figma sizing mode cannot do (no flex-shrink; the nearest is HUG with a max width). Pending the user's approval, or a plan-3 decision.
-- planora s4 chip row width round-up (2.28 px at B): Figma rounds text box widths; not a line-height case, so LINE_HEIGHT_INT does not touch it (needs approval).
+- planora s4 chip row width round-up (2.28 px at B): Figma rounds text box widths; not a line-height case, so LINE_HEIGHT_INT does not touch it (accepted as text rounding since R85).
 - Without answers (a), the plan-1 list stands: the s3 root above with its linked crop, the avatar crops of s3 (A) and s4 (A, B) under R61, the 7 text round-up approvals and the s4 chip row.
 - To check in real Figma (plan 3): R47 SCALE is relative to the parent frame, CSS % to the containing block's padding box (equal here: no border, parent = containing block; otherwise the fit fails and fixed constraints stand in, visibly); the `left: 52%` badge and `left: 58%` / `55%` markers hang from zero-width SCALE anchor frames (Figma's minimum size is 0.01).
 

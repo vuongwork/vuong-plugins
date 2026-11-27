@@ -2,7 +2,7 @@
 // Layout CLI (Task 8): HTML -> inferred auto-layout spec, verified node by node (spec §14), with a report to approve.
 //
 //   node core/layout.mjs --html <file> [--root <selector>] --out <dir> [--widen <selector>] [--name <selector>]
-//        [--no-lint] [--widen-by <px>] [--viewport <px>] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>] [--no-webfonts]
+//        [--no-lint] [--widen-by <px>] [--viewport <px>] [--tol-frame <px>] [--tol-text <px>] [--tol-model <px>] [--tol-text-round <px>] [--no-webfonts]
 //        [--allowlist <json>] [--mutate [--mutate-sample <n>]]
 //   node core/layout.mjs --corpus <corpus.json> [--corpus-dir <dir>] --out <dir> [same options]
 //     corpus mode: every file of the corpus (paths relative to --corpus-dir, default $VD_CORPUS_DIR) with its own
@@ -33,13 +33,13 @@ export class UsageError extends Error {}
 
 export const USAGE = `usage: node core/layout.mjs --html <file> [--root <selector>] --out <dir> [options]
        node core/layout.mjs --corpus <corpus.json> [--corpus-dir <dir>] --out <dir> [options]
-options: --no-lint --widen <sel> --name <sel> --widen-by <px> --viewport <px> --tol-frame <px> --tol-text <px> --tol-model <px>
+options: --no-lint --widen <sel> --name <sel> --widen-by <px> --viewport <px> --tol-frame <px> --tol-text <px> --tol-model <px> --tol-text-round <px>
          --no-webfonts --allowlist <json> --mutate --mutate-sample <n>`;
 
 const OPTIONS = {
   html: { type: 'string' }, root: { type: 'string' }, widen: { type: 'string' }, name: { type: 'string' },
   'widen-by': { type: 'string' }, viewport: { type: 'string' },
-  'tol-frame': { type: 'string' }, 'tol-text': { type: 'string' }, 'tol-model': { type: 'string' },
+  'tol-frame': { type: 'string' }, 'tol-text': { type: 'string' }, 'tol-model': { type: 'string' }, 'tol-text-round': { type: 'string' },
   'no-webfonts': { type: 'boolean' }, 'no-lint': { type: 'boolean' }, out: { type: 'string' }, allowlist: { type: 'string' },
   mutate: { type: 'boolean' }, 'mutate-sample': { type: 'string' },
   corpus: { type: 'string' }, 'corpus-dir': { type: 'string' }, help: { type: 'boolean', short: 'h' },
@@ -71,6 +71,8 @@ export function parseCli(argv, env = process.env, extra = null) {
   if (tf != null) verify.tolFrame = tf;
   if (tt != null) verify.tolText = tt;
   if (tm != null) verify.tolModel = tm;
+  const tr = number('tol-text-round', values['tol-text-round']);
+  if (tr != null) verify.tolTextRound = tr;
   const corpusDir = values.corpus ? (values['corpus-dir'] || env.VD_CORPUS_DIR) : undefined;
   if (values.corpus && !corpusDir) throw new UsageError('--corpus needs --corpus-dir <dir> or VD_CORPUS_DIR');
   return {

@@ -67,7 +67,7 @@ export async function main(argv, deps = {}) {
   try {
     let o;
     try { o = parseArgs({ args: argv, options: { ds: { type: 'string' }, components: { type: 'string' }, rules: { type: 'string' }, project: { type: 'string' } }, strict: true, allowPositionals: false }).values; } catch (e) { throw new UsageError(e.message); }
-    // R89: --project gives ds (the project's out), components and rules (when those files exist)
+    // R91: --project gives ds (the project's out), components and rules (when those files exist)
     if (o.project) { try { Object.assign(o, projectDefaults(readProject(resolve(deps.cwd || process.cwd(), o.project)), o, ['ds', 'components', 'rules'])); } catch (e) { throw new UsageError(e.message); } }
     if (!o.ds) throw new UsageError('--ds is required');
     const cwd = deps.cwd || process.cwd();

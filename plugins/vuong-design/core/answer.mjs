@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Answer server (R86): open design-system.html of a ds.mjs run in the browser and save the answers picked there into
+// Answer server (R88): open design-system.html of a ds.mjs run in the browser and save the answers picked there into
 // the rules file, so the user never edits vd-rules.json by hand.
 //
 //   node core/answer.mjs --out <ds output folder> [--rules <vd-rules.json>] [--port <n>] [--no-open]
-//   node core/answer.mjs --project <vd-project.json> [options]   (R89: out and rules from the project file)
+//   node core/answer.mjs --project <vd-project.json> [options]   (R91: out and rules from the project file)
 //
 // Reads <out>/design-system.html and <out>/questions.json. Rules file: --rules, else the one the run read (embedded
 // in the page, #vd-answer-ctx), else a usage error. A missing rules file is created ({ version: 1, answers: {} }).

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Approve server (R88): open report.html of a layout / ds / figma check run in the browser and save the findings ticked
+// Approve server (R90): open report.html of a layout / ds / figma check run in the browser and save the findings ticked
 // there into the allowlist file, so the user never copies allowlistDraft entries by hand.
 //
 //   node core/approve.mjs --out <run output folder> --allowlist <vd-allowlist.json> [--port <n>] [--no-open]
-//   node core/approve.mjs --project <vd-project.json> [--figma] [options]   (R89: allowlist and out from the project
+//   node core/approve.mjs --project <vd-project.json> [--figma] [options]   (R91: allowlist and out from the project
 //     file; out is the ds folder, or with --figma the figma folder, whose report is the check on real Figma)
 //
 // Reads <out>/report.html and <out>/report.json. A missing allowlist file is created ({ "allowlist": [] }).

@@ -1,4 +1,4 @@
-// R88: approve findings in report.html; Submit writes their allowlistDraft entries into the allowlist file.
+// R90: approve findings in report.html; Submit writes their allowlistDraft entries into the allowlist file.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs';

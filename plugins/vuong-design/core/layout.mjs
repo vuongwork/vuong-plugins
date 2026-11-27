@@ -6,7 +6,7 @@
 //        [--allowlist <json>] [--mutate [--mutate-sample <n>]]
 //   node core/layout.mjs --corpus <corpus.json> [--corpus-dir <dir>] --out <dir> [same options]
 //   node core/layout.mjs --project <vd-project.json> [any option above, overriding the project file]
-//     R89: the project file (project-file.mjs) gives html, root, widen, name, viewport, widen-by, out, allowlist (when
+//     R91: the project file (project-file.mjs) gives html, root, widen, name, viewport, widen-by, out, allowlist (when
 //     the file exists), no-webfonts (webFonts: false) and, for ds.mjs, rules and names (when the files exist).
 //     corpus mode: every file of the corpus (paths relative to --corpus-dir, default $VD_CORPUS_DIR) with its own
 //     root / widen; the corpus's `allowlist` is used unless --allowlist is given.
@@ -177,7 +177,7 @@ export async function main(argv, deps = {}, ext = null) {
       const res = await runFile(browser, j.path, {
         root: j.root, widen: j.widen, nameOf: j.nameOf, widenBy: o.widenBy, viewport: j.viewport, webFonts: o.webFonts,
         fontMap: deps.fontMap, verify: o.verify, mutate: o.mutate, mutateSample: o.mutateSample,
-        // R88: the progress line gives the gate after the allowlist, as the summary does (report.pass is before it)
+        // R90: the progress line gives the gate after the allowlist, as the summary does (report.pass is before it)
         onScreen: (e) => log(`  ${e.report.id}: ${gate(e.report, allowlist, { file: j.file, screen: e.report.id, tree: e.screen.tree }).pass ? 'pass' : 'fail'} (${((Date.now() - t0) / 1000).toFixed(1)} s)`),
         ...(ext ? { normalize: (items) => ext.normalize(j, items, state) } : {}),
       });

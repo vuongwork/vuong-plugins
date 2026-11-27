@@ -519,7 +519,7 @@ input.free{font:13px system-ui,sans-serif;padding:2px 6px;border:1px solid var(-
 @media (max-width:600px){body{padding:10px}section{padding:10px}th,td{padding:3px 4px}.swatches{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}table.bars td.vis{width:40%}}
 `;
 
-// The answer form (R86): every open question card carries radio buttons (options) or a text box (free answer). The
+// The answer form (R88): every open question card carries radio buttons (options) or a text box (free answer). The
 // sticky bar counts the answers and submits them: served by core/answer.mjs (http) it POSTs { answers } to ./answers,
 // which merges them into the rules file; opened as a file it downloads the merged vd-rules.json instead (the rules
 // read by the run, embedded in #vd-answer-ctx, plus the new answers). Choices survive a reload (localStorage).

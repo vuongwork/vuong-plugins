@@ -162,7 +162,7 @@
 //      centre, stretch; abs constraints L/R/C/LR), plus the parent's padding records, its gap record x the number of
 //      flow items before (or after) the node and the measured size changes of those items; space-between distributes
 //      the measured free-space change. Baseline and a container without a direction give no prediction.
-//      R87: a wrapping row (start-packed, no FILL item) is laid out again in greedy lines from the measured item sizes,
+//      R89: a wrapping row (start-packed, no FILL item) is laid out again in greedy lines from the measured item sizes,
 //      with the records' gap / counterGap / padding, once that layout reproduces the modelled proxy (else no
 //      prediction): it predicts its items' positions and its own height. A SCALE child (abs, percentage) scales its
 //      size and offset with its parent's measured size. A centre-constrained child that resizes itself keeps its near
@@ -1007,7 +1007,7 @@ export function verifyScreen(input, opts = {}) {
   const dnP = dnOf(proxy, NP);
   const normPass = (BASE, TGT, NDM, on) => {
   const dn = dnOf(BASE, TGT), out = [];
-  // R87: a wrapping row (lay.d 'H', wrap, packed at the start: no space-between, pa 'S', no FILL item) laid out again
+  // R89: a wrapping row (lay.d 'H', wrap, packed at the start: no space-between, pa 'S', no FILL item) laid out again
   // from the measured item sizes: greedy lines over the inner width (box width minus padding), items gap apart, lines
   // counterGap apart, each item at its line's top / middle / bottom by lay.ca. Run on BASE with the spec values
   // (`from`) and on TGT with the records added; it must reproduce BASE (every item within tol, else null: the model
@@ -1060,7 +1060,7 @@ export function verifyScreen(input, opts = {}) {
     wrapMemo.set(key, res);
     return res;
   };
-  // R87: an absolute child with a SCALE constraint (a percentage size / offset, the fill of a progress bar) scales
+  // R89: an absolute child with a SCALE constraint (a percentage size / offset, the fill of a progress bar) scales
   // with its parent's measured size on that axis
   const scaleOf = (M, s, ax) => {
     if (!s.abs || (ax ? s.abs.cy : s.abs.c) !== 'SCALE') return null;
@@ -1132,7 +1132,7 @@ export function verifyScreen(input, opts = {}) {
       return { v, tol: Math.max(t, 0.25 * Math.abs(v)) };
     }
     if (szA === 'HUG' && s.lay && s.lay.d) {
-      if (s.lay.wrap) { // R87: the height of a wrapping row from its simulated lines
+      if (s.lay.wrap) { // R89: the height of a wrapping row from its simulated lines
         const w = ax === 1 ? wrapRow(M, s) : null;
         return w ? { v: w.tgt.h + w.tgt.pad[0] + w.tgt.pad[1] - (w.base.h + w.base.pad[0] + w.base.pad[1]), tol: t } : null;
       }
@@ -1158,11 +1158,11 @@ export function verifyScreen(input, opts = {}) {
       const sc = scaleOf(M, s, ax);
       if (sc) return { v: sc.dc[ax] + sc.off * (sc.k - 1), tol: t };
       const al = { L: 'S', T: 'S', R: 'E', B: 'E', C: 'C', LR: 'X', TB: 'X' }[ax ? s.abs.cy || 'T' : s.abs.c || 'L'];
-      // R87: a centre constraint anchors the near edge to the parent's middle (proxy: calc(50% + offset), Figma
+      // R89: a centre constraint anchors the near edge to the parent's middle (proxy: calc(50% + offset), Figma
       // likewise): the node's own resize grows it from that edge, only the parent's resize moves it
       return al ? { v: at(al, 0, 0) + (al === 'C' ? dz / 2 : 0), tol: t } : null;
     }
-    if (c.lay && c.lay.wrap) { // R87: a wrapping row's item from the simulated lines
+    if (c.lay && c.lay.wrap) { // R89: a wrapping row's item from the simulated lines
       const w = wrapRow(M, c), q = w && w.tgt.at.get(s.id), b = BASE[M].boxes[s.id];
       return q && b ? { v: q[ax] - b[ax], tol: t } : null;
     }
@@ -1178,7 +1178,7 @@ export function verifyScreen(input, opts = {}) {
     if (dz2.some((v) => v === null)) return null;
     const sum = (xs) => xs.reduce((a, b) => a + b, 0);
     const before = sum(dz2.slice(0, i)), after = sum(dz2.slice(i + 1)), all = sum(dz2), n = fk.length, g = gapOf(c.id);
-    // R87: a FILL item with a max width (spec `max`) that does not fill: measured at the max in TGT, or (the plain
+    // R89: a FILL item with a max width (spec `max`) that does not fill: measured at the max in TGT, or (the plain
     // layout of a capped text column, Planora s7 / s17 at B: 196.13 px under max 198 both before and after) its width
     // unchanged; the row lays out as without it (space-between pushes the last item to the far edge)
     const capped = (k) => {
@@ -1264,7 +1264,7 @@ export function verifyScreen(input, opts = {}) {
       for (const r of rs.filter(isBoxRec)) {
         if ((r.cat === 'size' || r.cat === 'icon') && (r.prop === 'width' || r.prop === 'height')) want(id, r.prop === 'width' ? 'w' : 'h');
         else if (r.cat === 'type' && sp.t === 'T') { if (r.prop === 'lineHeight' && hug(1)) want(id, 'h'); if (r.prop === 'fontSize' && hug(0)) want(id, 'w'); }
-        else if (r.cat === 'space' && sp.lay && sp.lay.d) { // R87: a wrapping row is checked through its simulated lines
+        else if (r.cat === 'space' && sp.lay && sp.lay.d) { // R89: a wrapping row is checked through its simulated lines
           const ax = /^padding[LR]$/.test(r.prop) ? 0 : /^padding[TB]$/.test(r.prop) ? 1 : r.prop === 'gap' ? mainAx(sp) : null;
           if (ax === null) continue;
           if (hug(ax)) want(id, ax ? 'h' : 'w');

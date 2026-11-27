@@ -34,7 +34,7 @@ Requirements: Node 18+ and Playwright for the steps that open a browser (`ds`, `
 
 ## Project file
 
-`vd-project.json` (R89, `core/project-file.mjs`) holds the arguments of every step. `layout.mjs`, `ds.mjs`, `answer.mjs`, `approve.mjs`, `cmp.mjs` and `next.mjs` take `--project <file>`. A flag given on the command line overrides the file. Paths are relative to the folder of the project file. An unknown key is an error, so a typo is never ignored silently.
+`vd-project.json` (R91, `core/project-file.mjs`) holds the arguments of every step. `layout.mjs`, `ds.mjs`, `answer.mjs`, `approve.mjs`, `cmp.mjs` and `next.mjs` take `--project <file>`. A flag given on the command line overrides the file. Paths are relative to the folder of the project file. An unknown key is an error, so a typo is never ignored silently.
 
 | key | used by | meaning |
 |---|---|---|

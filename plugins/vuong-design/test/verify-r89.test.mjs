@@ -1,6 +1,6 @@
-// R87: the norm predictions for wrapping rows, SCALE children, a centre-constrained frame that resizes itself and a
+// R89: the norm predictions for wrapping rows, SCALE children, a centre-constrained frame that resizes itself and a
 // FILL item held at its max width (Planora with every question answered, 2026-11-27: 28 unexplained norm roots, 4
-// after R87 before the max-width case).
+// after R89 before the max-width case).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyScreen } from '../core/verify.mjs';
@@ -41,7 +41,7 @@ function wrapFixture(third = [0, 26]) {
   return fixture({ spec: root(90), nspec: root(100), base, norm, applied: [0, 1, 2].map((i) => rec(`n.0.${i}`, 'size', 'GRID4', 'width', 90, 100)) });
 }
 
-test('R87: a wrapping row is laid out again from the measured sizes: the chip that moves to a new line is explained', () => {
+test('R89: a wrapping row is laid out again from the measured sizes: the chip that moves to a new line is explained', () => {
   const r = verifyScreen(wrapFixture());
   assert.ok(normRoots(r).some((x) => x.id === 'n.0.2' && x.explainedBy === 'norm'), JSON.stringify(normRoots(r)));
   assert.deepEqual(open(r), [], JSON.stringify(open(r)));
@@ -50,7 +50,7 @@ test('R87: a wrapping row is laid out again from the measured sizes: the chip th
   assert.ok(open(o).some((x) => x.id === 'n.0.2' && x.normMismatch), JSON.stringify(normRoots(o)));
 });
 
-test('R87: a wrapping row the model cannot reproduce (items not where greedy lines put them) predicts nothing', () => {
+test('R89: a wrapping row the model cannot reproduce (items not where greedy lines put them) predicts nothing', () => {
   const inp = wrapFixture();
   for (const P of [inp.proxy, inp.layout]) for (const M of ['A', 'B']) P[M].boxes['n.0.1'] = [100, 0, 90, 20]; // 10 px gap, the spec says 6
   for (const M of ['A', 'B']) inp.screen.tree.kids[0].kids[1][`r${M}`] = [100, 0, 90, 20];
@@ -70,7 +70,7 @@ function scaleFixture(fillW) {
   return fixture({ spec: root(10), nspec: root(12), base, norm, applied: ['paddingL', 'paddingR'].map((p) => rec('n', 'space', 'GRID4', p, 10, 12)) });
 }
 
-test("R87: a SCALE child follows its parent's measured resize; a fill that kept its width stays open", () => {
+test("R89: a SCALE child follows its parent's measured resize; a fill that kept its width stays open", () => {
   const r = verifyScreen(scaleFixture());
   assert.deepEqual(open(r), [], JSON.stringify(normRoots(r)));
   const o = verifyScreen(scaleFixture((W) => (150 * (W - 20)) / 280 + 3));
@@ -90,7 +90,7 @@ function fabFixture(shift = 0) {
   return fixture({ spec: root(22), nspec: root(24), base, norm, applied: ['width', 'height'].map((p) => rec('n.0.0', 'icon', 'ICON_FRAME', p, 22, 24)) });
 }
 
-test('R87: a centre-constrained frame that resizes itself keeps its near edge; re-centring it is a mismatch', () => {
+test('R89: a centre-constrained frame that resizes itself keeps its near edge; re-centring it is a mismatch', () => {
   const r = verifyScreen(fabFixture());
   assert.deepEqual(open(r), [], JSON.stringify(normRoots(r)));
   const o = verifyScreen(fabFixture(-6));
@@ -110,7 +110,7 @@ function cappedFixture(btnDx = 0, colW = 198) {
     applied: [rec('n', 'space', 'GRID4', 'paddingR', 14, 16), rec('n.1', 'size', 'GRID4', 'width', 48, 52)] });
 }
 
-test('R87: a FILL item held at its max width does not fill: the last item of a space-between row sits at the far edge', () => {
+test('R89: a FILL item held at its max width does not fill: the last item of a space-between row sits at the far edge', () => {
   const r = verifyScreen(cappedFixture());
   assert.deepEqual(open(r), [], JSON.stringify(normRoots(r)));
   const o = verifyScreen(cappedFixture(6));

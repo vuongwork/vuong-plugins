@@ -120,6 +120,14 @@ node plugins/vuong-design/core/answer.mjs --out <ds output folder> [--rules <vd-
 
 Serves `design-system.html` of that folder on 127.0.0.1 and opens it. Pick an answer under each question you want to settle (or "Use proposals for the rest"), then Submit: the answers are checked against `questions.json` (an option of the question, or a non-empty free text; one bad answer saves none) and merged into the rules file the run read (or `--rules`). Every other key of the file (`notes`, `states`, earlier answers) is kept, the old file is copied to `<rules>.bak`. Re-run `ds.mjs` to apply them. Opened as a plain file, Submit downloads the merged `vd-rules.json` instead. Choices survive a reload until they are saved.
 
+### Approving findings
+
+```
+node plugins/vuong-design/core/approve.mjs --out <run output folder> --allowlist <vd-allowlist.json> [--port <n>] [--no-open]
+```
+
+Serves `report.html` of a `layout.mjs`, `ds.mjs` or `figma.mjs check` run on 127.0.0.1 and opens it. Every finding the gate can allowlist (needs-approval entries, crop fails, unexplained roots other than norm roots) has an **approve** box and an optional reason; "Tick every mismatch caused by the rules" ticks the crop fails whose size change comes from the normalisation. Submit saves each ticked finding's `allowlistDraft` entry from `report.json` with `approved: true` (an empty reason becomes "approved in report.html <date>"), also for its repeats on other screens. An entry with the same file, screen, node, width and kind is replaced; the others are kept; the old file is copied to `<allowlist>.bak`. One finding that is not open in `report.json`, or cannot be allowlisted, saves none. Re-run the check with `--allowlist` to apply them. Until then the page reads the file when it opens and shows the findings already in it as saved; "show only items left to approve" hides everything else (allowlisted, saved, repeats, findings that cannot be approved, and screens with nothing left). Opened as a plain file, the page shows the boxes but cannot save.
+
 ## Acceptance
 
 ```

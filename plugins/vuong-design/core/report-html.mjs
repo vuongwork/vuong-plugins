@@ -82,7 +82,10 @@ export async function screenView(browser, file, entry, g, summary, over = {}) {
   const idx = nodeIndex(screen.tree);
   const flagsOf = (id) => report.flags.filter((f) => f.id === id).map((f) => `${f.kind}${f.detail ? ` (${f.detail})` : ''}`);
   const items = [];
-  const add = (kind, x, proxyName, allowedBy) => {
+  // R88: whether the user may approve an open finding here (pipeline.gate: a norm root only on a real-Figma check and
+  // not from the record check or the norm layout; a crop linked to a root only with that root)
+  const approvable = (kind, x, linked) => (kind === 'root' ? x.layer !== 'norm' || (!!report.figmaReal && !x.recordCheck && !x.on) : !linked);
+  const add = (kind, x, proxyName, allowedBy, linked = false) => {
     const i = x.width === 'A' ? 0 : 1, n = idx.get(x.id);
     const src = n ? (i ? n.rB : n.rA) : null;
     // plan 3 Task 7: over = { [kind]: entry key } shows that kind on another proxy (figma.mjs: the Figma readback)
@@ -92,7 +95,7 @@ export async function screenView(browser, file, entry, g, summary, over = {}) {
     const isFig = !!entry.figma && entry[pn] === entry.figma;
     items.push({
       kind, id: x.id, width: x.width, node: describeNode(n), proxy: isFig ? (over.label || 'Figma') : pn === 'layout' ? 'layout proxy' : pn === 'norm' ? 'normalised proxy' : 'modelled proxy',
-      src, box, x, allowedBy, flags: flagsOf(x.id),
+      src, box, x, allowedBy, flags: flagsOf(x.id), approvable: !allowedBy && approvable(kind, x, linked),
       job: (src || box) && P && P.png ? { win: union(src, box), i, P } : null, // no image: the Figma screenshot is at A only
     });
   };
@@ -104,7 +107,7 @@ export async function screenView(browser, file, entry, g, summary, over = {}) {
   for (const c of g.open.crops) add('crop', c, 'layout');
   for (const c of g.allowed.crops) add('crop', c, 'layout', c.allowedBy);
   // M1: crop fails on an unexplained size root (R44) are listed too; they pass or fail with that root
-  for (const c of g.open.cropsLinked || []) add('crop', c, 'layout');
+  for (const c of g.open.cropsLinked || []) add('crop', c, 'layout', undefined, true);
   for (const c of g.allowed.cropsLinked || []) add('crop', c, 'layout', `with the layout error on ${c.root}`);
 
   const jobs = [];
@@ -216,10 +219,22 @@ function groupRepeats(screens) {
   return { refs, also };
 }
 
+// R88: the approve box of an open finding (report.html served by approve.mjs: Submit writes it into the allowlist)
+const approveData = (v, it) => `data-file="${esc(v.file)}" data-screen="${esc(v.summary.screen)}" data-akind="${esc(it.kind)}" data-node="${esc(it.id)}" data-width="${esc(it.width)}"`;
+function approveBox(v, it) {
+  if (it.approvable) {
+    return `<div class="approve" ${approveData(v, it)} data-anchor="${itemAnchor(v, it)}"${it.kind === 'crop' && it.x.sizeExplainedBy ? ` data-explained="${esc(it.x.sizeExplainedBy)}"` : ''}>` +
+      '<label><input type="checkbox" class="ap"> approve</label> <input type="text" class="reason" maxlength="500" placeholder="reason (optional): why this difference is fine"></div>';
+  }
+  if (!it.allowedBy && it.kind === 'root') return '<div class="approve none">Cannot be approved: a layout error the plugin must explain (plugin bug).</div>';
+  if (!it.allowedBy && it.x.root) return `<div class="approve none">Approved together with the layout error on <code>${esc(it.x.root)}</code>.</div>`;
+  return '';
+}
+
 function renderItem(v, it, g) {
   const ref = g.refs.get(it);
   if (ref) {
-    return `<div class="item repeat" data-of="${itemAnchor(ref.v, ref.it)}"><code>${esc(it.id)}</code> ${esc(shortNode(it.node))} ${widthLabel(v, it.width)}: ` +
+    return `<div class="item repeat" data-of="${itemAnchor(ref.v, ref.it)}"${it.approvable ? ` ${approveData(v, it)}` : ''}><code>${esc(it.id)}</code> ${esc(shortNode(it.node))} ${widthLabel(v, it.width)}: ` +
       `same finding as on <a href="#${itemAnchor(ref.v, ref.it)}">${esc(screenName(ref.v))}</a> (repeated across screens).</div>`;
   }
   const others = g.also.get(it) || [];
@@ -231,7 +246,7 @@ function renderItem(v, it, g) {
     `<div class="nums">${itemNumbers(v, it)}</div>` +
     (others.length ? `<div class="repeat-note">Repeated across screens: the same finding is also on ${others.map((o) => `<a href="#${anchor(o)}">${esc(screenName(o))}</a>`).join(', ')}.</div>` : '') +
     (it.flags.length ? `<div class="flags">flags: ${esc(it.flags.join('; '))}</div>` : '') +
-    (it.allowedBy ? `<div class="ok">allowlisted: ${esc(it.allowedBy)}</div>` : '') + imgs + '</div>';
+    (it.allowedBy ? `<div class="ok">allowlisted: ${esc(it.allowedBy)}</div>` : '') + approveBox(v, it) + imgs + '</div>';
 }
 
 // one plain sentence on what a screen needs (counts from the summary: the gate's open findings)
@@ -363,6 +378,7 @@ const HOWTO = `<details class="howto"><summary><strong>How to read this report</
 <li><b>Normalisation</b>: before measuring, fonts are swapped for the ones Figma uses and 'normal' line heights are written as px, so differences are not caused by fonts.</li>
 <li><b>Mutations</b>: deliberately planted errors; each must show caught = yes. Skipped means the mutation does not apply to that screen.</li>
 <li>An item with a <b>yellow border</b> is allowlisted: approved earlier, so it no longer fails the screen.</li>
+<li><b>How to approve on this page</b>: open it with <code>node core/approve.mjs --out &lt;this folder&gt; --allowlist &lt;vd-allowlist.json&gt;</code>, tick <b>approve</b> on the items that are fine (a reason is optional), then press <b>Submit</b>. The entries go into the allowlist file, and the old file is kept as <code>.bak</code>. Run the check again with <code>--allowlist</code> to see the screens pass. A finding repeated on other screens is approved there too.</li>
 </ul></details>`;
 
 const CSS = `
@@ -385,7 +401,21 @@ tr.fail td:last-child{color:var(--fail);font-weight:600}tr.pass td:last-child{co
 figure{margin:0;max-width:100%}figure img{display:block;max-width:100%;height:auto;background:#fff;border:1px solid var(--line);image-rendering:pixelated}
 figcaption{font-size:12px;color:var(--muted)}
 details>summary{cursor:pointer;margin-top:10px}
+.approve{margin:6px 0;font-size:13px}.approve label{font-weight:600;cursor:pointer}.approve input.reason{width:min(420px,100%);font:inherit;padding:2px 4px}
+.approve.none{color:var(--muted)}.item.picked{outline:2px solid var(--pass);outline-offset:2px;border-radius:6px}.item.saved{border:2px solid var(--allowline);border-radius:6px;padding:8px}
+#approvebar{position:sticky;bottom:0;background:var(--card);border-top:1px solid var(--line);padding:8px 12px;margin:16px -16px -16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+body.only-open .item:not(.todo),body.only-open details.nothing-left,body.only-open section.screen.nothing-left,body.only-open .screen>p.muted,body.only-open .screen>h3,body.only-open .screen>table,body.only-open .screen>.pair,body.only-open .screen>ul{display:none}.approve .saved-note{color:var(--allow)}#approvebar label.only{cursor:pointer}
+#approvebar button{font:inherit;padding:4px 10px;cursor:pointer}#ap-msg{flex-basis:100%;font-size:13px}#ap-msg.err{color:var(--fail)}
 .howto{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:4px 12px;margin:10px 0}.howto ul{margin:6px 0;padding-left:20px}
+`;
+
+// R88: the approve bar (shown when some open finding can be approved). Served by approve.mjs, Submit POSTs
+// { approve: [{ file, screen, kind, node, width, reason }] } to ./approve; ticks and reasons survive a reload until saved.
+const APPROVE_JS = "(function(){\nvar bar=document.getElementById('approvebar');if(!bar)return;\nvar served=/^https?:$/.test(location.protocol),KEY='vd-approve:'+location.pathname,VKEY='vd-approve-view:'+location.pathname,msg=document.getElementById('ap-msg');\nvar boxes=[].slice.call(document.querySelectorAll('.approve[data-anchor]'));\nvar only=document.getElementById('ap-only');\nfunction say(t,err){msg.textContent=t;msg.className=err?'err':'';}\nfunction load(){try{return JSON.parse(localStorage.getItem(KEY)||'{}');}catch(e){return {};}}\nfunction save(){var o={};boxes.forEach(function(b){var c=b.querySelector('.ap'),r=b.querySelector('.reason');if(!c.disabled&&(c.checked||r.value))o[b.dataset.anchor]={c:c.checked,r:r.value};});try{localStorage.setItem(KEY,JSON.stringify(o));}catch(e){}}\nfunction entry(el,reason){return {file:el.dataset.file,screen:el.dataset.screen,kind:el.dataset.akind,node:el.dataset.node,width:el.dataset.width,reason:reason};}\nfunction keyOf(e){return [e.file,e.screen,e.kind,e.node,e.width].join('|');}\nfunction picked(){var out=[];boxes.forEach(function(b){var c=b.querySelector('.ap');if(!c.checked||c.disabled)return;var r=b.querySelector('.reason').value.trim();out.push(entry(b,r));\n[].forEach.call(document.querySelectorAll('.item.repeat[data-akind][data-of=\"'+b.dataset.anchor+'\"]'),function(x){out.push(entry(x,r));});});return out;}\nfunction markSaved(b,note){var c=b.querySelector('.ap');c.checked=false;c.disabled=true;b.querySelector('.reason').disabled=true;b.parentNode.classList.add('saved');\nif(note&&!b.querySelector('.saved-note')){var s=document.createElement('span');s.className='saved-note';s.textContent=' saved in the allowlist (applies on the next run with --allowlist)';b.appendChild(s);}}\n// items with nothing left to do: allowlisted, saved, repeats, or no approve box (cannot be approved here)\nfunction filter(){var on=only.checked;document.body.classList.toggle('only-open',on);\n[].forEach.call(document.querySelectorAll('section.screen'),function(sec){var left=0;\n[].forEach.call(sec.querySelectorAll('details'),function(d){var its=d.querySelectorAll('.item');if(!its.length)return;var n=0;\n[].forEach.call(its,function(it){var box=it.querySelector('.approve[data-anchor]');var todo=!!box&&!box.querySelector('.ap').disabled;it.classList.toggle('todo',todo);if(todo)n++;});\nd.classList.toggle('nothing-left',!n);left+=n;});\nsec.classList.toggle('nothing-left',!left);});\ntry{localStorage.setItem(VKEY,on?'1':'0');}catch(e){}}\nfunction update(){var n=0;boxes.forEach(function(b){var c=b.querySelector('.ap'),on=c.checked&&!c.disabled;if(on)n++;b.parentNode.classList.toggle('picked',on);});\nvar open=boxes.filter(function(b){return !b.querySelector('.ap').disabled;}).length,all=picked().length;\ndocument.getElementById('ap-count').textContent=n+' of '+open+' ticked'+(all>n?' ('+all+' entries with the repeats on other screens)':'')+(open<boxes.length?'; '+(boxes.length-open)+' saved':'');save();filter();}\nvar st=load();boxes.forEach(function(b){var s=st[b.dataset.anchor];if(s){b.querySelector('.ap').checked=!!s.c;b.querySelector('.reason').value=s.r||'';}\nb.querySelector('.ap').addEventListener('change',update);b.querySelector('.reason').addEventListener('input',save);});\ntry{only.checked=localStorage.getItem(VKEY)==='1';}catch(e){}\nonly.addEventListener('change',filter);\ndocument.getElementById('ap-explained').addEventListener('click',function(){boxes.forEach(function(b){var c=b.querySelector('.ap');if(b.dataset.explained&&!c.disabled)c.checked=true;});update();});\ndocument.getElementById('ap-clear').addEventListener('click',function(){boxes.forEach(function(b){b.querySelector('.ap').checked=false;});update();});\ndocument.getElementById('ap-submit').addEventListener('click',function(){var list=picked();if(!list.length){say('Tick at least one item first.',1);return;}\nif(!served){say('This page was opened as a file, so it cannot save. Open it with: node core/approve.mjs --out <this folder> --allowlist <vd-allowlist.json>',1);return;}\nsay('Saving '+list.length+' entries...');\nfetch('./approve',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({approve:list})}).then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});}).then(function(x){\nif(!x.ok){say('Not saved: '+(x.j.error||'error'),1);return;}\nboxes.forEach(function(b){var c=b.querySelector('.ap');if(c.checked&&!c.disabled)markSaved(b,true);});\ntry{localStorage.removeItem(KEY);}catch(e){}update();\nsay('Saved '+x.j.saved+' entries into '+x.j.path+' ('+x.j.total+' in the file; backup '+x.j.backup+'). Run the check again with --allowlist '+x.j.path+' to update the report.');},function(e){say('Not saved: '+e.message,1);});});\nupdate();\n// served: entries already in the allowlist file (submitted before the report was made again) show as saved\nif(served)fetch('./allowlist').then(function(r){return r.ok?r.json():null;}).then(function(j){if(!j||!j.entries)return;var have={};j.entries.forEach(function(e){have[keyOf(e)]=1;});\nboxes.forEach(function(b){if(have[keyOf(entry(b))])markSaved(b,true);});update();},function(){});\n})();";
+const APPROVE_BAR = `<div id="approvebar"><strong>Approve</strong> <span id="ap-count"></span>
+<button type="button" id="ap-explained" title="image mismatches whose size change comes from the normalisation rules">Tick every mismatch caused by the rules</button>
+<label class="only"><input type="checkbox" id="ap-only"> show only items left to approve</label> <button type="button" id="ap-clear">Clear ticks</button> <button type="button" id="ap-submit"><b>Submit</b></button><span id="ap-msg"></span></div>
+<script>${APPROVE_JS.replace(/<\//g, '<\\/')}</script>
 `;
 
 // components (figma.mjs check with components, plan 3b Task 7): a table of the component variants after the screens'
@@ -421,6 +451,6 @@ ${HOWTO}
 <div class="wrap"><table><tr><th>screen</th><th>nodes checked</th><th>unexplained layout errors (plugin bug)</th><th>items needing approval (largest model delta, px)</th><th>image mismatches (crop fails)</th><th>data findings (by kind)</th><th>flags (by kind)</th><th>Figma spec size (KB)</th><th>spec over 50 KB</th><th>allowlisted items</th><th>result</th></tr>
 ${rows}</table></div>
 ${components ? `${renderComponents(components)}\n` : ''}${screens.map((v) => renderScreen(v, groups)).join('\n')}
-</body></html>
+${screens.some((v) => v.items.some((i) => i.approvable)) ? APPROVE_BAR : ''}</body></html>
 `;
 }

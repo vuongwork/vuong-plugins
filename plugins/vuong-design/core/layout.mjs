@@ -165,7 +165,8 @@ export async function main(argv, deps = {}, ext = null) {
       const res = await runFile(browser, j.path, {
         root: j.root, widen: j.widen, nameOf: j.nameOf, widenBy: o.widenBy, viewport: j.viewport, webFonts: o.webFonts,
         fontMap: deps.fontMap, verify: o.verify, mutate: o.mutate, mutateSample: o.mutateSample,
-        onScreen: (e) => log(`  ${e.report.id}: ${e.report.pass ? 'pass' : 'fail'} (${((Date.now() - t0) / 1000).toFixed(1)} s)`),
+        // R88: the progress line gives the gate after the allowlist, as the summary does (report.pass is before it)
+        onScreen: (e) => log(`  ${e.report.id}: ${gate(e.report, allowlist, { file: j.file, screen: e.report.id, tree: e.screen.tree }).pass ? 'pass' : 'fail'} (${((Date.now() - t0) / 1000).toFixed(1)} s)`),
         ...(ext ? { normalize: (items) => ext.normalize(j, items, state) } : {}),
       });
       results.push({ job: j, res });

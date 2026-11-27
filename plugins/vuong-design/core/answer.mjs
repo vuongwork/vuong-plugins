@@ -124,7 +124,7 @@ export function startAnswerServer({ dir, rulesPath, port = 0, host = '127.0.0.1'
   });
 }
 
-function openBrowser(url) {
+export function openBrowser(url) {
   const [cmd, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
   try { spawn(cmd, args, { stdio: 'ignore', detached: true, windowsVerbatimArguments: process.platform === 'win32' }).unref(); } catch { /* the URL is printed anyway */ }
 }

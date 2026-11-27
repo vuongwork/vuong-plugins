@@ -156,8 +156,9 @@ export const DS_EXT = {
     const unexplained = normScreens.reduce((x, e) => x + e.report.norm.unexplained.length, 0);
     state.summary = [...(state.summary || []), { file: job.file, auto: n('auto'), answered: n('answered'), ask: n('ask'), open, unexplained }];
   },
-  finish({ state, log }) {
+  finish({ state, log, pass }) {
     for (const s of state.summary || []) log(`${s.file}: ${s.auto} auto, ${s.answered} answered, ${s.ask} asked; ${s.unexplained} unexplained norm root(s)`);
+    if (pass === false) log(`approve findings in the browser: node ${join(dirname(fileURLToPath(import.meta.url)), 'approve.mjs')} --out <output folder> --allowlist <vd-allowlist.json>`);
     if (state.open) log(`answer them in the browser: node ${join(dirname(fileURLToPath(import.meta.url)), 'answer.mjs')} --out <output folder>${state.rulesPath ? '' : ' --rules <vd-rules.json>'}`);
     log(`${state.open} open question${state.open === 1 ? '' : 's'}${state.rulesPath ? ` (rules: ${state.rulesPath})` : ' (no rules file)'}; draft answers: vd-rules.draft.json in the output folder`);
   },

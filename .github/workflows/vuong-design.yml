@@ -1,4 +1,6 @@
-# vuong-design tests on Windows, macOS and Linux. The acceptance corpus is not in the repo, so acceptance.test.mjs skips.
+# vuong-design compatibility tests on Windows, macOS and Linux: paths and the project file, the Figma plugin install and
+# bridge, the local answer / approve servers, the session log, and finding and launching Chromium. The full suite runs
+# locally (node --test test/*.test.mjs): its pixel checks depend on each system's font rendering.
 name: vuong-design
 on:
   push:
@@ -30,5 +32,5 @@ jobs:
           npm i --no-audit --no-fund playwright-core@1.55.0 pixelmatch@5.3.0 pngjs@7.0.0
           if [ "$RUNNER_OS" = "Linux" ]; then npx playwright-core install --with-deps chromium; else npx playwright-core install chromium; fi
           echo "VD_PLAYWRIGHT_FROM=$DEPS" >> "$GITHUB_ENV"
-      - name: Tests
-        run: node --test test/*.test.mjs
+      - name: Compatibility tests
+        run: node --test test/project.test.mjs test/figma-bridge.test.mjs test/answer.test.mjs test/approve.test.mjs test/diagnose.test.mjs test/runs.test.mjs test/browser.test.mjs

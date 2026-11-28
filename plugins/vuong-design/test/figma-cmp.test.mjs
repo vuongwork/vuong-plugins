@@ -11,6 +11,7 @@ import { loaderCode, runtimeInstallCode, runtimeCmpInstallCode, CMP_PATCHES } fr
 import { ordOf, decode } from '../core/figma-check.mjs';
 import { cmpCheckOne } from '../core/figma-cmp-check.mjs';
 import { makeFakeFigma, DEFAULT_FONTS } from './fake-figma.mjs';
+import { varsPayload } from '../core/figma-vars.mjs';
 
 const RUNTIME = readFileSync(new URL('../core/figma-runtime.js', import.meta.url), 'utf8');
 const RUNTIME_CMP = readFileSync(new URL('../core/figma-runtime-cmp.js', import.meta.url), 'utf8');
@@ -231,6 +232,55 @@ test('R92: the instance swap of a component rebuild is not a hand edit: the scre
   for (const b of s.batches) sent.push(await run(b.code, fig));
   const edited = sent.flatMap((r) => r.screens.filter((x) => x.edited).map((x) => x.screen));
   assert.deepEqual(edited, ['s1'], 'only the screen edited by hand is kept');
+});
+
+// R99: a variable value change reflows hug frames on real Figma (sizes and positions of unbound nodes move). The fake
+// does not lay out, so the reflow is played by hand inside setValueForMode: one child of every screen and variant moves.
+test('R99: a variable value change sent by vars is not a hand edit: every unedited screen and variant is rebuilt; a screen edited before it stays edited', async () => {
+  const dim = (value) => ({ $type: 'dimension', $value: { value, unit: 'px' } });
+  const toks = (v) => ({ primitive: { space: { gap: dim(v) } } });
+  const sendVars = async (fig, v) => { const out = []; for (const c of varsPayload(toks(v))) out.push(await run(c, fig)); return out; };
+  const reflow = (fig) => {
+    for (const p of fig.root.children) for (const c of p.children) for (const n of c.type === 'COMPONENT_SET' ? c.children : [c]) {
+      const k = n.getSharedPluginData('vuongdesign', 'sig') && (n.children || [])[0];
+      if (k) k.x += 3;
+    }
+  };
+  const scenario = async (resign) => {
+    const s = setup(), fig = makeFakeFigma();
+    await sendVars(fig, 8);
+    await build(s, fig);
+    const scr = (name) => page(fig, 'Screens').children.find((n) => n.name === name);
+    scr('s2').fills = [{ type: 'SOLID', color: { r: 0.1, g: 0.2, b: 0.3 }, opacity: 1 }]; // the hand edit
+    let vr = null;
+    if (resign) {
+      const v = (await fig.variables.getLocalVariablesAsync())[0], set = v.setValueForMode;
+      v.setValueForMode = function (...a) { reflow(fig); return set.apply(this, a); };
+      vr = await sendVars(fig, 12);
+    } else reflow(fig); // the same reflow without the vars batch: nobody signs again
+    const cm = []; for (const b of s.cmpBatches) cm.push(await run(b.code, fig));
+    const sc = []; for (const b of s.batches) sc.push(await run(b.code, fig));
+    return { vr, cmpEdited: cm.flatMap((r) => r.screens.filter((x) => x.edited).map((x) => x.screen)), edited: sc.flatMap((r) => r.screens.filter((x) => x.edited).map((x) => x.screen)) };
+  };
+  const bad = await scenario(false);
+  assert.deepEqual(bad.edited, ['s1', 's2'], 'without signing again, the reflow reads as a hand edit');
+  assert.ok(bad.cmpEdited.length > 0);
+  const ok = await scenario(true);
+  assert.equal(ok.vr[0].variables.updated, 1);
+  assert.deepEqual(ok.vr[0].errors, []);
+  assert.ok(ok.vr[0].signed.again > 0 && ok.vr[0].signed.edited === 1, JSON.stringify(ok.vr[0].signed));
+  assert.deepEqual(ok.edited, ['s2'], 'only the screen edited by hand is kept');
+  assert.deepEqual(ok.cmpEdited, []);
+});
+
+test('R99: a vars batch that changes no value runs no signature pass and adds no result field', async () => {
+  const s = setup(), fig = makeFakeFigma();
+  const codes = varsPayload({ primitive: { space: { gap: { $type: 'dimension', $value: { value: 8, unit: 'px' } } } } });
+  await run(codes[0], fig);
+  await build(s, fig);
+  const r = await run(codes[0], fig);
+  assert.equal(r.signed, undefined);
+  assert.equal(r.variables.unchanged, 1);
 });
 
 // ---- plan 3b Task 7: edit guard, several component batches ----

@@ -214,9 +214,9 @@ test('rerun: nothing is added, nothing is updated; a changed value updates in pl
 });
 
 test('batches: a small limit splits the data, later batches find earlier variables by name', async () => {
-  const codes = varsPayload(small(), { limit: 7300 });
+  const codes = varsPayload(small(), { limit: 9000 });
   assert.ok(codes.length > 1, 'split into ' + codes.length);
-  assert.ok(codes.every((c) => bytes(c) <= 7300));
+  assert.ok(codes.every((c) => bytes(c) <= 9000));
   const f = makeFakeFigma({ fonts });
   const rs = await runAll(codes, f);
   assert.deepEqual(rs.flatMap((r) => r.errors), []);

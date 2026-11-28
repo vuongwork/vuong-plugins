@@ -463,7 +463,7 @@ async function ingest(argv, log) {
     b.result = file;
     if (res.errors.length) b.errors = res.errors; else { delete b.errors; delete b.lastFailed; }
     b.fontMissing = res.fontMissing.length;
-    log(`${key}: ${b.status}${res.errors.length ? ` (${res.errors.length} errors: ${res.errors.slice(0, 3).map((x) => [x.kind, x.name].filter((v) => v != null).join(' ') + (x.kind != null || x.name != null ? ': ' : '') + x.msg).join('; ')})` : ''}`);
+    log(`${key}: ${b.status}${res.errors.length ? ` (${res.errors.length} errors: ${res.errors.slice(0, 3).map((x) => [x.kind, x.name].filter((v) => v != null).join(' ') + (x.kind != null || x.name != null ? ': ' : '') + x.msg).join('; ')})` : ''}${res.signed ? `; values changed: ${res.signed.again} of ${res.signed.roots} screens / variants signed again (the reflow is not a hand edit), ${res.signed.edited} edited by hand` : ''}`);
   } else {
     let failed = 0;
     for (const s of res.screens) {

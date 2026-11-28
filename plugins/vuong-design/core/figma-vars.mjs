@@ -186,6 +186,32 @@ const R = { batch: D.n, collections: cnt(), variables: cnt(), textStyles: cnt(),
   created: { collections: [], variables: [], textStyles: [], effectStyles: [] }, fontMissing: [], errors: [] };
 if (D.skipped) R.skipped = D.skipped;
 const near = (a, b) => Math.abs(a - b) <= EPS;
+// R99: a variable or text style value change reflows the hug frames and texts that use it (sizes and positions move):
+// that is this batch's change, not a hand edit. Before the first such change, the roots with a signature (screens,
+// component variants) are checked with the sig of the installed screen runtime; after the changes the unedited ones get
+// their signature again, an edited one keeps its old signature (still edited).
+const NS = 'vuongdesign', AK = 'const screen=async sc=>{';
+let PRE = null;
+const pre = async () => {
+  if (PRE) return;
+  PRE = { ok: [], n: 0 };
+  const rt = F.root.getSharedPluginData(NS, 'rt');
+  if (!rt || !rt.includes(AK)) return;
+  try {
+    await new (Object.getPrototypeOf(async function () {}).constructor)('D', 'figma', rt.replace(AK, 'if(D.rs)return D.rs(sig);' + AK))(
+      { page: F.currentPage.name, screens: [], rs: (s) => { PRE.sig = s; } }, F);
+  } catch (x) { err('signature', 'runtime', x); return; }
+  if (!PRE.sig) return;
+  for (const p of F.root.children) {
+    await p.loadAsync();
+    for (const c of p.children) for (const n of c.type === 'COMPONENT_SET' ? c.children : [c]) {
+      const g = n.getSharedPluginData(NS, 'sig');
+      if (!g) continue;
+      PRE.n++;
+      if (g === PRE.sig(n) || g === PRE.sig(n, 1)) PRE.ok.push(n);
+    }
+  }
+};
 const err = (kind, name, x) => R.errors.push({ kind, name, msg: String((x && x.message) || x).slice(0, 200) });
 const tally = (k, name, made, changed, o) => {
   if (made) { R[k].created++; R.created[k].push({ name, id: o.id }); } else if (changed) R[k].updated++; else R[k].unchanged++;
@@ -221,7 +247,7 @@ for (const [name, ci, ty, val, si, desc] of D.v) {
     let v = VK.get(c.id + '|' + name), made = false, changed = false;
     if (!v) { v = F.variables.createVariable(name, c, rt); VK.set(c.id + '|' + name, v); if (!VN.has(name)) VN.set(name, v); made = true; }
     else if (v.resolvedType !== rt) throw new Error('exists as ' + v.resolvedType + ', needs ' + rt);
-    if (made || !same(v.valuesByMode[mode], want)) { v.setValueForMode(mode, want); changed = true; }
+    if (made || !same(v.valuesByMode[mode], want)) { if (!made) await pre(); v.setValueForMode(mode, want); changed = true; }
     if (made || JSON.stringify(v.scopes) !== JSON.stringify(scopes)) { v.scopes = scopes; changed = true; }
     if (made || v.description !== desc) { v.description = desc; changed = true; }
     tally('variables', name, made, changed, v);
@@ -252,12 +278,15 @@ for (const [name, ff, fw, it, fs, lh, ls, tc, desc, td] of D.t) {
     else { try { await load(s.fontName); } catch (x) {} }
     const lhv = lh ? { unit: lh[0] === 'p' ? 'PIXELS' : 'PERCENT', value: lh[1] } : { unit: 'AUTO' };
     const lsv = { unit: 'PIXELS', value: ls }, tcv = tc || 'ORIGINAL', tdv = td || 'NONE';
-    if (made || s.fontName.family !== face.family || s.fontName.style !== face.style) { s.fontName = face; changed = true; }
-    if (made || s.fontSize !== fs) { s.fontSize = fs; changed = true; }
-    if (made || s.lineHeight.unit !== lhv.unit || (lhv.unit !== 'AUTO' && !near(s.lineHeight.value, lhv.value))) { s.lineHeight = lhv; changed = true; }
-    if (made || s.letterSpacing.unit !== 'PIXELS' || !near(s.letterSpacing.value, ls)) { s.letterSpacing = lsv; changed = true; }
-    if (made || s.textCase !== tcv) { s.textCase = tcv; changed = true; }
-    if (made || s.textDecoration !== tdv) { s.textDecoration = tdv; changed = true; }
+    const ops = [
+      [() => s.fontName.family !== face.family || s.fontName.style !== face.style, () => { s.fontName = face; }],
+      [() => s.fontSize !== fs, () => { s.fontSize = fs; }],
+      [() => s.lineHeight.unit !== lhv.unit || (lhv.unit !== 'AUTO' && !near(s.lineHeight.value, lhv.value)), () => { s.lineHeight = lhv; }],
+      [() => s.letterSpacing.unit !== 'PIXELS' || !near(s.letterSpacing.value, ls), () => { s.letterSpacing = lsv; }],
+      [() => s.textCase !== tcv, () => { s.textCase = tcv; }],
+      [() => s.textDecoration !== tdv, () => { s.textDecoration = tdv; }],
+    ];
+    for (const [c, f] of ops) if (made || c()) { if (!made) await pre(); f(); changed = true; }
     if (made || s.description !== desc) { s.description = desc; changed = true; }
     tally('textStyles', name, made, changed, s);
   } catch (x) { err('textStyle', name, x); }
@@ -275,6 +304,11 @@ for (const [name, fx, desc] of D.e) {
     if (made || s.description !== desc) { s.description = desc; changed = true; }
     tally('effectStyles', name, made, changed, s);
   } catch (x) { err('effectStyle', name, x); }
+}
+if (PRE && PRE.sig) {
+  let k = 0;
+  for (const n of PRE.ok) if (!n.removed) { const s = PRE.sig(n); if (s !== n.getSharedPluginData(NS, 'sig')) { n.setSharedPluginData(NS, 'sig', s); k++; } }
+  R.signed = { roots: PRE.n, edited: PRE.n - PRE.ok.length, again: k };
 }
 return R;
 `;

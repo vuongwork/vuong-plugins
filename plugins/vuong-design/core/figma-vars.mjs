@@ -1,6 +1,8 @@
 // Figma variables and styles from tokens.json (plan 3, Task 6). Pure and deterministic: same tokens -> same bytes.
 //
-// varsPayload(tokens, { limit = PAYLOAD_LIMIT, collections = { primitive: 'Primitive', role: 'Role' }, variants = [] }) -> string[]
+// varsPayload(tokens, { limit = PAYLOAD_LIMIT, collections = { primitive: 'Primitive', role: 'Role' }, variants = [], pages = ['Screens', 'Components'] }) -> string[]
+//   pages (R99): the pages whose roots are signed again after a value change (only these are loaded: a large page can
+//   take Figma longer than its 10 s limit)
 //   One use_figma code string per batch (UTF-8 bytes <= limit; one self-contained call each: aliases to Primitive
 //   variables made in an earlier batch are found by name). Run them in order. Each returns BatchResult (below).
 // varsPlan(tokens, variants = []) -> { vars, textStyles, effectStyles, skipped }   the data of the payload, for tests and tools.
@@ -197,20 +199,22 @@ const pre = async () => {
   PRE = { ok: [], n: 0 };
   const rt = F.root.getSharedPluginData(NS, 'rt');
   if (!rt || !rt.includes(AK)) return;
+  // a failure here is a warning: the values still change (the screens may then read as edited, as before R99)
   try {
     await new (Object.getPrototypeOf(async function () {}).constructor)('D', 'figma', rt.replace(AK, 'if(D.rs)return D.rs(sig);' + AK))(
       { page: F.currentPage.name, screens: [], rs: (s) => { PRE.sig = s; } }, F);
-  } catch (x) { err('signature', 'runtime', x); return; }
-  if (!PRE.sig) return;
-  for (const p of F.root.children) {
-    await p.loadAsync();
-    for (const c of p.children) for (const n of c.type === 'COMPONENT_SET' ? c.children : [c]) {
-      const g = n.getSharedPluginData(NS, 'sig');
-      if (!g) continue;
-      PRE.n++;
-      if (g === PRE.sig(n) || g === PRE.sig(n, 1)) PRE.ok.push(n);
+    if (!PRE.sig) return;
+    for (const p of F.root.children) {
+      if (!(D.pg || []).includes(p.name)) continue;
+      await p.loadAsync();
+      for (const c of p.children) for (const n of c.type === 'COMPONENT_SET' ? c.children : [c]) {
+        const g = n.getSharedPluginData(NS, 'sig');
+        if (!g) continue;
+        PRE.n++;
+        if (g === PRE.sig(n) || g === PRE.sig(n, 1)) PRE.ok.push(n);
+      }
     }
-  }
+  } catch (x) { PRE.sig = null; R.signWarn = String((x && x.message) || x).slice(0, 200); }
 };
 const err = (kind, name, x) => R.errors.push({ kind, name, msg: String((x && x.message) || x).slice(0, 200) });
 const tally = (k, name, made, changed, o) => {
@@ -313,7 +317,7 @@ if (PRE && PRE.sig) {
 return R;
 `;
 
-export function varsPayload(tokens, { limit = PAYLOAD_LIMIT, collections = {}, variants = [] } = {}) {
+export function varsPayload(tokens, { limit = PAYLOAD_LIMIT, collections = {}, variants = [], pages = ['Screens', 'Components'] } = {}) {
   const plan = varsPlan(tokens, variants);
   const cn = [collections.primitive || 'Primitive', collections.role || 'Role', ...(plan.vars.some((v) => v.coll === 2) ? [collections.state || 'State'] : [])];
   const items = [
@@ -325,7 +329,7 @@ export function varsPayload(tokens, { limit = PAYLOAD_LIMIT, collections = {}, v
   const bytes = (s) => Buffer.byteLength(s, 'utf8');
   const make = (n, group, skipped) => {
     const by = (k) => group.filter((g) => g[0] === k).map((g) => g[1]).join(',');
-    const D = `{"n":${n},"cn":${JSON.stringify(cn)},"v":[${by('v')}],"t":[${by('t')}],"e":[${by('e')}]${skipped.length ? ',"skipped":' + JSON.stringify(skipped) : ''}}`;
+    const D = `{"n":${n},"cn":${JSON.stringify(cn)},"pg":${JSON.stringify(pages)},"v":[${by('v')}],"t":[${by('t')}],"e":[${by('e')}]${skipped.length ? ',"skipped":' + JSON.stringify(skipped) : ''}}`;
     return pre + D + post;
   };
   const out = [];

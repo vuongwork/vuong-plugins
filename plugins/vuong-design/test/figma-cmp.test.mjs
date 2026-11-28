@@ -273,6 +273,22 @@ test('R99: a variable value change sent by vars is not a hand edit: every unedit
   assert.deepEqual(ok.cmpEdited, []);
 });
 
+test('R99: only the screen and component pages are loaded; a signature pass that fails is a warning, the values still change', async () => {
+  const tok = (v) => ({ primitive: { space: { gap: { $type: 'dimension', $value: { value: v, unit: 'px' } } } } });
+  const s = setup(), fig = makeFakeFigma();
+  await run(varsPayload(tok(8))[0], fig);
+  await build(s, fig);
+  const big = fig.createPage(); big.name = 'Big';
+  big.loadAsync = async () => { throw new Error('Unable to establish connection to Figma after 10 seconds'); };
+  let r = await run(varsPayload(tok(12))[0], fig);
+  assert.deepEqual([r.errors, r.signWarn, r.variables.updated], [[], undefined, 1]);
+  assert.ok(r.signed.roots > 0);
+  page(fig, 'Screens').loadAsync = big.loadAsync;
+  r = await run(varsPayload(tok(16))[0], fig);
+  assert.deepEqual([r.errors, r.variables.updated, r.signed], [[], 1, undefined]);
+  assert.match(r.signWarn, /10 seconds/);
+});
+
 test('R99: a vars batch that changes no value runs no signature pass and adds no result field', async () => {
   const s = setup(), fig = makeFakeFigma();
   const codes = varsPayload({ primitive: { space: { gap: { $type: 'dimension', $value: { value: 8, unit: 'px' } } } } });

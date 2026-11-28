@@ -30,6 +30,7 @@ import { componentStates, statesDraft, stateRules, stateCss, STATE_CSS_MARK } fr
 import { readRules } from './rules-file.mjs';
 import { renderComponents, componentsSummary } from './components-report.mjs';
 import { defaultFontMap } from './font-map.mjs';
+import { timed } from './runs.mjs';
 
 export const CMP_USAGE = 'usage: node core/cmp.mjs --ds <ds output dir> [--components <vd-components.json>] [--rules <vd-rules.json>]\n       node core/cmp.mjs --project <vd-project.json> [options]';
 class UsageError extends Error {}
@@ -123,5 +124,6 @@ export async function main(argv, deps = {}) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main(process.argv.slice(2)).then((code) => process.exit(code), (e) => { process.stderr.write(`error: ${e.stack || e.message}\n`); process.exit(2); });
+  const argv = process.argv.slice(2);
+  timed('cmp', argv, () => main(argv)).then((code) => process.exit(code), (e) => { process.stderr.write(`error: ${e.stack || e.message}\n`); process.exit(2); });
 }

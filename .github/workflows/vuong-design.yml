@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-24.04, macos-latest, windows-latest] # ubuntu-latest is 26.04, where Playwright 1.55 has no Chromium
     runs-on: ${{ matrix.os }}
     defaults:
       run:

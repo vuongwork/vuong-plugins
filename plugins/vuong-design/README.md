@@ -81,6 +81,7 @@ Flow for new designs: `skills/spec-to-html` (spec to HTML, lint loop of at most 
 ```
 node plugins/vuong-design/core/diagnose.mjs --out <layout or ds output dir> [--max <n>] [--json]
 node plugins/vuong-design/core/session-log.mjs --log <runs.jsonl> [--transcript <session.jsonl>] [--label <text>]
+node plugins/vuong-design/core/runs.mjs --project <vd-project.json> [--since <ISO date>] [--json]
 ```
 
 - `diagnose.mjs`: a few lines per failing screen (screen id from `data-vd-screen`, then roots, approvals, crops, data,
@@ -88,6 +89,10 @@ node plugins/vuong-design/core/session-log.mjs --log <runs.jsonl> [--transcript 
   model act on a failed layout without reading `report.json` / `ir.json`. Exit 0 all pass, 1 a failure, 2 usage.
 - `session-log.mjs`: appends the current Claude Code session's cost (models, API calls, output / input / cache tokens,
   minutes) to a runs log, from the newest transcript of the working directory's project folder.
+- `runs.mjs`: what the task cost so far. `ds.mjs`, `cmp.mjs` and every `figma.mjs` command append one line (time,
+  exit code, 0 model tokens) to `<ds out>/runs.jsonl` or `<figma out>/figma/runs.jsonl`; `figma.mjs serve` adds the KB
+  sent and received. `runs.mjs` adds them up per step, with the agent's tokens when `session-log.mjs` wrote them to
+  `<ds out>/runs.jsonl`. `next.mjs` prints the total in one line. `VD_RUNS_LOG` sends every line to one file.
 
 ## Layout CLI
 

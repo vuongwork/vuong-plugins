@@ -42,6 +42,7 @@ import { coverage, loadChecklist, projectQuestions } from './coverage.mjs';
 import { renderDsReport, typeSamples } from './ds-report.mjs';
 import { answerImpact } from './report-html.mjs';
 import { specJson } from './pipeline.mjs';
+import { timed } from './runs.mjs';
 
 export const DS_USAGE = `usage: node core/ds.mjs --html <file> --root <selector> --out <dir> [--rules <json>] [--names <json>] [layout options]
        node core/ds.mjs --corpus <corpus.json> [--corpus-dir <dir>] --out <dir> [--rules <json>] [--names <json>] [layout options]
@@ -188,5 +189,6 @@ export const DS_EXT = {
 export const main = (argv, deps = {}) => layoutMain(argv, deps, DS_EXT);
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main(process.argv.slice(2)).then((code) => process.exit(code), (e) => { process.stderr.write(`error: ${e.stack || e.message}\n`); process.exit(2); });
+  const argv = process.argv.slice(2);
+  timed('ds', argv, () => main(argv)).then((code) => process.exit(code), (e) => { process.stderr.write(`error: ${e.stack || e.message}\n`); process.exit(2); });
 }

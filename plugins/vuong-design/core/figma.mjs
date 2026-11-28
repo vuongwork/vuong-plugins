@@ -64,6 +64,7 @@ import { startBridge, BRIDGE_PORT } from './figma-bridge.mjs';
 import { installPlugin, installLines } from './figma-plugin-install.mjs';
 import { cmpEncode } from './figma-cmp.mjs';
 import { stateTokens } from './states.mjs';
+import { timed } from './runs.mjs';
 
 const RUNTIME = readFileSync(new URL('./figma-runtime.js', import.meta.url), 'utf8');
 const shaOf = (s) => createHash('sha1').update(s).digest('hex').slice(0, 16);
@@ -956,5 +957,7 @@ export async function main(argv, deps = {}) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main(process.argv.slice(2)).then((code) => process.exit(code), (e) => { process.stderr.write(`error: ${e.stack || e.message}\n`); process.exit(2); });
+  const argv = process.argv.slice(2);
+  // serve logs its own line (with the bytes of each job)
+  (argv[0] === 'serve' ? main(argv) : timed(`figma ${argv[0] || ''}`.trim(), argv, () => main(argv))).then((code) => process.exit(code), (e) => { process.stderr.write(`error: ${e.stack || e.message}\n`); process.exit(2); });
 }

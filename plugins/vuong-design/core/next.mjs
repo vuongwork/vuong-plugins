@@ -24,6 +24,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { readProject } from './project-file.mjs';
+import { costLine, costSummary, projectRuns } from './runs.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const mtime = (p) => (p && existsSync(p) ? statSync(p).mtimeMs : 0);
@@ -139,6 +140,9 @@ export function main(argv, { log = (s) => process.stdout.write(`${s}\n`), cwd = 
   try { p = readProject(resolve(cwd, o.project)); } catch (e) { log(e.message); return 2; }
   const { steps, next } = nextSteps(p);
   for (const s of steps) log(`${s.done ? '[x]' : '[ ]'} ${s.id}: ${s.note}`);
+  // what the steps cost so far, from the runs logs (runs.mjs); nothing when nothing was logged
+  const cost = costLine(costSummary(projectRuns(p)));
+  if (cost) log(`${cost}\n  per step: node ${q(join(HERE, 'runs.mjs'))} --project ${q(p.path)}`);
   if (!next) { log('\nall done'); return 0; }
   log(`\nnext (${next.id}): ${next.why}`);
   if (next.cmd) log(`  ${next.cmd}`);

@@ -22,7 +22,7 @@ In Claude Code you can also just ask, e.g. "take design/screens.html to Figma" o
 5. **Approve what is fine** in the browser: `node PLUGIN/core/approve.mjs --project vd-project.json`. Tick the findings that are fine, Submit, run ds again. Repeat 4-5 until every screen passes.
 6. **Components** (with `"components"` in the project): `node PLUGIN/core/cmp.mjs --project vd-project.json`.
 7. **Figma.**
-   - Once: in Figma Desktop, Plugins → Development → Import plugin from manifest → `PLUGIN/figma-plugin/manifest.json`.
+   - Once per machine: `figma.mjs serve` copies the plugin to `~/.vuong-design/figma-plugin/` (`VD_FIGMA_PLUGIN_DIR` overrides it) and prints the manifest path on a line of its own. In Figma Desktop, Plugins → Development → Import plugin from manifest…, paste that path. A plugin update needs no new import: serve copies the new files there and asks to reopen the plugin window (only a changed manifest asks for a new import).
    - Each time: open the file and run the "vuong-design bridge" plugin, leaving its window open.
    - Then run the commands `next.mjs` prints, in order:
      - `figma.mjs plan`
@@ -718,7 +718,7 @@ Sending a batch through `use_figma` makes a model retype it as the tool's `code`
 - Each run appends a line to `runs.jsonl`: ok, seconds, KB sent and back, and per job its key, ms and bytes.
 - Exit 0 every job ok, 1 a job failed, 2 usage or no plugin connected within `--wait` seconds (default 300).
 
-Setup, once: Figma Desktop → Plugins → Development → Import plugin from manifest… → `plugins/vuong-design/figma-plugin/manifest.json`. Then, in the target file: Plugins → Development → vuong-design bridge. Leave the plugin window open: it polls the bridge, waits between runs and picks up the next `serve` by itself. The manifest only allows `localhost:8787` (`devAllowedDomains`: Figma refuses an IP there), and the bridge listens on the loopback addresses only.
+Setup, once per machine (R100): `serve` copies `figma-plugin/` to `~/.vuong-design/figma-plugin/` (or `VD_FIGMA_PLUGIN_DIR`), because Figma remembers a development plugin by its manifest path and the installed plugin folder is named after its version. serve prints the path of that manifest alone on a line: Figma Desktop → Plugins → Development → Import plugin from manifest…, paste it. On an update serve rewrites the files there (Figma reads them each time the plugin runs) and says so; a changed manifest asks for a new import. The copy's `ui.html` carries its version and the window sends it with every request: the bridge gives no job to a window running other plugin code (it says to close and run the plugin again); a window run from a checkout (`__VDV__`) is accepted. Then, in the target file: Plugins → Development → vuong-design bridge. Leave the plugin window open: it polls the bridge, waits between runs and picks up the next `serve` by itself. The manifest only allows `localhost:8787` (`devAllowedDomains`: Figma refuses an IP there), and the bridge listens on the loopback addresses only.
 
 AI workflow with the bridge:
 1. `ds.mjs`, then `figma.mjs plan`. Tell the user which batches and screens will be written and wait for a go-ahead.

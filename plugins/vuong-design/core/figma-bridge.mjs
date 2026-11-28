@@ -28,7 +28,7 @@ const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods
 // total: the job count shown by the plugin (null when unknown). Resolves to { port, session, done, close }: done resolves to { ok, reason?, jobs: [{ key, kind, ok, ms, bytesOut, bytesIn, msg }] }.
 // file: the target Figma file name (null: any plugin, as before). settleMs: how long a matching plugin is seen before the
 // first job (other plugin windows poll at most every 3 s). liveMs: a window not seen for this long is gone.
-export function startBridge({ next, onResult, port = BRIDGE_PORT, host = '127.0.0.1', log = () => {}, connectTimeoutMs = 300000, jobTimeoutMs = 300000, lingerMs = 3000, total = null, file = null, settleMs = 3500, liveMs = 4000 }) {
+export function startBridge({ version = null, next, onResult, port = BRIDGE_PORT, host = '127.0.0.1', log = () => {}, connectTimeoutMs = 300000, jobTimeoutMs = 300000, lingerMs = 3000, total = null, file = null, settleMs = 3500, liveMs = 4000 }) {
   const session = randomBytes(4).toString('hex');
   const jobs = [];
   let cur = null, curAt = 0, finished = null, ids = 0, connected = false, busy = false;
@@ -81,6 +81,12 @@ export function startBridge({ next, onResult, port = BRIDGE_PORT, host = '127.0.
           if (fname == null || !inst) {
             tell('old', 'a plugin window sent no file name: close it and run the plugin again (figma-plugin/ was updated)');
             return send(res, 200, { session, wait: true, why: 'old plugin: run it again' });
+          }
+          // R100: a window of another plugin version (an installed copy older than this serve) runs no job
+          const pv = u.searchParams.get('v');
+          if (version && pv && pv !== '__VDV__' && pv !== version) {
+            tell('ver', `a plugin window runs old plugin code (${pv}, this serve has ${version}): close it and run the plugin again`);
+            return send(res, 200, { session, wait: true, why: 'old plugin code: close this window and run the plugin again' });
           }
           const now = Date.now();
           const w = wins.get(inst) || { file: fname, first: now };

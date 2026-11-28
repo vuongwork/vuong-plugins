@@ -22,6 +22,8 @@ const say = (t, cls) => { $('st').textContent = t; $('st').className = cls || ''
 let pending = null; // { id, resolve }
 // this window's id and its Figma file name (from the main thread): the bridge serves a run only to its target file
 const INST = Math.random().toString(36).slice(2, 10);
+// this copy's version: figma.mjs serve writes it into the copy it installs (R100); a checkout keeps the placeholder
+const VDV = '__VDV__';
 let fileName = null;
 onmessage = (ev) => {
   const m = ev.data.pluginMessage;
@@ -41,7 +43,7 @@ async function loop() {
     let j;
     try {
       if (fileName == null) { await sleep(100); continue; }
-      const r = await fetch(BASE + '/next?file=' + encodeURIComponent(fileName) + '&inst=' + INST);
+      const r = await fetch(BASE + '/next?file=' + encodeURIComponent(fileName) + '&inst=' + INST + '&v=' + VDV);
       j = await r.json();
       $('srv').textContent = '· connected';
     } catch (e) {

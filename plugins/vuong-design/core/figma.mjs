@@ -61,6 +61,7 @@ import { encodeScreen, planBatches, newTables, OversizeError, batchData, compact
 import { varsPayload, varNames, varsPlan } from './figma-vars.mjs';
 import { ordOf, decode, expandNodes, figmaProxy, shotAtDsf, proxyVsFigma, effectNodes, pngSize } from './figma-check.mjs';
 import { startBridge, BRIDGE_PORT } from './figma-bridge.mjs';
+import { installPlugin, installLines } from './figma-plugin-install.mjs';
 import { cmpEncode } from './figma-cmp.mjs';
 import { stateTokens } from './states.mjs';
 
@@ -656,10 +657,14 @@ async function serve(argv, log, deps = {}) {
   };
   const total = codeJobs.length + (o.shots ? Object.values(st0.screens).filter((s) => (s.status === 'done' && s.root) || keys.has(s.batch)).length : 0);
   const t0 = Date.now();
-  const br = await (deps.startBridge || startBridge)({ next, onResult, port, log, connectTimeoutMs: waitMs, total: total || null, file: target, ...(deps.bridgeOpts || {}) });
+  // R100: the plugin at a fixed place (imported once per machine); its path printed whole, to paste into Figma
+  let inst = null;
+  try { inst = installPlugin(deps.pluginDir ? { dir: deps.pluginDir } : {}); for (const l of installLines(inst)) log(l); } catch (e) { log(`could not copy the Figma plugin: ${e.message}`); }
+  const br = await (deps.startBridge || startBridge)({ version: inst && inst.version, next, onResult, port, log, connectTimeoutMs: waitMs, total: total || null, file: target, ...(deps.bridgeOpts || {}) });
   log(`serve: ${codeJobs.length ? codeJobs.join(', ') : 'no batches'}${o.shots ? ' + 2x shots of the built screens' : ''} on http://localhost:${br.port}, Figma file "${target}"`);
   if (deps.onListen) deps.onListen(br.port);
-  log('waiting for the Figma Desktop plugin (Plugins > Development > vuong-design bridge)');
+  log(`waiting for the Figma Desktop plugin (Plugins > Development > vuong-design bridge)${inst ? '; not imported on this machine yet? Import plugin from manifest... with this path:' : ''}`);
+  if (inst) log(`  ${inst.manifest}`);
   const r = await br.done;
   const reached = r.jobs.some((j) => j.ok);
   if ((o.shots && Object.keys(shotSizes).length) || (reached && loadState(o.out).figmaFile !== target)) {

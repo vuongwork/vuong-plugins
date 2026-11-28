@@ -8,6 +8,10 @@ import { main, checkInputs } from '../core/figma.mjs';
 import { startBridge } from '../core/figma-bridge.mjs';
 import { makeFakeFigma, DEFAULT_FONTS } from './fake-figma.mjs';
 
+import { installPlugin, installLines, pluginVersion, PLUGIN_SRC } from '../core/figma-plugin-install.mjs';
+
+// serve copies the plugin (R100): never into the real home folder from a test
+process.env.VD_FIGMA_PLUGIN_DIR = mkdtempSync(join(tmpdir(), 'vd-plugin-'));
 const AF = (async () => {}).constructor;
 const readJson = (...p) => JSON.parse(readFileSync(join(...p), 'utf8'));
 const text = (id, t) => ({
@@ -36,9 +40,9 @@ const fakePng = (w, h) => { const b = Buffer.alloc(33); b.writeUInt32BE(0x89504e
 
 // the plugin's UI loop, against the fake Figma; tamper(job, text) may change a result on the way
 // file: the Figma file name the window reports (null: an old plugin that sends none); inst: the window id
-async function plugin(port, { fig = makeFakeFigma({ fonts: DEFAULT_FONTS }), tamper = (j, t) => t, fail = () => null, file = 'Test', inst = Math.random().toString(36).slice(2), polls = 200, whys = [] } = {}) {
+async function plugin(port, { fig = makeFakeFigma({ fonts: DEFAULT_FONTS }), tamper = (j, t) => t, fail = () => null, file = 'Test', inst = Math.random().toString(36).slice(2), polls = 200, whys = [], v = null } = {}) {
   const base = `http://127.0.0.1:${port}`, seen = [];
-  const q = `${file != null ? `file=${encodeURIComponent(file)}&` : ''}inst=${inst}`;
+  const q = `${file != null ? `file=${encodeURIComponent(file)}&` : ''}inst=${inst}${v ? `&v=${v}` : ''}`;
   for (let i = 0; i < polls; i++) {
     let j;
     try { j = await (await fetch(`${base}/next?${q}`)).json(); } catch { return seen; } // the bridge closed
@@ -267,4 +271,48 @@ test('bridge: a result from a window other than the one that took the job is ref
   const good = await fetch(`${base}/result?id=${j.id}&inst=A`, { method: 'POST', body: JSON.stringify({ ok: true, text: '1' }) });
   assert.equal(good.status, 200);
   assert.equal((await br.done).ok, true);
+});
+
+test('R100: installPlugin copies the plugin once to a fixed folder, stamps ui.html with the version, reports new / code / manifest / same', () => {
+  const dir = join(mkdtempSync(join(tmpdir(), 'vd-inst-')), 'figma-plugin');
+  const a = installPlugin({ dir });
+  assert.equal(a.state, 'new');
+  assert.equal(a.manifest, join(dir, 'manifest.json'));
+  assert.equal(a.version, pluginVersion());
+  const ui = readFileSync(join(dir, 'ui.html'), 'utf8');
+  assert.ok(ui.includes(`const VDV = '${a.version}';`) && !ui.includes('__VDV__'));
+  assert.ok(readFileSync(join(PLUGIN_SRC, 'ui.html'), 'utf8').includes('__VDV__'), 'the source keeps the placeholder');
+  const lines = installLines(a);
+  assert.match(lines[0], /once per machine.*Import plugin from manifest/);
+  assert.equal(lines[1].trim(), a.manifest, 'the path alone on its line, ready to paste');
+  assert.equal(installPlugin({ dir }).state, 'same');
+  assert.deepEqual(installLines({ state: 'same' }), []);
+  writeFileSync(join(dir, 'code.js'), '// old');
+  const c = installPlugin({ dir });
+  assert.equal(c.state, 'code');
+  assert.match(installLines(c)[0], /close it and run it again/);
+  writeFileSync(join(dir, 'manifest.json'), '{}');
+  const m = installPlugin({ dir });
+  assert.equal(m.state, 'manifest');
+  assert.equal(installLines(m)[1].trim(), m.manifest);
+  assert.equal(installPlugin({ dir }).state, 'same');
+});
+
+test('R100: serve prints the manifest path; a window of another plugin version runs no job, a checkout window (__VDV__) does', async () => {
+  const { out } = await planned();
+  const r = await serveWith(out, ['--send', 'pending'], {});
+  assert.equal(r.code, 0, r.lines.join('\n'));
+  assert.ok(r.lines.some((l) => l.trim() === join(process.env.VD_FIGMA_PLUGIN_DIR, 'manifest.json')), r.lines.join('\n'));
+  const { out: out2 } = await planned();
+  const whys = [];
+  const old = await serveWith(out2, ['--send', 'pending', '--wait', '1'], { v: 'aaaaaaaaaaaa', polls: 40, whys });
+  assert.notEqual(old.code, 0);
+  assert.deepEqual(old.seen, []);
+  assert.ok(whys.some((w) => /old plugin code/.test(w)), whys.join('; '));
+  assert.ok(old.lines.some((l) => /runs old plugin code/.test(l)), old.lines.join('\n'));
+  const { out: out3 } = await planned();
+  const dev = await serveWith(out3, ['--send', 'pending'], { v: '__VDV__' });
+  assert.equal(dev.code, 0, dev.lines.join('\n'));
+  const cur = await serveWith((await planned()).out, ['--send', 'pending'], { v: pluginVersion() });
+  assert.equal(cur.code, 0, cur.lines.join('\n'));
 });

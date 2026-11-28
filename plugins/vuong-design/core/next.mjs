@@ -107,7 +107,7 @@ export function nextSteps(p) {
   const pending = batches.filter((b) => b.status !== 'done').length;
   const fileArg = st.figmaFile ? '' : p.figma.file ? ` --file ${q(p.figma.file)}` : ' --file <Figma file name>';
   const sendCmd = fig(`serve --out ${q(F)}${fileArg} --send pending --shots`);
-  const bridge = 'open the Figma file in Figma Desktop and run Plugins > Development > vuong-design bridge (import figma-plugin/manifest.json once)';
+  const bridge = 'open the Figma file in Figma Desktop and run Plugins > Development > vuong-design bridge (once per machine: Import plugin from manifest... with the path serve prints)';
   if (!step('figma-send', !pending, pending ? `${plural(pending, 'batch', 'batches')} not sent` : 'every batch built', sendCmd, `${bridge}; then send the batches`)) return { steps, next };
   const done = Object.entries(st.screens || {}).filter(([, s]) => s.status === 'done').map(([id]) => id);
   const missing = done.filter((id) => !existsSync(join(FD, `shot-${id}.png`)));

@@ -28,7 +28,7 @@ const screen = {
   },
 };
 
-function fixture() {
+function fixture(answers = {}) {
   seq = 0;
   const uses = [
     // off-grid 13 and 14 with no majority: kept (R96 OFF_GRID, no question without project.grid4 ask-each)
@@ -38,7 +38,7 @@ function fixture() {
     use('space', 'paddingT', 10, 'div.box|div.in', { node: '0.4' }),
     use('space', 'gap', 8, 'div.row|div.in', { node: '0.5' }),
     use('space', 'gap', 8, 'div.row|div.in', { node: '0.6' }),
-    // ROLE_MAJORITY 13 -> 12 (auto change)
+    // ROLE_MAJORITY 13 vs 12: a question (R97), applied when answered 12
     ...[0, 1, 2, 3, 4].map((i) => use('space', 'paddingL', 12, 'div.tile|div.in', { node: `1.${i}` })),
     use('space', 'paddingL', 13, 'div.tile|div.in', { node: '1.9' }),
     use('radius', 'radiusTL', 8, 'div.card|div.in', { node: '0.1' }),
@@ -59,7 +59,7 @@ function fixture() {
     type(14, 400, 20, 'p.note|div.card', { node: '0.2.2' }),
   ];
   const inv = { uses, vars: {} };
-  const rules = { version: 1, answers: {} };
+  const rules = { version: 1, answers };
   const norm = normalize(inv, rules);
   const { tokens } = buildTokens(inv, norm.entries);
   const cov = coverage(loadChecklist(), { inv, tokens, screens: [screen], rules });
@@ -160,7 +160,7 @@ test('sections in order; pill radius drawn as a pill; type specimens use the giv
 });
 
 test('changes applied: old -> new with units, reason in a sentence, node count, optional crops', () => {
-  const f = fixture();
+  const f = fixture({ 'major|space|13|12': 12 });
   const e = f.norm.entries.find((x) => x.code === 'ROLE_MAJORITY');
   const html = renderDsReport({ tokens: f.tokens, entries: f.norm.entries, questions: f.questions, coverage: f.cov, title: 't', generated: '',
     crops: [{ entry: e.id, src: 'data:image/png;base64,AAAA', norm: 'data:image/png;base64,BBBB' }] });
@@ -202,4 +202,13 @@ test('R79: the coverage section says how many CSS variable uses could not be att
   assert.match(t, /treated as named/);
   const z = textOf(renderDsReport({ tokens: f.tokens, entries: f.norm.entries, questions: f.questions, coverage: { ...f.cov, vars: { complex: 0, unreadable: 0 } }, title: 't', generated: '' })).replace(/\s+/g, ' ');
   assert.match(z, /Every CSS variable use was attributed/);
+});
+
+test('R97: an answer that failing findings name is listed first and marked in the settled list', () => {
+  const f = fixture({ 'major|space|13|12': 12 });
+  const qs = f.questions.map((q) => (q.key === 'major|space|13|12' ? { ...q, breaks: { screens: ['s0', 's3'], findings: 4 } } : q));
+  const html = renderDsReport({ tokens: f.tokens, entries: f.norm.entries, questions: qs, coverage: f.cov, title: 't', generated: '' });
+  assert.match(html, /class="breaks-box"><b>1 answer spoil the layout\.<\/b>/);
+  assert.match(html, /<code>major\|space\|13\|12<\/code>: answered 12 <b class="breaks">named by 4 failing findings on s0, s3: change this answer<\/b>/);
+  assert.doesNotMatch(renderDsReport({ tokens: f.tokens, entries: f.norm.entries, questions: f.questions, coverage: f.cov, title: 't', generated: '' }), /class="breaks-box"/);
 });

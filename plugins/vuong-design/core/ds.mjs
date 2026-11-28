@@ -40,6 +40,7 @@ import { readNames } from './names-file.mjs';
 import { buildTokens, tokenMap } from './tokens.mjs';
 import { coverage, loadChecklist, projectQuestions } from './coverage.mjs';
 import { renderDsReport, typeSamples } from './ds-report.mjs';
+import { answerImpact } from './report-html.mjs';
 import { specJson } from './pipeline.mjs';
 
 export const DS_USAGE = `usage: node core/ds.mjs --html <file> --root <selector> --out <dir> [--rules <json>] [--names <json>] [layout options]
@@ -132,14 +133,29 @@ export const DS_EXT = {
     // m8: verify cross-checks every applied record against the entries
     return items.map((it) => ({ ...ds.targets[String(it.screen.id ?? it.screen.name)], entries: ds.norm.entries }));
   },
-  async afterFile({ job, res, dir, browser, state }) {
+  async afterFile({ job, res, dir, browser, state, views = [] }) {
     const ds = state.files.get(job.path);
     const { norm, built, cov, questions, draft } = ds;
+    // R97: an applied answer that a failing finding names spoils the UI: listed per answer (question key, or the rule of
+    // an automatic change), set on its question (breaks) and logged, so the answer is changed instead of the picture approved
+    const byId = new Map(norm.entries.map((e) => [e.id, e]));
+    const impact = new Map();
+    for (const r of answerImpact(views)) {
+      const e = byId.get(r.entry); if (!e) continue;
+      const key = e.question || `${e.code} (automatic)`;
+      const x = impact.get(key) || { answer: key, code: e.code, changes: new Set(), screens: new Set(), findings: 0 };
+      x.changes.add(`${e.prop} ${e.from} → ${e.to}`); for (const sc of r.screens) x.screens.add(sc); x.findings += r.findings;
+      impact.set(key, x);
+    }
+    const nat = (a, b) => String(a).localeCompare(String(b), 'en', { numeric: true });
+    const layoutImpact = [...impact.values()].map((x) => ({ ...x, changes: [...x.changes].sort(nat), screens: [...x.screens].sort(nat) }))
+      .sort((a, b) => b.screens.length - a.screens.length || nat(a.answer, b.answer));
+    for (const q of questions) { const x = impact.get(q.key); if (x) q.breaks = { screens: [...x.screens].sort(nat), findings: x.findings }; }
     for (const e of res.screens) writeFileSync(join(dir, `spec-norm-${safe(e.report.id)}.json`), specJson(e.target ? e.target.spec : e.modelled.spec));
     writeFileSync(join(dir, 'tokens.json'), json(built.tokens));
     writeFileSync(join(dir, 'tokens.css'), built.css);
     writeFileSync(join(dir, 'token-map.json'), json(tokenMap(ds.inv, built.tokens, norm.entries, state.names)));
-    writeFileSync(join(dir, 'normalisation.json'), json({ entries: norm.entries, counts: norm.counts, unparsed: norm.unparsed, stale: ds.stale, ...(built.warnings && built.warnings.length ? { warnings: built.warnings } : {}) }));
+    writeFileSync(join(dir, 'normalisation.json'), json({ entries: norm.entries, counts: norm.counts, unparsed: norm.unparsed, stale: ds.stale, ...(layoutImpact.length ? { layoutImpact } : {}), ...(built.warnings && built.warnings.length ? { warnings: built.warnings } : {}) }));
     writeFileSync(join(dir, 'questions.json'), json(questions));
     writeFileSync(join(dir, 'vd-rules.draft.json'), json(draft));
     writeFileSync(join(dir, 'coverage.json'), json(cov));
@@ -155,10 +171,13 @@ export const DS_EXT = {
     const n = (k) => norm.entries.filter((e) => e.status === k).length;
     const normScreens = res.screens.filter((e) => e.report.norm);
     const unexplained = normScreens.reduce((x, e) => x + e.report.norm.unexplained.length, 0);
-    state.summary = [...(state.summary || []), { file: job.file, auto: n('auto'), answered: n('answered'), ask: n('ask'), open, unexplained }];
+    state.summary = [...(state.summary || []), { file: job.file, auto: n('auto'), answered: n('answered'), ask: n('ask'), open, unexplained, layoutImpact }];
   },
   finish({ state, log, pass }) {
-    for (const s of state.summary || []) log(`${s.file}: ${s.auto} auto, ${s.answered} answered, ${s.ask} asked; ${s.unexplained} unexplained norm root(s)`);
+    for (const s of state.summary || []) {
+      log(`${s.file}: ${s.auto} auto, ${s.answered} answered, ${s.ask} asked; ${s.unexplained} unexplained norm root(s)`);
+      for (const x of s.layoutImpact || []) log(`  answer ${x.answer} (${x.changes.slice(0, 3).join(', ')}${x.changes.length > 3 ? ', ...' : ''}) is named by ${x.findings} failing finding(s) on ${x.screens.join(', ')}: change that answer rather than approve the pictures`);
+    }
     const tool = (f) => `node ${join(dirname(fileURLToPath(import.meta.url)), f)}`;
     if (pass === false) log(`approve findings in the browser: ${tool('approve.mjs')} ${state.project ? `--project ${state.project}` : '--out <output folder> --allowlist <vd-allowlist.json>'}`);
     if (state.open) log(`answer them in the browser: ${tool('answer.mjs')} ${state.project ? `--project ${state.project}` : `--out <output folder>${state.rulesPath ? '' : ' --rules <vd-rules.json>'}`}`);

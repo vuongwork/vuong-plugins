@@ -30,7 +30,7 @@
 // vis, disp, stroke ([t, r, b, l] 'Wpx style colour' | 'none', read back from how the page drew it), outline,
 // shadow (box-shadow layers other than the stroke's, or 'none'), bgImage (computed background-image), R50: radius
 // ([tl, tr, br, bl] computed), runs? (text leaf: [[text, font-size, font-weight, font-style, text-decoration-line,
-// text-transform, font-family]] per text node), svg? (inline svg: { markup = outerHTML without the root style, own = the root's
+// text-transform, font-family]] per text node), lh? (text leaf: computed line-height, R97), svg? (inline svg: { markup = outerHTML without the root style, own = the root's
 // declarations other than the proxy's box / paint keys, paint = computed root [color, fill, stroke, stroke-width] }),
 // img? (image node: { fit, pos, src } of its <img>, null when none was drawn) } — computed values, for verify's
 // content checks. Images also carry object-position (R50); corner radii are set per corner (a computed corner can be
@@ -449,6 +449,7 @@ export async function renderProxy(browser, html, width, opts = {}) {
             }
           };
           rec(el); o.runs = runs;
+          o.lh = cs.lineHeight; // R97: a line height change in a fixed box moves glyphs, not the box
         }
         if (svg && !use) {
           const c = svg.cloneNode(true), own = [];

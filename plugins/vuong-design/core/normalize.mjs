@@ -29,12 +29,15 @@
 //    affects = their distinct nodes. Prop families: space = padding T/R/B/L + gap + counterGap, radius = the four
 //    corners, size = width + height, icon = width + height; a colour is one family over every colour prop. Keys:
 //    GRID4 `grid4|<cat>|<from>` (R96; e.g. grid4|space|13), ICON_FRAME `icon|<from>` (the proposal follows
-//    from the size), COLOR_NEAR `color|<from>|<to>`, SRC_SQUASH `squash|<cat>|<from>|<proposal>`. Entries stay per
+//    from the size), ROLE_MAJORITY `major|<cat>|<from>|<majority>` (R97), TYPE_SCALE `type|<from>|<to>` (R97), COLOR_NEAR `color|<from>|<to>`, SRC_SQUASH `squash|<cat>|<from>|<proposal>`. Entries stay per
 //    role; their `question` is the group key.
-//  - per-role keys (the earlier format) are still read, never listed: GRID4 `grid4|<role>|<from>`, SRC_SQUASH
+//  - per-role keys (the earlier format) are still read, never listed: GRID4 `grid4|<role>|<from>`, ROLE_MAJORITY
+//    `major|<role>|<from>`, SRC_SQUASH
 //    `squash|<node role>` (role without cat and prop). Same options as the group.
 //  - project questions (options accept-all / ask-each, default ask-each, so nothing changes without the user):
-//    project.iconFrame, project.colorNear, project.srcSquash; accept-all applies each decision's proposal. R96:
+//    project.colorNear, project.srcSquash; accept-all applies each decision's proposal. R97: project.iconFrame and
+//    project.typeScale are gone (sizes are never moved in bulk); their keep answers ('ask-each', 'no') are still read,
+//    any other answer throws. R96:
 //    project.grid4 is a setting, not a question: 'keep' (default) or 'ask-each' (any other value throws). Listed when the code has at least one decision. (project.typeScale / project.lineHeightInt stay
 //    yes / no, as below.)
 //  - answer order for a decision: per-role key > group key > project key (accept-all) > none (ask). The template
@@ -61,7 +64,9 @@
 //                  4 px grid (12 px padding + 1 px border = 13) -> kept: Figma strokes sit inside, so the frame's padding
 //                  must hold the border; moving it to 12 would shift the content.
 //  ROLE_MAJORITY   off-scale space / frame size / radius / icon value whose role (all screens) has one value used by
-//                  strictly more than half its uses, that value in scale -> that value, auto. R73: only when the
+//                  strictly more than half its uses, that value in scale -> question `major|<cat>|<from>|<majority>`
+//                  (R97, before: an automatic change), options keep (default) / the majority: the odd value may be a
+//                  variant of the component as well as a slip. R73: only when the
 //                  majority is at most 4 px (one grid step) from the value (both after R69 snapping); a larger jump
 //                  (an icon height 10 in a role of 24s) is not a typo of the majority: it falls through to GRID4
 //                  (space / size / radius) or ICON_FRAME (icons), a question with the nearest grid / frame proposal.
@@ -81,13 +86,14 @@
 //                  is named) -> question `color|<from>|<to>`, proposal the more frequent colour. Named colours are
 //                  never merged without an answer; different alpha never merges and asks nothing. A colour that
 //                  itself moved (auto or answered) is not a merge target (no chains).
-//  TYPE_SCALE      one project question `project.typeScale` (yes / no): type scale = font sizes used in at least two
-//                  roles; an odd size moves to the nearest scale size used in its own role, else to the nearest scale
-//                  size within 2 px (tie -> larger); none -> stays (IN_SCALE). One entry per role and size.
-//  LINE_HEIGHT_INT one project question `project.lineHeightInt` (yes / no): a line height not within 0.01 px of an
+//  TYPE_SCALE      type scale = font sizes used in at least two roles; an odd size -> question `type|<from>|<to>` (R97,
+//                  before: one project yes / no), options keep (default) / to = the nearest scale size used in its own
+//                  role, else the nearest scale size, always within 2 px (tie -> larger); none -> stays (IN_SCALE).
+//                  One entry per role and size.
+//  LINE_HEIGHT_INT one project question `project.lineHeightInt` (yes / no, default no since R97): a line height not within 0.01 px of an
 //                  integer -> Math.round. One entry per role and value.
 //  ICON_FRAME      icon width / height not 16 / 20 / 24 px -> question `icon|<from>` per distinct size, proposal the
-//                  nearest of those (tie -> larger).
+//                  nearest of those (tie -> larger); R97: default keep (a larger icon grows the button that hugs it).
 //  SRC_SQUASH      R65: an icon or image whose spec axis is FIXED but whose measured size differs between widths A
 //                  and B by more than 0.75 px (flex-shrink squashed it at one width). Capture records no declared CSS
 //                  size, so the declared size is taken to be the larger of the two measurements (flex-shrink only
@@ -185,10 +191,15 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     throw new Error(`rules: answer ${JSON.stringify(answers[GRID_Q])} for "${GRID_Q}" is not "keep" or "ask-each"${answers[GRID_Q] === 'accept-all' ? ' (accept-all was removed in R96: the grid is never applied in bulk)' : ''}`);
   }
   const gridOn = answers[GRID_Q] === 'ask-each';
-  const BULK = { ICON_FRAME: 'project.iconFrame', COLOR_NEAR: 'project.colorNear', SRC_SQUASH: 'project.srcSquash' };
-  const BULK_CAT = { ICON_FRAME: 'icon', COLOR_NEAR: 'color', SRC_SQUASH: 'size' };
+  // R97: answers that moved sizes in bulk are gone (ICON_FRAME, TYPE_SCALE): each size is its own question. The keep
+  // answers ('ask-each', 'no') are still read; the old bulk answers throw so the change is never silent.
+  const REMOVED = { 'project.iconFrame': ['ask-each', 'accept-all'], 'project.typeScale': ['no', 'yes'] };
+  for (const [k, [ok, gone]] of Object.entries(REMOVED)) {
+    if (answers[k] !== undefined && answers[k] !== ok) throw new Error(`rules: answer ${JSON.stringify(answers[k])} for "${k}" was removed in R97${answers[k] === gone ? ` (${k === 'project.iconFrame' ? 'icon sizes' : 'font sizes'} are never moved in bulk: answer each question, or delete the key)` : ''}`);
+  }
+  const BULK = { COLOR_NEAR: 'project.colorNear', SRC_SQUASH: 'project.srcSquash' };
+  const BULK_CAT = { COLOR_NEAR: 'color', SRC_SQUASH: 'size' };
   const BULK_TEXT = {
-    ICON_FRAME: (n) => `Move every icon to its proposed 16, 20 or 24 px frame (${n} icon size question(s)) without asking each one?`,
     COLOR_NEAR: (n) => `Merge every near colour (ΔE2000 < 3) into its proposed more frequent colour (${n} colour question(s)) without asking each one?`,
     SRC_SQUASH: (n) => `Keep the declared (larger) size at both widths for every squashed icon or image (${n} question(s)) without asking each one?`,
   };
@@ -255,7 +266,15 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     const majorityCat = GRID_CATS.has(u.cat) ? !(u.cat === 'size' && u.img) : u.cat === 'icon' && !illustration;
     if (majorityCat) {
       const maj = majorityOf(u.role);
-      if (maj !== null && Math.abs(maj - sv) > EPS && Math.abs(maj - sv) <= MAJORITY_PX + EPS && scaleValue(u, maj)) { decide({ ...base, code: 'ROLE_MAJORITY', target: maj, auto: true }); continue; }
+      if (maj !== null && Math.abs(maj - sv) > EPS && Math.abs(maj - sv) <= MAJORITY_PX + EPS && scaleValue(u, maj)) {
+        // R97: a question, not an automatic change: the odd value may be a variant of the component (a card with a
+        // larger radius on one screen) as well as a slip. Default keep; the answer applies to every role it covers.
+        const key = ask(`major|${u.cat}|${sv}|${maj}`, u.cat, 'ROLE_MAJORITY',
+          (q) => `${u.cat} ${sv} px (${roleSummary(q)}) differs from the ${maj} px most uses of the same element have: a variant (keep, default) or a slip (use ${maj} px)?`,
+          [sv, maj], sv);
+        decide({ ...base, code: 'ROLE_MAJORITY', target: maj, qkey: key, rkey: `major|${u.role}|${v}`, keepOpt: sv, map: (a) => Number(a) });
+        continue;
+      }
     }
     if (GRID_CATS.has(u.cat) && !(u.cat === 'size' && u.img)) {
       // R96: the 4 px grid is opt-in (project.grid4 'ask-each') and only for layout: spacing and the size of a frame
@@ -271,8 +290,10 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     }
     if (u.cat === 'icon' && !illustration && !inFrames(sv)) {
       const p = nearest(sv, FRAMES);
-      const key = ask(`icon|${sv}`, 'icon', 'ICON_FRAME', `Icons drawn at ${sv} px are not on a 16, 20 or 24 px frame: use ${p} px?`, [...FRAMES, sv], p);
-      decide({ ...base, code: 'ICON_FRAME', target: p, qkey: key, bulk: BULK.ICON_FRAME, keepOpt: sv, map: (a) => Number(a) });
+      // R97: default keep and no bulk answer: a larger icon grows a button that hugs it (a 22 px icon at 24 px makes a
+      // 50 px round button 52 px)
+      const key = ask(`icon|${sv}`, 'icon', 'ICON_FRAME', `Icons drawn at ${sv} px are not on a 16, 20 or 24 px frame: keep ${sv} px (default) or use ${p} px? A larger icon grows a button that hugs it.`, [sv, ...FRAMES.filter((f) => f !== sv)], sv);
+      decide({ ...base, code: 'ICON_FRAME', target: p, qkey: key, keepOpt: sv, map: (a) => Number(a) });
       continue;
     }
     // unstable icon (in frames) or image: SRC_SQUASH (R65)
@@ -298,7 +319,7 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
   }
   const scale = [...rolesBySize].filter(([, r]) => r.size >= 2).map(([s]) => s).sort((a, b) => a - b);
   const scaleSet = new Set(scale);
-  const TYPE_Q = 'project.typeScale', LH_Q = 'project.lineHeightInt';
+  const LH_Q = 'project.lineHeightInt';
   const typeDecisions = [], lhDecisions = [];
   const lhSeen = new Set();
   for (const u of types) {
@@ -308,11 +329,16 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
     else if (tk.size) keep('TOKEN');
     else if (!scale.length || scaleSet.has(s)) keep('IN_SCALE');
     else {
-      const own = [...(sizesByRole.get(u.role) || [])].filter((x) => scaleSet.has(x));
-      let t = own.length ? nearest(s, own) : null;
-      if (t === null) { const n = nearest(s, scale); if (Math.abs(n - s) <= 2 + 1e-9) t = n; }
+      // R97: never more than 2 px away, even inside its own role (a 68 px figure was proposed 14 px)
+      const near = (xs) => { const n = xs.length ? nearest(s, xs) : null; return n !== null && Math.abs(n - s) <= 2 + 1e-9 ? n : null; };
+      const t = near([...(sizesByRole.get(u.role) || [])].filter((x) => scaleSet.has(x))) ?? near(scale);
       if (t === null) keep('IN_SCALE');
-      else typeDecisions.push({ u, cat: 'type', role: u.role, prop: 'fontSize', from: s, code: 'TYPE_SCALE', target: t, qkey: TYPE_Q, node: nodeOf(u, true), keepOpt: 'no', map: () => t });
+      else {
+        const key = ask(`type|${s}|${t}`, 'type', 'TYPE_SCALE',
+          (q) => `Font size ${s} px (${roleSummary(q)}) is not on the type scale ${scale.join(', ')} px: keep it (default) or use ${t} px? Text in a fixed box (a badge) may no longer fit.`,
+          [s, t], s);
+        typeDecisions.push({ u, cat: 'type', role: u.role, prop: 'fontSize', from: s, code: 'TYPE_SCALE', target: t, qkey: key, node: nodeOf(u, true), keepOpt: s, map: (a) => Number(a) });
+      }
     }
     // line height is per node: one decision per node and value
     const lh = u.value && u.value.lineHeight;
@@ -327,11 +353,8 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
       lhDecisions.push({ u, cat: 'type', role: u.role, prop: 'lineHeight', from: lh, code: 'LINE_HEIGHT_INT', target: t, qkey: LH_Q, node: nodeOf(u, false), keepOpt: 'no', map: () => t });
     }
   }
-  if (typeDecisions.length) {
-    ask(TYPE_Q, 'type', 'TYPE_SCALE', `Move ${new Set(typeDecisions.map((d) => d.from)).size} odd font size(s) to the type scale ${scale.join(', ')} px (nearest size used in the same role)?`, ['yes', 'no'], 'yes', false);
-  }
   if (lhDecisions.length) {
-    ask(LH_Q, 'type', 'LINE_HEIGHT_INT', `Round ${new Set(lhDecisions.map((d) => d.from)).size} fractional line height(s) to whole px?`, ['yes', 'no'], 'yes', false);
+    ask(LH_Q, 'type', 'LINE_HEIGHT_INT', `Round ${new Set(lhDecisions.map((d) => d.from)).size} fractional line height(s) to whole px?`, ['yes', 'no'], 'no', false);
   }
   typeDecisions.forEach(decide); lhDecisions.forEach(decide);
 
@@ -404,7 +427,7 @@ export function normalize(inv, rules = { version: 1, answers: {} }, opts = {}) {
   for (const [key, q] of questions) if (key in answers) q.answered = pick(key, q.options);
   const roleAnswer = new Map();
   for (const [key, options] of roleKeys) if (key in answers) roleAnswer.set(key, pick(key, options));
-  const stale = Object.keys(answers).filter((k) => !questions.has(k) && !roleKeys.has(k) && k !== GRID_Q).sort(cmpStr);
+  const stale = Object.keys(answers).filter((k) => !questions.has(k) && !roleKeys.has(k) && k !== GRID_Q && !(k in REMOVED)).sort(cmpStr);
   // per-role key > group key > project key (accept-all) > none
   const resolve = (d) => {
     if (d.rkey && roleAnswer.has(d.rkey)) return { a: roleAnswer.get(d.rkey) };

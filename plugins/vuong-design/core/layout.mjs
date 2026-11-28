@@ -118,7 +118,7 @@ const irOf = (screens) => screens.map(({ png, pngOriginal, ...rest }) => rest);
 
 // Runs the whole job; deps.fontMap / deps.browser / deps.log are for tests. Returns the exit code.
 // ext (ds.mjs, plan 2): { usage, options, setup(o, deps, jobs) -> state (throws: exit 2), normalize(job, items, state)
-// -> targets (runFile opts.normalize), afterFile({ job, res, dir, browser, state }) (more outputs per file),
+// -> targets (runFile opts.normalize), afterFile({ job, res, dir, browser, state, views }) (more outputs per file; views = report-html screenView of each screen),
 // finish({ state, log, pass }) (the last lines) }; state.args is merged into report.json args. Without ext: the
 // plan-1 CLI, unchanged.
 export async function main(argv, deps = {}, ext = null) {
@@ -200,6 +200,7 @@ export async function main(argv, deps = {}, ext = null) {
       const dir = join(o.out, job.dir);
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'ir.json'), JSON.stringify({ file: job.file, root: job.root, widen: job.widen ?? null, screens: irOf(res.screens.map((e) => e.screen)) }, null, 1));
+      const fileViews = [];
       for (const e of res.screens) {
         writeFileSync(join(dir, `spec-${safe(e.report.id)}.json`), specJson(e.modelled.spec));
         const where = { file: job.file, screen: e.report.id, tree: e.screen.tree };
@@ -209,9 +210,10 @@ export async function main(argv, deps = {}, ext = null) {
         const allowlistDraft = [...g.open.roots.map((x) => allowlistEntry('root', x, where)), ...g.open.approvals.map((x) => allowlistEntry('approval', x, where)),
           ...g.open.crops.map((x) => allowlistEntry('crop', x, where))];
         screensOut.push({ summary, gate: g, report: e.report, flags: e.report.flags, allowlistDraft, ...(e.mutations ? { mutations: e.mutations } : {}) });
-        views.push(await screenView(browser, job.file, e, g, summary));
+        const v = await screenView(browser, job.file, e, g, summary);
+        views.push(v); fileViews.push(v);
       }
-      if (ext) await ext.afterFile({ job, res, dir, browser, state });
+      if (ext) await ext.afterFile({ job, res, dir, browser, state, views: fileViews });
     }
     const { pass, missed } = runVerdict(screensOut);
     const seconds = Math.round((Date.now() - t0) / 100) / 10;

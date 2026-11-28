@@ -195,7 +195,7 @@ test('end to end: inventory -> normalize -> applyNorm; the inventory of the resu
     kids: [12, 12, 12, 12, 13].map((p, i) => ({ id: `0.${i}`, t: 'F', w: 100, h: 40, sz: ['FILL', 'HUG'], lay: lay({ p: [p, 0, 0, 0] }) })),
   });
   const inv = inventory([{ screen: ir('s1'), spec: sp() }]);
-  const { entries } = normalize(inv);
+  const { entries } = normalize(inv, { version: 1, answers: { 'major|space|13|12': 12 } }); // R97: the majority is a question
   assert.equal(entries.length, 1);
   const r = applyNorm(sp(), entries, 's1');
   assert.equal(r.applied.length, 1);

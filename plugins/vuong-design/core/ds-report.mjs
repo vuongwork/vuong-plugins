@@ -187,7 +187,7 @@ export function dsVerdict({ tokens, entries = [], questions = [], coverage }) {
 const HOWTO = `<details class="howto" open><summary><strong>How to read this page</strong></summary>
 <ul>
 <li><b>Tokens</b> are named design values, in three tiers. <b>primitive</b>: every value the screens use after normalisation (colours, spacing, sizes and radii in px, type styles), named by value (<code>space.12</code>, <code>color.c01</code> = the most used colour). <b>role</b>: a name for what a value is for (<code>role.text-muted</code> → <code>primitive.color.c03</code>); one role groups the elements with the same structure (same tag and classes inside the same kind of parent), and a CSS variable of the source keeps its own name. <b>component</b>: empty for now (filled when Figma components are made).</li>
-<li>Every value was checked by fixed rules, each decision has a reason code. Its status: <b>auto</b> = changed by a rule without asking (a colour the eye cannot tell apart, ΔE2000 below 1, in the same role; an off-scale value where most of its role already uses a scale value); <b>ask</b> = a proposal that needs your answer, not applied; <b>answered</b> = applied from your answer; <b>kept</b> = already fine (on the 4 px grid, named by a CSS variable, flexible, a pill) and left as it is (only counted).</li>
+<li>Every value was checked by fixed rules, each decision has a reason code. Its status: <b>auto</b> = changed by a rule without asking (only a colour the eye cannot tell apart, ΔE2000 below 1, in the same role; a size, a space or a font size is never changed without your answer, and every question keeps the value by default); <b>ask</b> = a proposal that needs your answer, not applied; <b>answered</b> = applied from your answer; <b>kept</b> = already fine (on the 4 px grid, named by a CSS variable, flexible, a pill) and left as it is (only counted).</li>
 <li><b>How to answer on this page</b>: pick an option (or type a free answer) under each question you want to settle, then press <b>Submit</b> in the bar at the bottom. Opened with <code>node core/answer.mjs --out &lt;this folder&gt;</code>, Submit merges your answers into the rules file (<code>vd-rules.json</code>, a backup is kept); opened as a plain file, Submit downloads the merged <code>vd-rules.json</code> to save over the old one. Questions you leave blank stay open. Then re-run.</li>
 <li><b>How to answer by hand</b>: copy the JSON under a question into <code>vd-rules.json</code> at the project root (one file for all answers: keep <code>"version": 1</code> and put every answer inside the one <code>"answers"</code> object), then re-run. The draft at the end of the Questions section answers every open question with its proposal in one file. Project questions (<code>accept-all</code>) settle a whole kind of question at once; answer <code>ask-each</code> to decide one by one.</li>
 <li><b>Nothing changes until you answer.</b> An open question keeps the original value in the spec and in the tokens; a question you never answer is never applied.</li>
@@ -198,7 +198,7 @@ const HOWTO = `<details class="howto" open><summary><strong>How to read this pag
 // ---------------- sections ----------------
 
 const CODE_SENTENCE = {
-  ROLE_MAJORITY: 'Most elements in the same role use the new value, which is on the scale, so this one follows them.',
+  ROLE_MAJORITY: 'Most elements in the same role use the new value; your answer made this one follow them (a slip, not a variant).',
   GRID4: 'The value was off the 4 px grid; your answer moved it to the grid value.',
   COLOR_DE1: 'The colour cannot be told apart (ΔE2000 below 1) from a more frequent colour in the same role, so they were merged.',
   COLOR_NEAR: 'The colour is close (ΔE2000 below 3) to a more frequent colour; your answer merged them.',
@@ -227,7 +227,7 @@ function fmtOption(q, o) {
 function questionCard(q, kind) {
   const nodesLabel = kind === 'project' ? `settles ${plural(q.affects, 'node')}` : kind === 'group' ? `affects ${plural(q.affects, 'node')}` : `applies to ${plural(q.affects, 'screen')}`;
   const opts = Array.isArray(q.options)
-    ? `<div class="opts">Options: ${q.options.map((o) => `<label class="v opt${String(o) === String(q.default) ? ' def' : ''}"><input type="radio" name="${esc(q.key)}" value="${esc(JSON.stringify(o))}">${fmtOption(q, o)}${String(o) === String(q.default) ? ' (proposed)' : ''}</label>`).join(' ')}</div>`
+    ? `<div class="opts">Options: ${q.options.map((o) => `<label class="v opt${String(o) === String(q.default) ? ' def' : ''}"><input type="radio" name="${esc(q.key)}" value="${esc(JSON.stringify(o))}">${fmtOption(q, o)}${String(o) === String(q.default) ? ' (default)' : ''}</label>`).join(' ')}</div>`
     : `<div class="opts">Free answer. Proposed: <span class="v opt def">${esc(q.default)}</span> <input type="text" class="free" name="${esc(q.key)}" placeholder="${esc(q.default)}" aria-label="your answer"></div>`;
   const roles = Array.isArray(q.roles) && q.roles.length
     ? (q.roles.length <= 3 ? `<p class="muted small">Where: ${q.roles.map((r) => `<code>${esc(roleWords(r))}</code>`).join(', ')}</p>`
@@ -253,11 +253,15 @@ function renderQuestions(questions) {
   if (proj.length) parts.push(`<h3>Project questions</h3><p class="muted">One answer settles every question of its kind. Answer these first.</p>${proj.map((q) => questionCard(q, 'project')).join('')}`);
   if (group.length) parts.push(`<details class="qgroup"${group.length <= 20 ? ' open' : ''}><summary><h3>One value at a time (${group.length})</h3> <span class="muted small">${group.length > 20 ? 'click to expand' : ''}</span></summary><p class="muted">Sorted by the number of nodes each answer affects. A project answer above (<code>accept-all</code>) settles these too.</p>${group.map((q) => questionCard(q, 'group')).join('')}</details>`);
   if (confirm.length) parts.push(`<details class="qgroup"><summary><h3>Project confirmations (${confirm.length})</h3></summary><p class="muted">Proposed from the screens; they change nothing in the spec. Confirm or correct them the same way.</p>${confirm.map((q) => questionCard(q, 'confirm')).join('')}</details>`);
+  // R97: an answer that failing findings name (ds afterFile sets q.breaks): first, so it is changed, not approved
+  const breaks = (q) => (q.breaks ? ` <b class="breaks">named by ${plural(q.breaks.findings, 'failing finding')} on ${esc(q.breaks.screens.join(', '))}: change this answer</b>` : '');
+  const broken = questions.filter((q) => q.breaks);
+  if (broken.length) parts.splice(1, 0, `<div class="breaks-box"><b>${plural(broken.length, 'answer')} spoil the layout.</b> The layout report names them as the cause of failing findings. Answer the question again with the value kept (the default), then run ds again:<ul>${broken.map((q) => `<li><code>${esc(q.key)}</code> = ${esc(JSON.stringify(q.answered))}${breaks(q)}</li>`).join('')}</ul></div>`);
   if (settled.length) {
-    parts.push(`<details><summary>Already settled (${settled.length})</summary><ul>${settled.map((q) => `<li><code>${esc(q.key)}</code>: ${q.answered !== undefined ? `answered ${esc(JSON.stringify(q.answered))}` : 'settled by a project or per-role answer'}</li>`).join('')}</ul></details>`);
+    parts.push(`<details${broken.length ? ' open' : ''}><summary>Already settled (${settled.length})</summary><ul>${settled.map((q) => `<li><code>${esc(q.key)}</code>: ${q.answered !== undefined ? `answered ${esc(JSON.stringify(q.answered))}` : 'settled by a project or per-role answer'}${breaks(q)}</li>`).join('')}</ul></details>`);
   }
   if (open.length) {
-    parts.push(`<details><summary>All open questions in one <code>vd-rules.json</code> draft</summary><p class="muted">Every question answered with its proposal (project questions stay <code>ask-each</code>). Edit, then save as <code>vd-rules.json</code> at the project root.</p><pre class="json-all">${esc(JSON.stringify(rulesTemplate(open), null, 2))}</pre></details>`);
+    parts.push(`<details><summary>All open questions in one <code>vd-rules.json</code> draft</summary><p class="muted">Every question answered with its default (the value kept; project questions stay <code>ask-each</code>). Edit, then save as <code>vd-rules.json</code> at the project root.</p><pre class="json-all">${esc(JSON.stringify(rulesTemplate(open), null, 2))}</pre></details>`);
   }
   parts.push('</section>');
   return parts.join('\n');
@@ -506,6 +510,7 @@ table.bars td.vis{width:60%;overflow:hidden;max-width:0}.nw{white-space:nowrap}.
 .code{display:inline-block;font:600 11px ui-monospace,monospace;padding:1px 6px;border-radius:4px;background:var(--code)}
 .opts{font-size:13px}.opt{display:inline-block;border:1px solid var(--line);border-radius:12px;padding:0 8px;margin:2px 2px 2px 0}.opt.def{border-color:var(--accent);font-weight:600}
 pre.json,pre.json-all{background:var(--code);border-radius:6px;padding:6px 8px;font:12px ui-monospace,monospace;overflow-x:auto;margin:6px 0 0;white-space:pre}pre.json{white-space:pre-wrap;overflow-wrap:anywhere}
+.breaks{color:var(--miss)}.breaks-box{border:1px solid var(--miss);border-radius:6px;padding:8px 12px;margin:8px 0}
 .badge{font-size:11px;padding:0 6px;border-radius:4px;color:#fff}.badge.covered{background:var(--ok)}.badge.missing{background:var(--miss)}.badge.answered{background:var(--ans)}
 .cov ul{list-style:none;padding-left:4px;margin:4px 0}.cov li{margin:2px 0}
 .pair{display:flex;flex-wrap:wrap;gap:12px;margin-top:4px}figure{margin:0;max-width:100%}figure img{display:block;max-width:100%;height:auto;background:#fff;border:1px solid var(--line);image-rendering:pixelated}figcaption{font-size:12px;color:var(--muted)}
@@ -540,7 +545,7 @@ function update(){var a=collect(),n=Object.keys(a).length;count.textContent=n+' 
 try{var saved=JSON.parse(localStorage.getItem(LS)||'{}');cards.forEach(function(c){if(saved[c.dataset.key]!==undefined)put(c,saved[c.dataset.key]);});}catch(e){}
 document.getElementById('questions').addEventListener('input',update);
 document.getElementById('questions').addEventListener('change',update);
-$('.useall').onclick=function(){cards.forEach(function(c){if(read(c)===undefined)put(c,JSON.parse(c.dataset.default));});update();say('Every unanswered question now holds its proposal. Change any you disagree with, then submit.');};
+$('.useall').onclick=function(){cards.forEach(function(c){if(read(c)===undefined)put(c,JSON.parse(c.dataset.default));});update();say('Every unanswered question now holds its default (the value kept). Change any you disagree with, then submit.');};
 $('.clear').onclick=function(){cards.forEach(function(c){put(c,undefined);});update();say('');};
 function merged(a){var r=JSON.parse(JSON.stringify(ctx.rules||{version:1,answers:{}}));r.version=1;r.answers=r.answers||{};for(var k in a)r.answers[k]=a[k];return r;}
 function download(a){var blob=new Blob([JSON.stringify(merged(a),null,2)+'\\n'],{type:'application/json'});var u=URL.createObjectURL(blob);var l=document.createElement('a');l.href=u;l.download='vd-rules.json';document.body.appendChild(l);l.click();l.remove();setTimeout(function(){URL.revokeObjectURL(u);},1000);
@@ -556,7 +561,7 @@ update();
 function answerBar(questions, answer) {
   if (!questions.some(isOpen)) return '';
   const ctx = { rulesPath: (answer && answer.rulesPath) || null, rules: (answer && answer.rules) || { version: 1, answers: {} } };
-  return `<div id="answerbar"><span class="count"></span><button type="button" class="useall">Use proposals for the rest</button><button type="button" class="clear">Clear</button>` +
+  return `<div id="answerbar"><span class="count"></span><button type="button" class="useall">Keep the value for the rest</button><button type="button" class="clear">Clear</button>` +
     `<button type="button" class="dl">Download vd-rules.json</button><button type="button" class="submit primary"></button><div class="msg"></div></div>\n` +
     `<script type="application/json" id="vd-answer-ctx">${JSON.stringify(ctx).replace(/</g, '\\u003c')}</script>\n<script>${ANSWER_JS}</script>`;
 }

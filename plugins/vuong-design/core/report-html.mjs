@@ -90,14 +90,15 @@ export async function screenView(browser, file, entry, g, summary, over = {}) {
   // its subtree (entry.target.applied) are named so the user can change that answer instead of approving the picture
   const recs = (entry.target && entry.target.applied) || [];
   const num = (v) => (typeof v === 'number' ? `${Math.round(v * 100) / 100}` : JSON.stringify(v));
-  const normCause = (kind, x) => {
+  const causeRecs = (kind, x) => {
     // a crop measured on the norm layout proxy names every record in its subtree; a root only when the norm explains it
     if (!(kind === 'crop' ? !!entry.normLayout || x.sizeExplainedBy === 'norm' : kind === 'root' && x.explainedBy === 'norm')) return [];
     const id = String(x.id);
-    const out = recs.filter((a) => String(a.node) === id || String(a.node).startsWith(`${id}.`))
-      .map((a) => `${a.node} ${a.prop} ${num(a.from)} → ${num(a.to)} (${a.code})`);
-    return [...new Set(out)];
+    return recs.filter((a) => String(a.node) === id || String(a.node).startsWith(`${id}.`));
   };
+  const normCause = (kind, x) => [...new Set(causeRecs(kind, x).map((a) => `${a.node} ${a.prop} ${num(a.from)} → ${num(a.to)} (${a.code})`))];
+  // R97: the entry ids behind it, for the per-answer summary (answerImpact)
+  const normEntries = (kind, x) => [...new Set(causeRecs(kind, x).map((a) => a.entry))];
   const add = (kind, x, proxyName, allowedBy, linked = false) => {
     const i = x.width === 'A' ? 0 : 1, n = idx.get(x.id);
     const src = n ? (i ? n.rB : n.rA) : null;
@@ -108,7 +109,7 @@ export async function screenView(browser, file, entry, g, summary, over = {}) {
     const isFig = !!entry.figma && entry[pn] === entry.figma;
     items.push({
       kind, id: x.id, width: x.width, node: describeNode(n), proxy: isFig ? (over.label || 'Figma') : pn === 'layout' ? 'layout proxy' : pn === 'normLayout' ? 'normalised layout proxy' : pn === 'norm' ? 'normalised proxy' : 'modelled proxy',
-      src, box, x, allowedBy, flags: flagsOf(x.id), approvable: !allowedBy && approvable(kind, x, linked), normCause: normCause(kind, x),
+      src, box, x, allowedBy, flags: flagsOf(x.id), approvable: !allowedBy && approvable(kind, x, linked), normCause: normCause(kind, x), normEntries: normEntries(kind, x),
       job: (src || box) && P && P.png ? { win: union(src, box), i, P } : null, // no image: the Figma screenshot is at A only
     });
   };
@@ -245,6 +246,22 @@ function approveBox(v, it) {
   if (!it.allowedBy && it.kind === 'root') return '<div class="approve none">Cannot be approved: a layout error the plugin must explain (plugin bug).</div>';
   if (!it.allowedBy && it.x.root) return `<div class="approve none">Approved together with the layout error on <code>${esc(it.x.root)}</code>.</div>`;
   return '';
+}
+
+// R97: which normalisation entries are named by findings that still fail (open, not allowlisted) -> one row per
+// entry id: { entry, screens (sorted), findings }. views = screenView results of one file.
+export function answerImpact(views) {
+  const by = new Map();
+  for (const v of views) for (const it of v.items) {
+    if (it.allowedBy || !it.normEntries) continue;
+    for (const id of it.normEntries) {
+      const r = by.get(id) || { entry: id, screens: new Set(), findings: 0 };
+      r.screens.add(v.summary.screen); r.findings++;
+      by.set(id, r);
+    }
+  }
+  const nat = (a, b) => String(a).localeCompare(String(b), 'en', { numeric: true });
+  return [...by.values()].map((r) => ({ ...r, screens: [...r.screens].sort(nat) })).sort((a, b) => b.findings - a.findings || nat(a.entry, b.entry));
 }
 
 // R96: the answers behind a difference the normalisation made (screenView normCause)

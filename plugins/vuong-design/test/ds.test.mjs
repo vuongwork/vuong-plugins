@@ -91,7 +91,7 @@ test('CLI without a rules file: every question asks, the target spec is the mode
   const qs = readJson(out, 'questions.json');
   const open = qs.filter((x) => x.code !== 'PROJECT' && x.answered === undefined && !x.resolved);
   assert.ok(open.some((x) => x.key === 'project.lineHeightInt'));
-  assert.equal(readJson(out, 'vd-rules.draft.json').answers['project.lineHeightInt'], 'yes');
+  assert.equal(readJson(out, 'vd-rules.draft.json').answers['project.lineHeightInt'], 'no'); // R97: keep by default
   assert.match(q.lines.at(-1), new RegExp(`^${open.length} open questions? \\(no rules file\\)`));
   assert.equal(readJson(out, 'coverage.json').items.find((i) => i.id === 'color-theme').state, 'covered');
   assert.equal(readJson(out, 'ir.json').screens[0].darkMode, true);

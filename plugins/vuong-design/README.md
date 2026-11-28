@@ -166,11 +166,20 @@ Outputs in `<out>` (or `<out>/<file stem>/`), in addition to everything `layout.
 
 R96: values the author wrote as `%` or `calc()` of their box (capture `rel`) are kept (RELATIVE), and the 4 px grid is off by default: an off-grid spacing, size or radius is kept (OFF_GRID) and asked about by no question. `"project.grid4": "ask-each"` in `vd-rules.json` turns on one question per off-grid spacing or size of a frame with children (`grid4|<cat>|<value>`), keeping the value by default; a corner radius or the size of a leaf frame is never asked. `accept-all` for the grid was removed (an error names it).
 
+R97: no size, space or font size changes without an answer, and every question keeps the value by default (the only automatic change left is COLOR_DE1, a colour the eye cannot tell apart).
+- **ROLE_MAJORITY** is now the question `major|<cat>|<value>|<majority>`: is the odd value a variant of the component (keep) or a slip (use the majority)?
+- **ICON_FRAME** keeps the icon size by default. A larger icon grows the button that hugs it.
+- **TYPE_SCALE** is one question per size (`type|<from>|<to>`). It never proposes a size more than 2 px away.
+- **`project.iconFrame` and `project.typeScale` are gone.** Their keep answers (`ask-each`, `no`) are still read; `accept-all` / `yes` throw.
+- **`project.lineHeightInt` defaults to `no`.**
+- **Answers named by failing findings.** After a run, `ds.mjs` lists every applied answer that failing findings name (`normalisation.json` `layoutImpact`, the log, a box at the top of the questions in `design-system.html`), so you change that answer instead of approving the pictures.
+- **Line height in the proxy.** The proxy now records each text leaf's computed line height (`dom.lh`). A line height change inside a fixed-height text box moves the glyphs without moving the box, and is no longer taken as "changes nothing".
+
 ```
 node plugins/vuong-design/core/answer.mjs --out <ds output folder> [--rules <vd-rules.json>] [--port <n>] [--no-open]
 ```
 
-Serves `design-system.html` of that folder on 127.0.0.1 and opens it. Pick an answer under each question you want to settle (or "Use proposals for the rest"), then Submit: the answers are checked against `questions.json` (an option of the question, or a non-empty free text; one bad answer saves none) and merged into the rules file the run read (or `--rules`). Every other key of the file (`notes`, `states`, earlier answers) is kept, the old file is copied to `<rules>.bak`. Re-run `ds.mjs` to apply them. Opened as a plain file, Submit downloads the merged `vd-rules.json` instead. Choices survive a reload until they are saved.
+Serves `design-system.html` of that folder on 127.0.0.1 and opens it. Pick an answer under each question you want to settle (or "Keep the value for the rest"), then Submit: the answers are checked against `questions.json` (an option of the question, or a non-empty free text; one bad answer saves none) and merged into the rules file the run read (or `--rules`). Every other key of the file (`notes`, `states`, earlier answers) is kept, the old file is copied to `<rules>.bak`. Re-run `ds.mjs` to apply them. Opened as a plain file, Submit downloads the merged `vd-rules.json` instead. Choices survive a reload until they are saved.
 
 ### Approving findings
 

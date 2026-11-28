@@ -135,3 +135,13 @@ test('main: usage errors and a missing allowlist file is created on the first su
     assert.ok(!existsSync(join(dir, 'a.json.bak')));
   } finally { await r.close(); }
 });
+
+test('R97 answerImpact: entries named by failing findings, per entry, allowlisted findings left out', async () => {
+  const { answerImpact } = await import('../core/report-html.mjs');
+  const v = (screen, items) => ({ summary: { screen }, items });
+  const rows = answerImpact([
+    v('s1', [{ normEntries: ['e1', 'e2'] }, { normEntries: ['e1'], allowedBy: 'ok' }]),
+    v('s10', [{ normEntries: ['e1'] }]), v('s2', [{ normEntries: [] }, {}]),
+  ]);
+  assert.deepEqual(rows, [{ entry: 'e1', screens: ['s1', 's10'], findings: 2 }, { entry: 'e2', screens: ['s1'], findings: 1 }]);
+});

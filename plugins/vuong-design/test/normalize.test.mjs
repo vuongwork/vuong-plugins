@@ -19,14 +19,22 @@ const inv = (uses) => ({ uses, vars: {} });
 const N = (uses, answers = {}) => normalize(inv(uses), { version: 1, answers });
 const only = (r, code) => r.entries.filter((e) => e.code === code);
 
-test('ROLE_MAJORITY: padding 13 among five same-role frames at 12 becomes 12, auto', () => {
-  const r = N([pad(12), pad(12), pad(12), pad(12), pad(12), pad(13, { node: '0.9' })]);
+test('ROLE_MAJORITY (R97): padding 13 among five same-role frames at 12 asks variant or slip, keeping 13 by default', () => {
+  const mk = () => [pad(12), pad(12), pad(12), pad(12), pad(12), pad(13, { node: '0.9' })];
+  let r = N(mk());
   assert.equal(r.entries.length, 1);
   const [e] = r.entries;
-  assert.deepEqual([e.code, e.status, e.from, e.to, e.cat, e.prop, e.nodes], ['ROLE_MAJORITY', 'auto', 13, 12, 'space', 'paddingT', [{ screen: 's1', node: '0.9' }]]);
-  assert.equal(e.proposal, undefined);
+  assert.deepEqual([e.code, e.status, e.from, e.to, e.proposal, e.question, e.cat, e.prop, e.nodes], ['ROLE_MAJORITY', 'ask', 13, 13, 12, 'major|space|13|12', 'space', 'paddingT', [{ screen: 's1', node: '0.9' }]]);
   assert.equal(r.counts.IN_SCALE, 5);
-  assert.equal(r.questions.length, 0);
+  assert.deepEqual(r.questions.map((q) => [q.key, q.options, q.default]), [['major|space|13|12', [13, 12], 13]]);
+  assert.match(r.questions[0].text, /a variant \(keep, default\) or a slip \(use 12 px\)/);
+  r = N(mk(), { 'major|space|13|12': 12 });
+  assert.deepEqual(r.entries.map((x) => [x.status, x.to]), [['answered', 12]]);
+  r = N(mk(), { 'major|space|13|12': 13 });
+  assert.deepEqual([r.entries.length, r.counts.ROLE_MAJORITY], [0, 1]);
+  // a per-role answer wins
+  r = N(mk(), { 'major|space|13|12': 13, 'major|space|paddingT|div.x|div.p|13': 12 });
+  assert.deepEqual(r.entries.map((x) => [x.status, x.to]), [['answered', 12]]);
 });
 
 const GRID = { 'project.grid4': 'ask-each' };
@@ -143,13 +151,13 @@ test('colours: a mixed-role colour merges only its shared-role uses; different a
   assert.deepEqual(r.entries.map((x) => [x.from, x.to]), [['#1a74e8', '#1a73e8']]);
 });
 
-test('LINE_HEIGHT_INT: 20.8 px asks one project question, proposal 21; "yes" applies to every entry', () => {
+test('LINE_HEIGHT_INT: 20.8 px asks one project question, proposal 21, default no (R97); "yes" applies to every entry', () => {
   const uses = () => [type(16, 20.8, 'p.a|div.c', { node: '1' }), type(16, 20.8, 'p.a|div.c', { node: '1', run: 2, value: { family: 'Inter', size: 16, weight: 700, style: 'normal', lineHeight: 20.8, letterSpacing: 0, transform: 'none' } }),
     type(16, 18.2, 'p.b|div.c', { node: '2' }), type(16, 18.005, 'p.c|div.c', { node: '3' })];
   let r = N(uses());
   const lh = only(r, 'LINE_HEIGHT_INT');
   assert.deepEqual(lh.map((e) => [e.from, e.proposal, e.status, e.to, e.nodes.length, e.prop]), [[20.8, 21, 'ask', 20.8, 1, 'lineHeight'], [18.2, 18, 'ask', 18.2, 1, 'lineHeight']]);
-  assert.deepEqual(r.questions.map((q) => [q.key, q.options, q.default, q.affects]), [['project.lineHeightInt', ['yes', 'no'], 'yes', 2]]);
+  assert.deepEqual(r.questions.map((q) => [q.key, q.options, q.default, q.affects]), [['project.lineHeightInt', ['yes', 'no'], 'no', 2]]);
   r = N(uses(), { 'project.lineHeightInt': 'yes' });
   assert.ok(only(r, 'LINE_HEIGHT_INT').every((e) => e.status === 'answered' && e.to === e.proposal));
   r = N(uses(), { 'project.lineHeightInt': 'no' });
@@ -157,20 +165,23 @@ test('LINE_HEIGHT_INT: 20.8 px asks one project question, proposal 21; "yes" app
   assert.equal(r.counts.LINE_HEIGHT_INT, 2);
 });
 
-test('TYPE_SCALE: odd sizes move to the nearest scale size of their role, else within 2 px; one project question', () => {
+test('TYPE_SCALE (R97): one question per odd size, keep by default, never more than 2 px even in its own role', () => {
   const r = N([
     type(14, 20, 'p.a|div.c'), type(14, 20, 'p.b|div.c'), type(16, 24, 'h2.t|div.c'), type(16, 24, 'h3.t|div.c'),
-    type(15, 20, 'p.a|div.c'), type(13, 20, 'span.e|div.c'), type(28, 32, 'h1.big|div.c'),
+    type(15, 20, 'p.a|div.c'), type(13, 20, 'span.e|div.c'), type(28, 32, 'h1.big|div.c'), type(40, 44, 'p.a|div.c'),
   ]);
   const ts = only(r, 'TYPE_SCALE');
-  assert.deepEqual(ts.map((e) => [e.role, e.from, e.proposal, e.status, e.prop]).sort(),
-    [['type|text|p.a|div.c', 15, 14, 'ask', 'fontSize'], ['type|text|span.e|div.c', 13, 14, 'ask', 'fontSize']]);
+  assert.deepEqual(ts.map((e) => [e.role, e.from, e.proposal, e.status, e.to, e.prop, e.question]).sort(),
+    [['type|text|p.a|div.c', 15, 14, 'ask', 15, 'fontSize', 'type|15|14'], ['type|text|span.e|div.c', 13, 14, 'ask', 13, 'fontSize', 'type|13|14']]);
   assert.ok(ts.every((e) => e.nodes.every((n) => n.run === 0)));
-  assert.deepEqual(r.questions.map((q) => q.key), ['project.typeScale']);
-  assert.match(r.questions[0].text, /14, 16 px/);
-  assert.ok(!r.entries.some((e) => e.from === 28)); // 28 px: no scale size within 2 px, stays
-  const a = N([type(14, 20, 'p.a|div.c'), type(14, 20, 'p.b|div.c'), type(15, 20, 'p.c|div.c')], { 'project.typeScale': 'yes' });
+  assert.deepEqual(r.questions.filter((q) => q.code === 'TYPE_SCALE').map((q) => [q.key, q.options, q.default]), [['type|13|14', [13, 14], 13], ['type|15|14', [15, 14], 15]]);
+  assert.match(r.questions.find((q) => q.key === 'type|15|14').text, /14, 16 px/);
+  assert.ok(!r.entries.some((e) => e.from === 28 || e.from === 40)); // no scale size within 2 px (40 is in a role with 14): stays
+  const a = N([type(14, 20, 'p.a|div.c'), type(14, 20, 'p.b|div.c'), type(15, 20, 'p.c|div.c')], { 'type|15|14': 14 });
   assert.deepEqual(only(a, 'TYPE_SCALE').map((e) => [e.status, e.to]), [['answered', 14]]);
+  // the old project answer: 'no' is read (nothing moves), 'yes' throws
+  assert.equal(N([type(14, 20, 'p.a|div.c'), type(14, 20, 'p.b|div.c'), type(15, 20, 'p.c|div.c')], { 'project.typeScale': 'no' }).stale.length, 0);
+  assert.throws(() => N([type(15, 20, 'p.c|div.c')], { 'project.typeScale': 'yes' }), /removed in R97/);
 });
 
 test('ICON_FRAME: icon 18 px proposes 20 (tie -> larger), 22 proposes 24, one question per size', () => {
@@ -179,7 +190,7 @@ test('ICON_FRAME: icon 18 px proposes 20 (tie -> larger), 22 proposes 24, one qu
   const f = only(r, 'ICON_FRAME');
   assert.deepEqual([...new Set(f.map((e) => `${e.from}->${e.proposal}`))], ['18->20', '22->24']);
   const q = r.questions.find((x) => x.key === 'icon|18');
-  assert.deepEqual([q.options, q.default, q.affects], [[16, 20, 24, 18], 20, 2]);
+  assert.deepEqual([q.options, q.default, q.affects], [[18, 16, 20, 24], 18, 2]); // R97: keep by default
   assert.equal(r.counts.IN_SCALE, 2);
   // answered in the rules fixture: 16
   const a = normalize(inv(ic(18, { node: '1' })), readRules(fx('rules-answered.json')));
@@ -261,7 +272,7 @@ test('rulesTemplate drafts the open questions with their defaults and texts', ()
   const r = N([pad(13, { node: 'a' }), pad(14, { node: 'b', screen: 's2' }), type(16, 20.8, 'p.a|div.c')], { ...GRID, 'grid4|space|paddingT|div.x|div.p|14': 12 });
   const t = rulesTemplate(r.questions);
   assert.deepEqual(Object.keys(t), ['version', 'answers', 'notes']);
-  assert.deepEqual(t.answers, { 'grid4|space|13': 13, 'project.lineHeightInt': 'yes' });
+  assert.deepEqual(t.answers, { 'grid4|space|13': 13, 'project.lineHeightInt': 'no' });
   assert.deepEqual(Object.keys(t.notes), Object.keys(t.answers));
   assert.equal(t.version, 1);
 });
@@ -316,14 +327,15 @@ test('R68: one question per (code, cat, family, from, proposal) across roles; an
   assert.deepEqual([t['grid4|space|10'], t['grid4|space|13']], [10, 13]);
 });
 
-test('R68: icon frames group by size across roles; project.iconFrame accept-all applies the proposals', () => {
+test('R68: icon frames group by size across roles; R97: no project.iconFrame (accept-all throws, ask-each is read)', () => {
   const ic = (v, role, node) => [use('icon', 'width', v, role, { fixed: true, node }), use('icon', 'height', v, role, { fixed: true, node })];
   const uses = () => [...ic(18, 'svg.a|div.r', '1'), ...ic(18, 'svg.b|div.s', '2'), ...ic(22, 'svg.a|div.r', '3')];
   let r = N(uses());
-  assert.deepEqual(r.questions.map((q) => [q.key, q.affects, q.roles && q.roles.length]), [['icon|18', 2, 4], ['icon|22', 1, 2], ['project.iconFrame', 3, undefined]]);
-  r = N(uses(), { 'project.iconFrame': 'accept-all', 'icon|22': 22 });
+  assert.deepEqual(r.questions.map((q) => [q.key, q.affects, q.roles && q.roles.length]), [['icon|18', 2, 4], ['icon|22', 1, 2]]);
+  assert.throws(() => N(uses(), { 'project.iconFrame': 'accept-all' }), /removed in R97/);
+  r = N(uses(), { 'project.iconFrame': 'ask-each', 'icon|18': 20, 'icon|22': 22 });
   assert.deepEqual([...new Set(only(r, 'ICON_FRAME').map((e) => `${e.from}->${e.to}:${e.status}`))], ['18->20:answered']);
-  assert.equal(r.counts.ICON_FRAME, 2);
+  assert.deepEqual([r.counts.ICON_FRAME, r.stale], [2, []]);
 });
 
 test('R69: a value within 0.05 px of an integer counts as that integer for scale, majority and grouping; from stays exact', () => {
@@ -342,7 +354,7 @@ test('R69: a value within 0.05 px of an integer counts as that integer for scale
   assert.deepEqual([a.entries.length, a.counts.GRID4], [0, 1]);
   // majority: 12, 12.01, 11.99 and 13 in one role -> 13 moves to 12; the near-integers are in scale
   const m = N([pad(12, { node: 'a' }), pad(12.01, { node: 'b' }), pad(11.99, { node: 'c' }), pad(13, { node: 'd' })]);
-  assert.deepEqual(m.entries.map((e) => [e.code, e.from, e.to]), [['ROLE_MAJORITY', 13, 12]]);
+  assert.deepEqual(m.entries.map((e) => [e.code, e.from, e.proposal]), [['ROLE_MAJORITY', 13, 12]]);
   assert.equal(m.counts.IN_SCALE, 3);
 });
 
@@ -365,13 +377,13 @@ test('R71: svgs larger than 32 px are illustrations: no ICON_FRAME, no majority,
   assert.ok(!r.questions.some((q) => q.key === 'icon|200' || q.key === 'icon|33'));
 });
 
-test('R73: a role majority applies only within 4 px; a larger jump asks GRID4 (R96: keeping the value by default)', () => {
+test('R73: a role majority is proposed only within 4 px; a larger jump asks GRID4 (R96: keeping the value by default)', () => {
   const r = N([pad(24), pad(24), pad(24), pad(24), pad(10, { node: '7.0' }), pad(21, { node: '7.1' })], GRID);
   const odd = r.entries.find((e) => e.from === 10);
   assert.deepEqual([odd.code, odd.status, odd.to, odd.proposal, odd.question], ['GRID4', 'ask', 10, 10, 'grid4|space|10']);
-  // 21 is 3 px from the majority 24: still auto
+  // 21 is 3 px from the majority 24: a ROLE_MAJORITY question (R97: keep by default)
   const near = r.entries.find((e) => e.from === 21);
-  assert.deepEqual([near.code, near.status, near.to], ['ROLE_MAJORITY', 'auto', 24]);
+  assert.deepEqual([near.code, near.status, near.to, near.proposal], ['ROLE_MAJORITY', 'ask', 21, 24]);
   // icons: 10 px in a role whose majority is 24 asks ICON_FRAME, never jumps to 24 automatically
   const ic = (v, node) => use('icon', 'height', v, 'svg.i|div.r', { fixed: true, node, box: [v, v] });
   const i = N([ic(24, 'a'), ic(24, 'b'), ic(24, 'c'), ic(10, 'd')]);

@@ -470,12 +470,27 @@ export function makeFakeFigma({ fonts = DEFAULT_FONTS, variables = [], textStyle
     }
     swapComponent(c) {
       if (!c || c.type !== 'COMPONENT') throw new Error('swapComponent needs a component');
+      this._ok();
       const base = this._inInst ? this.id.slice(1).split(';')[0] : this.id;
       const t = this;
+      // real Figma: the old sublayers go (a nested instance among them is removed: using it throws)
+      const gone = (n) => { n._removed = true; for (const k of n._kids || []) gone(k); };
+      for (const k of t._kids || []) gone(k);
       t._building = true;
       t._kids = (c._kids || []).map((k) => instCopy(k, base, t));
       t._main = c; t._pv = {}; t.name = c.name;
       t._building = false;
+      // real Figma (R98): a swap inside a main component reaches its instances: their copy of that sublayer is made
+      // again (the nested instance found before is removed)
+      let m = null; for (let p = t.parent; p; p = p.parent) if (p.type === 'COMPONENT') { m = p; break; }
+      if (m && !t._inInst) for (const i of allNodes().filter((n) => n.type === 'INSTANCE' && n._main === m && !n._inInst)) {
+        const path = []; for (let n = t; n !== m; n = n.parent) path.unshift(n.parent._kids.indexOf(n));
+        let old = i; for (const x of path) old = old && (old._kids || [])[x];
+        if (!old) continue;
+        gone(old);
+        const fresh = instCopy(t, i.id, old.parent);
+        old.parent._kids.splice(old.parent._kids.indexOf(old), 1, fresh);
+      }
     }
     setProperties(props) {
       // real Figma (2026-11-26): a set whose variants do not all name the same axes once each (one named after its

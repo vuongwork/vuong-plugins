@@ -36,7 +36,9 @@ figma.ui.onmessage = async (m) => {
       const out = await new AsyncFunction('figma', m.code)(figma);
       figma.ui.postMessage({ type: 'result', id: m.id, ok: true, text: JSON.stringify(out === undefined ? null : out) });
     } catch (e) {
-      figma.ui.postMessage({ type: 'result', id: m.id, ok: false, error: String((e && (e.stack || e.message)) || e).slice(0, 2000) });
+      // the message, then the stack (a Figma stack holds only the "at" lines)
+      const msg = (e && e.message) || String(e), stack = (e && e.stack) || '';
+      figma.ui.postMessage({ type: 'result', id: m.id, ok: false, error: (stack.includes(msg) ? stack : `${msg}\n${stack}`).slice(0, 2000) });
     }
   } else if (m.type === 'shot') {
     try {

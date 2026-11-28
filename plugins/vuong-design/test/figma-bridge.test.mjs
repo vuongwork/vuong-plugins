@@ -285,6 +285,15 @@ test('R100: installPlugin copies the plugin once to a fixed folder, stamps ui.ht
   const lines = installLines(a);
   assert.match(lines[0], /once per machine.*Import plugin from manifest/);
   assert.equal(lines[1].trim(), a.manifest, 'the path alone on its line, ready to paste');
+  // each system's open dialog takes a typed path its own way; Linux has no official Figma Desktop
+  const p = { state: 'new', manifest: '/home/u/.vuong-design/figma-plugin/manifest.json' };
+  assert.match(installLines(p, 'win32')[0], /"File name" box/);
+  assert.match(installLines(p, 'darwin')[0], /Cmd\+Shift\+G/);
+  const lx = installLines(p, 'linux');
+  assert.match(lx[0], /Ctrl\+L/);
+  assert.equal(lx[1].trim(), p.manifest);
+  assert.match(lx[2], /Windows and macOS only.*courier/);
+  assert.equal(installLines(p, 'darwin').length, 2);
   assert.equal(installPlugin({ dir }).state, 'same');
   assert.deepEqual(installLines({ state: 'same' }), []);
   writeFileSync(join(dir, 'code.js'), '// old');

@@ -48,7 +48,9 @@ What each step needs from you:
 - **figma-send / figma-shots**: these write to the user's Figma file.
   - Before the first send, confirm the file and which batches: the user names them; never widen a test into a full run.
   - With Figma Desktop, use the bridge:
-    - Once, import `PLUGIN/figma-plugin/manifest.json` (Plugins > Development > Import plugin from manifest).
+    - Once per machine: `serve` copies the plugin to `~/.vuong-design/figma-plugin/` and prints its manifest path;
+      give the user that path to import (Plugins > Development > Import plugin from manifest). Figma Desktop exists
+      for Windows and macOS only: on Linux, use the courier unless the user has a desktop build that imports plugins.
     - Then open the file and run "vuong-design bridge", leaving it open.
     - Then run the `serve` command next.mjs prints.
   - Without Desktop, use the `vd-figma-courier` agent for the `.js` files and `figma.mjs ingest` for each result. It

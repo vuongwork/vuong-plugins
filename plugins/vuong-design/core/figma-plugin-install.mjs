@@ -41,11 +41,20 @@ export function installPlugin({ dir = pluginDir() } = {}) {
   return { dir, manifest: join(dir, 'manifest.json'), version, state };
 }
 
+// How to type a path into the open dialog of each system (the folder starts with a dot, so it is hidden in the dialog):
+// Windows has a file name box; macOS opens a path box with Cmd+Shift+G; GTK (Linux) with Ctrl+L. Figma ships Figma
+// Desktop for Windows and macOS only: on Linux the bridge needs an unofficial desktop build that can import development
+// plugins, else the courier (use_figma) sends the batches.
+export const pasteHow = (platform = process.platform) => platform === 'darwin' ? 'press Cmd+Shift+G in the file dialog and paste this path'
+  : platform === 'win32' ? 'paste this path into the "File name" box' : 'press Ctrl+L in the file dialog and paste this path';
+const LINUX_NOTE = 'Figma Desktop is made for Windows and macOS only: on Linux this needs a desktop build that can import development plugins; without one, send the batches with the courier (README "Figma CLI")';
+
 // the lines serve prints: the path stays on a line of its own, so it can be copied as it is
-export function installLines(r) {
-  const imp = 'in Figma Desktop: Plugins > Development > Import plugin from manifest..., then paste this path into the file box:';
-  if (r.state === 'new') return [`Figma plugin, once per machine: ${imp}`, `  ${r.manifest}`];
-  if (r.state === 'manifest') return [`the Figma plugin manifest changed: import it again (${imp})`, `  ${r.manifest}`];
+export function installLines(r, platform = process.platform) {
+  const imp = `in Figma Desktop: Plugins > Development > Import plugin from manifest..., then ${pasteHow(platform)}:`;
+  const note = platform === 'linux' ? [LINUX_NOTE] : [];
+  if (r.state === 'new') return [`Figma plugin, once per machine: ${imp}`, `  ${r.manifest}`, ...note];
+  if (r.state === 'manifest') return [`the Figma plugin manifest changed: import it again (${imp})`, `  ${r.manifest}`, ...note];
   if (r.state === 'code') return [`the Figma plugin was updated in ${r.dir}: if its window is open, close it and run it again`];
   return [];
 }
